@@ -17,4 +17,5 @@
 
 pub mod atomic;
 pub mod backup;
+pub mod conflict;
 pub mod sentinels;

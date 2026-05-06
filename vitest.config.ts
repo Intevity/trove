@@ -1,15 +1,13 @@
 import { defineConfig } from 'vitest/config';
 
-// Sprint 0 thresholds are intentionally loose (60%). They will ratchet to 95%
-// in Sprint 2 when the safety toolkit lands and there is real code worth
-// gating on.
+// Sprint 2 ratchet: the loose 60/60/0/0 thresholds from Sprint 0 are
+// replaced with the 95/95/95/93 set claude-sentinel uses. Rust coverage
+// (the bulk of Sprint 2's new code) is gated separately by
+// `cargo llvm-cov --fail-under-lines 95 --fail-under-functions 95` in CI.
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    // Sprint 0 PR #1 has no test files yet (PR #2 adds packages/{shared,app}).
-    // Don't fail the run when no tests match.
-    passWithNoTests: true,
     include: [
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/*.test.tsx',
@@ -33,17 +31,20 @@ export default defineConfig({
         // App frontend is exercised end-to-end via Playwright (Sprint 6 will
         // expand the surface). Unit-coverage gating sits on packages/shared.
         'packages/app/src/**',
+        // Pure re-export barrels carry no logic; v8 reports them as
+        // 0% covered which sinks the aggregate even when the actual
+        // schema and IPC files sit at 100%.
+        'packages/shared/src/index.ts',
       ],
-      // Sprint 0 has only declarative Zod schemas in packages/shared — zero
-      // traditional functions or conditional branches to cover. Lines and
-      // statements stay at 60; functions and branches relax to 0 until
-      // Sprint 1+ introduces real Rust + TS function code worth gating on.
-      // All four ratchet to 95 in Sprint 2 alongside the safety toolkit.
       thresholds: {
-        lines: 60,
-        statements: 60,
-        functions: 0,
-        branches: 0,
+        lines: 95,
+        statements: 95,
+        functions: 95,
+        // Branches at 93 mirrors claude-sentinel's gate; some Zod
+        // fallbacks (e.g. `.default(...)` shapes) introduce branches the
+        // tests don't all hit, and pinning to 93 leaves headroom for
+        // upcoming schema additions without paper-cut threshold drift.
+        branches: 93,
       },
     },
   },

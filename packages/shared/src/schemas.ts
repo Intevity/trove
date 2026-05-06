@@ -1,10 +1,5 @@
 import { z } from 'zod';
 
-// Placeholder schemas for Sprint 0. Sprint 2 fleshes these out with the full
-// safety contract (atomic writes, sentinel-bracketed regions, conflict
-// detection). Until then these exist so packages/app can import the workspace
-// type and the workspace wiring is exercised end-to-end.
-
 /** Discriminated union of supported AI coding harness identifiers (MVP set). */
 export const HarnessId = z.enum([
   'claude-code',
@@ -62,13 +57,39 @@ export const Backend = z.discriminatedUnion('kind', [
 ]);
 export type Backend = z.infer<typeof Backend>;
 
+/** Config-file format Trove patches. Mirrors the Rust `Format` enum. */
+export const PatchFormat = z.enum(['json', 'jsonc', 'toml', 'yaml']);
+export type PatchFormat = z.infer<typeof PatchFormat>;
+
+/** Metadata persisted after every successful upsert; consumed by the
+ *  Rust `safety::conflict::detect` to identify three-way merges. */
+export const TrovePatch = z.object({
+  /** sha256 hex of the canonical payload at last write. */
+  managedBlockHash: z.string().min(1),
+  /** sha256 hex of the entire host file at last write. */
+  fileHashAtLastWrite: z.string().min(1),
+  /** Format of the host config file. */
+  format: PatchFormat,
+});
+export type TrovePatch = z.infer<typeof TrovePatch>;
+
+/** Outcome of a three-way conflict check. Mirrors the Rust
+ *  `ConflictState` enum produced by `safety::conflict::detect`. */
+export const ConflictState = z.enum([
+  'clean',
+  'user-edited-outside',
+  'region-removed',
+  'region-conflict',
+]);
+export type ConflictState = z.infer<typeof ConflictState>;
+
 /** What Trove records about each harness it has touched. */
 export const HarnessConfig = z.object({
   id: HarnessId,
   enabled: z.boolean(),
   configPath: z.string().min(1),
   lastPatchedAt: z.string().datetime(),
-  trovePatchHash: z.string().min(1),
+  trovePatch: TrovePatch,
   options: z.object({
     logUserPrompts: z.boolean().default(false),
     customAttributes: z.record(z.string(), z.string()).default({}),
@@ -76,9 +97,13 @@ export const HarnessConfig = z.object({
 });
 export type HarnessConfig = z.infer<typeof HarnessConfig>;
 
-/** Persisted application state. Secrets are referenced via SecretRef only. */
+/** Persisted application state. Secrets are referenced via SecretRef only.
+ *  Schema version bumped to 2 in Sprint 2 alongside the richer
+ *  HarnessConfig.trovePatch (replacing trovePatchHash from v1).
+ *  Migrations land alongside Sprint 5 when state.json starts being
+ *  persisted in the wild. */
 export const AppState = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   backend: Backend.nullable(),
   harnesses: z.array(HarnessConfig),
 });
