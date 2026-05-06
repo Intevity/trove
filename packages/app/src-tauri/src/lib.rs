@@ -7,6 +7,7 @@
 //! cleanly on `RunEvent::ExitRequested`.
 
 pub mod collector;
+pub mod safety;
 mod tray;
 
 use std::path::PathBuf;
