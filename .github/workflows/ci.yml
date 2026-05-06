@@ -48,11 +48,39 @@ jobs:
           workspaces: packages/app/src-tauri -> target
           shared-key: trove-rust-${{ runner.os }}
 
+      # Go is needed by `pnpm build:collector` (ocb is invoked via
+      # `go install go.opentelemetry.io/collector/cmd/builder@<pin>`).
+      # ocb v0.151.0 requires Go 1.25+.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Cache ocb module cache + installed binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/go/bin
+          key: trove-ocb-${{ runner.os }}-${{ hashFiles('resources/otelcol/manifest.yaml') }}
+          restore-keys: |
+            trove-ocb-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build @trove/shared (downstream packages need dist/)
         run: pnpm --filter @trove/shared build
+
+      # Tauri's externalBin check at build time requires the per-triple
+      # binary to exist before clippy/cargo can build the Rust crate.
+      # PR 1 added the build chain; we run it here so PR 2's externalBin
+      # entry compiles. PR 3's macOS sidecar-mac job covers the same
+      # path on darwin.
+      - name: Build trove-otelcol sidecar
+        run: pnpm build:collector
+
+      - name: Stage sidecar into Tauri binaries dir
+        run: pnpm bundle:sidecar
 
       - name: Typecheck
         run: pnpm typecheck
