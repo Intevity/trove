@@ -141,3 +141,22 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Rust / Tauri
+target/
+packages/app/src-tauri/target/
+packages/app/src-tauri/gen/
+
+# Tauri sidecar binaries (Sprint 1+ produces these from ocb)
+packages/app/src-tauri/binaries/
+
+# Playwright artifacts
+test-results/
+playwright-report/
+.playwright/
+
+# OS
+.DS_Store
+
+# Misc
+*.tmp
