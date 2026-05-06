@@ -123,16 +123,14 @@ fn pid_alive(pid: u32) -> bool {
             .arg("-0")
             .arg(pid.to_string())
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .is_ok_and(|s| s.success())
     }
     #[cfg(windows)]
     {
         Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}")])
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-            .unwrap_or(false)
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
     }
 }
 
