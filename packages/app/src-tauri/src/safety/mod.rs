@@ -17,3 +17,4 @@
 
 pub mod atomic;
 pub mod backup;
+pub mod sentinels;

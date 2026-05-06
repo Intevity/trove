@@ -18,7 +18,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "devtools"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 tokio = { version = "1", features = [
     "macros",
     "rt-multi-thread",
@@ -39,6 +38,17 @@ thiserror = "2"
 tempfile = "3"
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Sprint 2 PR 2: managed-region engine for the four config formats
+# adapters touch. serde_json with preserve_order keeps key order stable
+# across re-applies; jsonc-parser's CST feature preserves comments
+# through AST mutation; toml_edit preserves both comments and the
+# relative ordering of items; serde_yml is the maintained fork of
+# serde_yaml (parse-validate only — YAML uses comment-fenced text edits).
+serde_json = { version = "1", features = ["preserve_order"] }
+jsonc-parser = { version = "0.26", features = ["cst", "serde"] }
+toml_edit = "0.22"
+serde_yml = "0.0.12"
+hex = "0.4"
 
 [dev-dependencies]
 proptest = "1"
