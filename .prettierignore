@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+target/
+.pnpm-store/
+packages/app/src-tauri/target/
+packages/app/src-tauri/gen/
+packages/app/dist/
+*.lock
+pnpm-lock.yaml
+
+# Authored plan document — preserve intentional markdown style.
+documentation/MVP_PLAN.md
