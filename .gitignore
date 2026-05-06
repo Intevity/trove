@@ -150,6 +150,10 @@ packages/app/src-tauri/gen/
 # Tauri sidecar binaries (Sprint 1+ produces these from ocb)
 packages/app/src-tauri/binaries/
 
+# ocb intermediate + per-triple output (Sprint 1)
+resources/otelcol/_build/
+resources/otelcol/dist/
+
 # Playwright artifacts
 test-results/
 playwright-report/
