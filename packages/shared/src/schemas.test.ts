@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { AppState, Backend, HarnessConfig, HarnessId, SecretRef } from './schemas.js';
+
+import {
+  AppState,
+  Backend,
+  ConflictState,
+  HarnessConfig,
+  HarnessId,
+  PatchFormat,
+  SecretRef,
+  TrovePatch,
+} from './schemas.js';
 
 describe('HarnessId', () => {
   it('accepts each MVP harness identifier', () => {
@@ -43,6 +53,25 @@ describe('Backend', () => {
     expect(parsed.kind).toBe('signoz');
   });
 
+  it('parses a Honeycomb backend', () => {
+    const parsed = Backend.parse({ kind: 'honeycomb', team: ref, dataset: 'main' });
+    expect(parsed.kind).toBe('honeycomb');
+  });
+
+  it('parses a Grafana Cloud backend', () => {
+    const parsed = Backend.parse({
+      kind: 'grafana-cloud',
+      endpoint: 'https://grafana.example.com',
+      auth: ref,
+    });
+    expect(parsed.kind).toBe('grafana-cloud');
+  });
+
+  it('parses a Datadog backend', () => {
+    const parsed = Backend.parse({ kind: 'datadog', site: 'datadoghq.com', apiKey: ref });
+    expect(parsed.kind).toBe('datadog');
+  });
+
   it('parses an OTLP-generic backend with header refs', () => {
     const parsed = Backend.parse({
       kind: 'otlp-generic',
@@ -51,6 +80,14 @@ describe('Backend', () => {
       headers: { 'x-api-key': ref },
     });
     expect(parsed.kind).toBe('otlp-generic');
+  });
+
+  it('parses an otelcol-passthrough backend', () => {
+    const parsed = Backend.parse({
+      kind: 'otelcol-passthrough',
+      endpoint: 'https://collector.example.com',
+    });
+    expect(parsed.kind).toBe('otelcol-passthrough');
   });
 
   it('rejects an unknown backend kind', () => {
@@ -67,37 +104,97 @@ describe('Backend', () => {
   });
 });
 
+describe('PatchFormat', () => {
+  it('matches the Rust Format enum variants', () => {
+    for (const f of ['json', 'jsonc', 'toml', 'yaml']) {
+      expect(PatchFormat.parse(f)).toBe(f);
+    }
+  });
+
+  it('rejects formats Trove does not support', () => {
+    expect(() => PatchFormat.parse('xml')).toThrow();
+  });
+});
+
+describe('TrovePatch', () => {
+  it('round-trips a captured patch metadata record', () => {
+    const patch: TrovePatch = {
+      managedBlockHash: 'a'.repeat(64),
+      fileHashAtLastWrite: 'b'.repeat(64),
+      format: 'json',
+    };
+    expect(TrovePatch.parse(patch)).toEqual(patch);
+  });
+
+  it('rejects missing required fields', () => {
+    expect(() => TrovePatch.parse({ managedBlockHash: 'x', format: 'json' })).toThrow();
+    expect(() => TrovePatch.parse({ managedBlockHash: 'x', fileHashAtLastWrite: 'y' })).toThrow();
+  });
+});
+
+describe('ConflictState', () => {
+  it('matches the Rust ConflictState variants', () => {
+    for (const s of ['clean', 'user-edited-outside', 'region-removed', 'region-conflict']) {
+      expect(ConflictState.parse(s)).toBe(s);
+    }
+  });
+
+  it('rejects unknown states', () => {
+    expect(() => ConflictState.parse('mystery')).toThrow();
+  });
+});
+
 describe('HarnessConfig', () => {
-  it('parses a complete config with default options', () => {
-    const parsed = HarnessConfig.parse({
-      id: 'claude-code',
-      enabled: true,
-      configPath: '/Users/test/.claude/settings.json',
-      lastPatchedAt: '2026-05-06T12:00:00.000Z',
-      trovePatchHash: 'sha256:abc',
-      options: {},
-    });
+  const valid: HarnessConfig = {
+    id: 'claude-code',
+    enabled: true,
+    configPath: '/Users/test/.claude/settings.json',
+    lastPatchedAt: '2026-05-06T12:00:00.000Z',
+    trovePatch: {
+      managedBlockHash: 'a'.repeat(64),
+      fileHashAtLastWrite: 'b'.repeat(64),
+      format: 'json',
+    },
+    options: { logUserPrompts: false, customAttributes: {} },
+  };
+
+  it('parses a complete config with explicit options', () => {
+    expect(HarnessConfig.parse(valid)).toEqual(valid);
+  });
+
+  it('applies defaults to options when fields are omitted', () => {
+    const parsed = HarnessConfig.parse({ ...valid, options: {} });
     expect(parsed.options.logUserPrompts).toBe(false);
     expect(parsed.options.customAttributes).toEqual({});
+  });
+
+  it('rejects an invalid lastPatchedAt timestamp', () => {
+    expect(() => HarnessConfig.parse({ ...valid, lastPatchedAt: 'yesterday' })).toThrow();
+  });
+
+  it('rejects a missing trovePatch', () => {
+    const without = { ...valid } as Partial<HarnessConfig>;
+    delete without.trovePatch;
+    expect(() => HarnessConfig.parse(without)).toThrow();
   });
 });
 
 describe('AppState', () => {
-  it('parses a minimal state with no backend and no harnesses', () => {
+  it('parses a minimal v2 state with no backend and no harnesses', () => {
     const parsed = AppState.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       backend: null,
       harnesses: [],
     });
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.schemaVersion).toBe(2);
     expect(parsed.backend).toBeNull();
     expect(parsed.harnesses).toEqual([]);
   });
 
-  it('rejects a state with the wrong schema version', () => {
+  it('rejects the legacy schemaVersion 1', () => {
     expect(() =>
       AppState.parse({
-        schemaVersion: 2,
+        schemaVersion: 1,
         backend: null,
         harnesses: [],
       }),
