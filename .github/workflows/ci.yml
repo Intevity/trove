@@ -147,3 +147,71 @@ jobs:
           path: packages/app/playwright-report/
           retention-days: 7
           if-no-files-found: ignore
+
+  sidecar-mac:
+    # Sprint 1 acceptance: "Run on macOS in CI". Builds the per-triple
+    # collector on darwin-arm64 and runs the cargo integration test
+    # against it for platform-specific coverage of the supervisor
+    # (signal handling, sidecar path resolution, kill_on_drop). PR-only
+    # because it adds ~5–8 min and the Ubuntu lane already covers the
+    # logic on Linux x86_64.
+    name: sidecar integration (macos-14)
+    if: github.event_name == 'pull_request'
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/app/src-tauri -> target
+          shared-key: trove-rust-${{ runner.os }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Cache ocb module cache + installed binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/go/bin
+          key: trove-ocb-${{ runner.os }}-${{ hashFiles('resources/otelcol/manifest.yaml') }}
+          restore-keys: |
+            trove-ocb-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build @trove/shared
+        run: pnpm --filter @trove/shared build
+
+      - name: Build trove-otelcol sidecar
+        run: pnpm build:collector
+
+      - name: Stage sidecar into Tauri binaries dir
+        run: pnpm bundle:sidecar
+
+      - name: Run collector integration test
+        run: cargo test --manifest-path packages/app/src-tauri/Cargo.toml --test collector_integration -- --nocapture
+
+      - name: Upload built collector as artifact (debug aid)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trove-otelcol-darwin-arm64-${{ github.run_id }}
+          path: resources/otelcol/dist/aarch64-apple-darwin/trove-otelcol
+          retention-days: 7
+          if-no-files-found: ignore

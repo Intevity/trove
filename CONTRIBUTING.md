@@ -65,6 +65,8 @@ Use the imperative mood. Squash trivial follow-ups before opening a PR.
 
 ## Building the collector locally
 
+A walk-through of the runtime shape — collector lifecycle, supervisor states, file system paths — lives in [`documentation/architecture.md`](documentation/architecture.md). What follows is the developer's how-to.
+
 Trove ships a custom-built OpenTelemetry Collector binary as a Tauri sidecar. The build is driven by [ocb](https://opentelemetry.io/docs/collector/extend/ocb/) and pinned to a single version in `resources/otelcol/manifest.yaml`.
 
 ```bash
