@@ -1,0 +1,53 @@
+# Smoke configuration for trove-otelcol.
+#
+# This is the default config the Tauri app writes to the user's app-data
+# directory on first launch and points the supervised sidecar at. It is a
+# pure pass-through pipeline (otlp in -> debug out) used to prove the
+# binary spawns and the health check responds. Sprint 5 replaces this with
+# a codegen'd YAML that targets the user's chosen backend.
+#
+# Loopback only on every endpoint. Trove does not bind external interfaces
+# at any point in the MVP.
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+    path: /health
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+  telemetry:
+    logs:
+      level: info
+      encoding: console
+    metrics:
+      level: none
