@@ -129,8 +129,40 @@ export const DetectedHarness = z.object({
   configPath: z.string().nullable(),
   telemetry: TelemetryStatus,
   detectionMethod: DetectionMethod.nullable(),
+  /** Whether the host config currently contains a Trove-managed
+   *  region. Drives the toggle's "Enable" vs "Disable" label. */
+  troveRegionPresent: z.boolean(),
 });
 export type DetectedHarness = z.infer<typeof DetectedHarness>;
+
+/** Per-apply options chosen by the user in the UI. Mirrors the Rust
+ *  `adapters::ApplyOptions` struct. `logUserPrompts` defaults to false;
+ *  the wizard requires an explicit acknowledgement before flipping it
+ *  on. `customAttributes` is forwarded to the harness as
+ *  `OTEL_RESOURCE_ATTRIBUTES=key1=val1,…`. */
+export const ApplyOptions = z.object({
+  logUserPrompts: z.boolean().default(false),
+  customAttributes: z.record(z.string(), z.string()).default({}),
+});
+export type ApplyOptions = z.infer<typeof ApplyOptions>;
+
+/** What `preview_patch` tells the UI about the proposed write. Drives
+ *  the diff modal's CTA text and whether `apply_patch` would actually
+ *  write. Mirrors the Rust `adapters::PreviewStatus` enum. */
+export const PreviewStatus = z.enum(['fresh', 'idempotent', 'conflict']);
+export type PreviewStatus = z.infer<typeof PreviewStatus>;
+
+/** What `preview_patch` returns. The diff modal renders before/after
+ *  client-side via the `diff` npm package. Mirrors the Rust
+ *  `adapters::PatchPreview` struct (camelCase keys on the wire). */
+export const PatchPreview = z.object({
+  configPath: z.string(),
+  format: PatchFormat,
+  before: z.string(),
+  after: z.string(),
+  status: PreviewStatus,
+});
+export type PatchPreview = z.infer<typeof PatchPreview>;
 
 /** Discriminated union mirroring the Rust `ipc::IpcError` enum.
  *  The TS side branches on `kind` to render specific UI affordances

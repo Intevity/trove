@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ApplyOptions,
   AppState,
   Backend,
   ConflictState,
@@ -10,6 +11,8 @@ import {
   HarnessId,
   IpcError,
   PatchFormat,
+  PatchPreview,
+  PreviewStatus,
   SecretRef,
   TelemetryStatus,
   TrovePatch,
@@ -238,6 +241,7 @@ describe('DetectedHarness', () => {
       configPath: '/home/me/.claude/settings.json',
       telemetry: 'on',
       detectionMethod: 'config-dir',
+      troveRegionPresent: false,
     };
     expect(DetectedHarness.parse(row)).toEqual(row);
   });
@@ -249,6 +253,7 @@ describe('DetectedHarness', () => {
       configPath: null,
       telemetry: 'unknown',
       detectionMethod: null,
+      troveRegionPresent: false,
     };
     expect(DetectedHarness.parse(row)).toEqual(row);
   });
@@ -261,6 +266,69 @@ describe('DetectedHarness', () => {
         config_path: '/x',
         telemetry: 'on',
         detection_method: 'config-dir',
+        trove_region_present: false,
+      }),
+    ).toThrow();
+  });
+});
+
+describe('ApplyOptions', () => {
+  it('parses an empty object using defaults', () => {
+    const parsed = ApplyOptions.parse({});
+    expect(parsed.logUserPrompts).toBe(false);
+    expect(parsed.customAttributes).toEqual({});
+  });
+
+  it('parses an explicit options object', () => {
+    const parsed = ApplyOptions.parse({
+      logUserPrompts: true,
+      customAttributes: { team: 'platform' },
+    });
+    expect(parsed.logUserPrompts).toBe(true);
+    expect(parsed.customAttributes).toEqual({ team: 'platform' });
+  });
+
+  it('rejects non-string custom attribute values', () => {
+    expect(() =>
+      ApplyOptions.parse({
+        customAttributes: { team: 123 as unknown as string },
+      }),
+    ).toThrow();
+  });
+});
+
+describe('PreviewStatus', () => {
+  it('matches the Rust PreviewStatus variants', () => {
+    for (const s of ['fresh', 'idempotent', 'conflict']) {
+      expect(PreviewStatus.parse(s)).toBe(s);
+    }
+  });
+
+  it('rejects unknown statuses', () => {
+    expect(() => PreviewStatus.parse('done')).toThrow();
+  });
+});
+
+describe('PatchPreview', () => {
+  it('parses a fresh-status preview', () => {
+    const preview = {
+      configPath: '/home/me/.claude/settings.json',
+      format: 'json',
+      before: '',
+      after: '{"_trove":{"managed_keys":[],"hash":"x"}}',
+      status: 'fresh',
+    };
+    expect(PatchPreview.parse(preview)).toEqual(preview);
+  });
+
+  it('rejects a preview with the wrong format', () => {
+    expect(() =>
+      PatchPreview.parse({
+        configPath: '/x',
+        format: 'xml',
+        before: '',
+        after: '',
+        status: 'fresh',
       }),
     ).toThrow();
   });

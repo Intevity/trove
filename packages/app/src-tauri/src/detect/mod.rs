@@ -46,6 +46,12 @@ pub struct DetectedHarness {
     pub config_path: Option<PathBuf>,
     pub telemetry: TelemetryStatus,
     pub detection_method: Option<DetectionMethod>,
+    /// Whether the host config currently contains a Trove-managed
+    /// region. The dashboard uses this to decide whether the toggle
+    /// shows "Enable" (no region — apply will write one) or "Disable"
+    /// (region present — revert will remove it). Distinct from
+    /// `telemetry`, which can be `On` even when Trove didn't write it.
+    pub trove_region_present: bool,
 }
 
 /// Scoping struct that controls where the detector looks. Production
@@ -147,13 +153,16 @@ mod tests {
             config_path: Some(PathBuf::from("/tmp/x")),
             telemetry: TelemetryStatus::On,
             detection_method: Some(DetectionMethod::ConfigDir),
+            trove_region_present: false,
         };
         let json = serde_json::to_string(&h).unwrap();
         // The TS-side Zod schema expects camelCase keys; check the
         // load-bearing ones that don't match Rust's snake_case.
         assert!(json.contains("\"configPath\""));
         assert!(json.contains("\"detectionMethod\""));
+        assert!(json.contains("\"troveRegionPresent\""));
         assert!(!json.contains("\"config_path\""));
+        assert!(!json.contains("\"trove_region_present\""));
     }
 
     #[test]
