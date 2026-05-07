@@ -9,210 +9,48 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::ipc::IpcError;
-use crate::safety::atomic::write_atomic;
-use crate::safety::backup::{backup_file, prune_backups};
-use crate::safety::sentinels::{
-    Format, ManagedRegion, SentinelError, extract_region, remove_region, upsert_region,
+use crate::safety::sentinels::{Format, ManagedRegion, SentinelError};
+
+use super::common::{self, HarnessSpec};
+use super::{ApplyOptions, PatchPreview, TrovePatch};
+
+const SPEC: HarnessSpec = HarnessSpec {
+    config_dir: ".qwen",
+    config_file: "settings.json",
+    format: Format::Json,
+    build_region,
 };
-
-use super::{ApplyOptions, BACKUPS_TO_KEEP, PatchPreview, PreviewStatus, TrovePatch};
-
-const CONFIG_DIR: &str = ".qwen";
-const CONFIG_FILE: &str = "settings.json";
 
 /// Resolve the absolute path of the Qwen Code settings file under
 /// `home`. Pure helper so tests can scope to a `tempdir`.
 #[must_use]
 pub fn config_path(home: &Path) -> PathBuf {
-    home.join(CONFIG_DIR).join(CONFIG_FILE)
+    common::config_path(&SPEC, home)
 }
 
 /// Compute the diff between the current file and what an apply with
 /// `opts` would write.
 pub fn preview(home: &Path, opts: &ApplyOptions) -> Result<PatchPreview, IpcError> {
-    let path = config_path(home);
-    let (current, _existed) = read_or_empty(&path)?;
-    let working = if current.is_empty() {
-        "{}".to_string()
-    } else {
-        current.clone()
-    };
-
-    let region = build_region(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    let status = classify(&working, &region, &path)?;
-
-    let after = upsert_region(Format::Json, &working, &region).map_err(|e| match e {
-        SentinelError::Malformed { .. } | SentinelError::RegionMalformed(_) => {
-            IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            }
-        }
-        other => IpcError::Internal {
-            reason: other.to_string(),
-        },
-    })?;
-
-    Ok(PatchPreview {
-        config_path: path,
-        format: Format::Json,
-        before: current,
-        after,
-        status,
-    })
+    common::preview(&SPEC, home, opts)
 }
 
-/// Apply the patch. Same safety contract as the other JSON adapters:
-/// backup, atomic write, prune, refuse to overwrite a managed region
-/// whose hash differs from the new patch.
+/// Apply the patch. See [`common::apply`] for the safety contract.
 pub fn apply(home: &Path, opts: &ApplyOptions) -> Result<TrovePatch, IpcError> {
-    let path = config_path(home);
-    let (current, existed) = read_or_empty(&path)?;
-    let working = if current.is_empty() {
-        "{}".to_string()
-    } else {
-        current.clone()
-    };
-
-    let region = build_region(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    match classify(&working, &region, &path)? {
-        PreviewStatus::Idempotent => {
-            return Ok(TrovePatch {
-                managed_block_hash: region.hash.clone(),
-                file_hash_at_last_write: hash_hex(current.as_bytes()),
-                format: Format::Json,
-            });
-        }
-        PreviewStatus::Conflict => {
-            return Err(IpcError::RegionConflict {
-                path: path.display().to_string(),
-            });
-        }
-        PreviewStatus::Fresh => {}
-    }
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| IpcError::Io {
-            path: parent.display().to_string(),
-            reason: e.to_string(),
-        })?;
-    }
-
-    if existed {
-        backup_file(&path).map_err(|e| IpcError::Io {
-            path: path.display().to_string(),
-            reason: format!("backup failed: {e}"),
-        })?;
-    }
-
-    let after = upsert_region(Format::Json, &working, &region).map_err(|e| match e {
-        SentinelError::Malformed { .. } | SentinelError::RegionMalformed(_) => {
-            IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            }
-        }
-        other => IpcError::Internal {
-            reason: other.to_string(),
-        },
-    })?;
-
-    write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    let _ = prune_backups(&path, BACKUPS_TO_KEEP);
-
-    Ok(TrovePatch {
-        managed_block_hash: region.hash.clone(),
-        file_hash_at_last_write: hash_hex(after.as_bytes()),
-        format: Format::Json,
-    })
+    common::apply(&SPEC, home, opts)
 }
 
 /// Permissive revert — removes any Trove-managed region present.
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    let path = config_path(home);
-    let (current, existed) = read_or_empty(&path)?;
-    if !existed {
-        return Ok(());
-    }
-
-    match extract_region(Format::Json, &current) {
-        Ok(Some(_)) => {}
-        Ok(None) => return Ok(()),
-        Err(e) => {
-            return Err(IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            });
-        }
-    }
-
-    backup_file(&path).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: format!("backup failed: {e}"),
-    })?;
-
-    let after = remove_region(Format::Json, &current).map_err(|e| IpcError::ConfigUnparseable {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    let _ = prune_backups(&path, BACKUPS_TO_KEEP);
-
-    Ok(())
-}
-
-fn read_or_empty(path: &Path) -> Result<(String, bool), IpcError> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok((text, true)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((String::new(), false)),
-        Err(e) => Err(IpcError::Io {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        }),
-    }
-}
-
-fn classify(
-    current: &str,
-    region: &ManagedRegion,
-    path: &Path,
-) -> Result<PreviewStatus, IpcError> {
-    match extract_region(Format::Json, current) {
-        Ok(Some(existing)) if existing.hash == region.hash => Ok(PreviewStatus::Idempotent),
-        Ok(Some(_)) => Ok(PreviewStatus::Conflict),
-        Ok(None) => Ok(PreviewStatus::Fresh),
-        Err(e) => Err(IpcError::ConfigUnparseable {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        }),
-    }
+    common::revert(&SPEC, home)
 }
 
 /// Build the [`ManagedRegion`] for a JSON merge of the `telemetry`
 /// block. Mirrors `gemini_cli::build_region` because Qwen Code is a
 /// Gemini CLI fork and the upstream schema is byte-identical for this
 /// block. `customAttributes` is a no-op for Qwen for the same reason
-/// it's a no-op for Gemini — the schema doesn't yet expose a clear
-/// path for resource attributes; we'll add the field once Qwen's docs
-/// settle (or the schema diverges from Gemini's).
+/// it's a no-op for Gemini.
 fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     let mut telemetry = serde_json::Map::new();
     telemetry.insert("enabled".to_string(), Value::Bool(true));
@@ -228,15 +66,10 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     ManagedRegion::for_json_patches(&top)
 }
 
-fn hash_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::PreviewStatus;
     use std::fs;
     use tempfile::tempdir;
 
@@ -280,7 +113,6 @@ mod tests {
         let home = tempdir().unwrap();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        // Pre-populate Qwen-flavoured user keys.
         fs::write(
             &path,
             r#"{"theme":"dark","model":{"name":"qwen3-coder"}}"#,

@@ -20,192 +20,42 @@
 
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
-
 use crate::ipc::IpcError;
-use crate::safety::atomic::write_atomic;
-use crate::safety::backup::{backup_file, prune_backups};
-use crate::safety::sentinels::{
-    Format, ManagedRegion, SentinelError, extract_region, remove_region, upsert_region,
-};
+use crate::safety::sentinels::{Format, ManagedRegion, SentinelError};
 
-use super::{ApplyOptions, BACKUPS_TO_KEEP, PatchPreview, PreviewStatus, TrovePatch};
+use super::common::{self, HarnessSpec};
+use super::{ApplyOptions, PatchPreview, TrovePatch};
 
-const CONFIG_DIR: &str = ".codex";
-const CONFIG_FILE: &str = "config.toml";
 const COLLECTOR_BASE: &str = "http://127.0.0.1:4318";
+
+const SPEC: HarnessSpec = HarnessSpec {
+    config_dir: ".codex",
+    config_file: "config.toml",
+    format: Format::Toml,
+    build_region,
+};
 
 /// Resolve the absolute path of the Codex CLI config file under `home`.
 /// Pure helper so tests can scope to a `tempdir`.
 #[must_use]
 pub fn config_path(home: &Path) -> PathBuf {
-    home.join(CONFIG_DIR).join(CONFIG_FILE)
+    common::config_path(&SPEC, home)
 }
 
 /// Compute the diff between the current file and what an apply with
 /// `opts` would write.
 pub fn preview(home: &Path, opts: &ApplyOptions) -> Result<PatchPreview, IpcError> {
-    let path = config_path(home);
-    let (current, _existed) = read_or_empty(&path)?;
-
-    let region = build_region(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    let status = classify(&current, &region, &path)?;
-
-    let after = upsert_region(Format::Toml, &current, &region).map_err(|e| match e {
-        SentinelError::Malformed { .. } | SentinelError::RegionMalformed(_) => {
-            IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            }
-        }
-        other => IpcError::Internal {
-            reason: other.to_string(),
-        },
-    })?;
-
-    Ok(PatchPreview {
-        config_path: path,
-        format: Format::Toml,
-        before: current,
-        after,
-        status,
-    })
+    common::preview(&SPEC, home, opts)
 }
 
-/// Apply the patch. Same safety contract as the JSON adapters: backup,
-/// atomic write, prune, and refuse to overwrite a managed region whose
-/// hash differs from the new patch.
+/// Apply the patch. See [`common::apply`] for the safety contract.
 pub fn apply(home: &Path, opts: &ApplyOptions) -> Result<TrovePatch, IpcError> {
-    let path = config_path(home);
-    let (current, existed) = read_or_empty(&path)?;
-
-    let region = build_region(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    match classify(&current, &region, &path)? {
-        PreviewStatus::Idempotent => {
-            return Ok(TrovePatch {
-                managed_block_hash: region.hash.clone(),
-                file_hash_at_last_write: hash_hex(current.as_bytes()),
-                format: Format::Toml,
-            });
-        }
-        PreviewStatus::Conflict => {
-            return Err(IpcError::RegionConflict {
-                path: path.display().to_string(),
-            });
-        }
-        PreviewStatus::Fresh => {}
-    }
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| IpcError::Io {
-            path: parent.display().to_string(),
-            reason: e.to_string(),
-        })?;
-    }
-
-    if existed {
-        backup_file(&path).map_err(|e| IpcError::Io {
-            path: path.display().to_string(),
-            reason: format!("backup failed: {e}"),
-        })?;
-    }
-
-    let after = upsert_region(Format::Toml, &current, &region).map_err(|e| match e {
-        SentinelError::Malformed { .. } | SentinelError::RegionMalformed(_) => {
-            IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            }
-        }
-        other => IpcError::Internal {
-            reason: other.to_string(),
-        },
-    })?;
-
-    write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    let _ = prune_backups(&path, BACKUPS_TO_KEEP);
-
-    Ok(TrovePatch {
-        managed_block_hash: region.hash.clone(),
-        file_hash_at_last_write: hash_hex(after.as_bytes()),
-        format: Format::Toml,
-    })
+    common::apply(&SPEC, home, opts)
 }
 
 /// Permissive revert — removes any Trove-managed region present.
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    let path = config_path(home);
-    let (current, existed) = read_or_empty(&path)?;
-    if !existed {
-        return Ok(());
-    }
-
-    match extract_region(Format::Toml, &current) {
-        Ok(Some(_)) => {}
-        Ok(None) => return Ok(()),
-        Err(e) => {
-            return Err(IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            });
-        }
-    }
-
-    backup_file(&path).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: format!("backup failed: {e}"),
-    })?;
-
-    let after = remove_region(Format::Toml, &current).map_err(|e| IpcError::ConfigUnparseable {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    let _ = prune_backups(&path, BACKUPS_TO_KEEP);
-
-    Ok(())
-}
-
-fn read_or_empty(path: &Path) -> Result<(String, bool), IpcError> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok((text, true)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((String::new(), false)),
-        Err(e) => Err(IpcError::Io {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        }),
-    }
-}
-
-fn classify(
-    current: &str,
-    region: &ManagedRegion,
-    path: &Path,
-) -> Result<PreviewStatus, IpcError> {
-    match extract_region(Format::Toml, current) {
-        Ok(Some(existing)) if existing.hash == region.hash => Ok(PreviewStatus::Idempotent),
-        Ok(Some(_)) => Ok(PreviewStatus::Conflict),
-        Ok(None) => Ok(PreviewStatus::Fresh),
-        Err(e) => Err(IpcError::ConfigUnparseable {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        }),
-    }
+    common::revert(&SPEC, home)
 }
 
 /// Build the [`ManagedRegion`] for Codex's `[otel]` block. The payload
@@ -221,8 +71,8 @@ fn classify(
 //
 // The Result return is intentional even though `for_text_block` is
 // infallible: it keeps this signature aligned with the JSON adapters
-// (whose `for_json_patches` is fallible) so the Sprint-4 PR-3
-// `HarnessSpec` refactor can use a single shared `fn` pointer type.
+// (whose `for_json_patches` is fallible) so the shared `HarnessSpec`
+// can use a single `fn` pointer type for `build_region`.
 #[allow(clippy::unnecessary_wraps)]
 fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     use std::fmt::Write as _;
@@ -266,15 +116,10 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     Ok(ManagedRegion::for_text_block(payload, keys))
 }
 
-fn hash_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::PreviewStatus;
     use std::fs;
     use tempfile::tempdir;
 
@@ -290,7 +135,6 @@ mod tests {
         let patch = apply(home.path(), &ApplyOptions::default()).unwrap();
 
         let written = read_config(home.path());
-        // The file must parse as TOML with our exporter tables in place.
         let doc: toml_edit::DocumentMut = written.parse().unwrap();
         let exporter = doc["otel"]["exporter"].as_table().unwrap();
         assert_eq!(exporter["kind"].as_str(), Some("otlp-http"));
@@ -321,7 +165,7 @@ mod tests {
         let second = apply(home.path(), &ApplyOptions::default()).unwrap();
         let after_second = read_config(home.path());
         assert_eq!(after_first, after_second);
-        let expected = hash_hex(after_second.as_bytes());
+        let expected = common::hash_hex(after_second.as_bytes());
         assert_eq!(second.file_hash_at_last_write, expected);
     }
 
@@ -332,9 +176,6 @@ mod tests {
         let home = tempdir().unwrap();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        // User has unrelated top-level tables. We deliberately pick a
-        // namespace that doesn't collide with [otel] — duplicate top-level
-        // tables would be a TOML parse error post-splice.
         fs::write(
             &path,
             "[user]\nname = \"jeff\"\n\n[model]\ndefault = \"o1\"\n",
@@ -359,8 +200,6 @@ mod tests {
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
 
-        // Tamper with one of Trove's managed values without touching
-        // the sentinel header.
         let path = config_path(home.path());
         let written = read_config(home.path());
         let edited = written.replace(
@@ -377,7 +216,6 @@ mod tests {
             }
             other => panic!("expected RegionConflict, got {other:?}"),
         }
-        // Conflicting file is left untouched.
         assert_eq!(read_config(home.path()), edited);
     }
 
@@ -395,7 +233,6 @@ mod tests {
             matches!(err, IpcError::ConfigUnparseable { .. }),
             "expected ConfigUnparseable, got {err:?}"
         );
-        // Untouched.
         assert_eq!(read_config(home.path()), "{ not = toml [unclosed");
     }
 
@@ -422,7 +259,6 @@ mod tests {
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
 
         let err = apply(home.path(), &ApplyOptions::default()).unwrap_err();
-        // Restore so tempdir cleanup works.
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(
             matches!(err, IpcError::Io { .. }),
@@ -444,7 +280,6 @@ mod tests {
         revert(home.path()).unwrap();
 
         let after = read_config(home.path());
-        // Byte-identity including the trailing newline.
         assert_eq!(after, original);
     }
 
@@ -526,8 +361,6 @@ mod tests {
 
         let written = read_config(home.path());
         let doc: toml_edit::DocumentMut = written.parse().unwrap();
-        // log_user_prompt lives on the [otel] table itself, not on an
-        // exporter. Note the singular spelling — that's Codex's name.
         assert_eq!(
             doc["otel"]["log_user_prompt"].as_bool(),
             Some(true),
@@ -540,7 +373,6 @@ mod tests {
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let written = read_config(home.path());
-        // No bare [otel] section appears — only the exporter sub-tables.
         assert!(
             !written.contains("log_user_prompt"),
             "log_user_prompt should be omitted by default; got {written}"
@@ -551,10 +383,6 @@ mod tests {
 
     #[test]
     fn custom_attributes_are_a_noop_for_codex() {
-        // Codex's deny_unknown_fields schema has no equivalent of
-        // OTEL_RESOURCE_ATTRIBUTES; resource tagging happens at the
-        // Collector. Two applies with different custom_attributes
-        // produce identical bytes.
         let home_a = tempdir().unwrap();
         let home_b = tempdir().unwrap();
 
@@ -593,10 +421,6 @@ mod tests {
 
     #[test]
     fn pre_existing_otel_exporter_section_yields_unparseable_on_apply() {
-        // If the user already has [otel.exporter] in their file, our
-        // splice produces a duplicate top-level table → TOML parse
-        // error post-splice. The safety contract surfaces this as
-        // ConfigUnparseable rather than silently overwriting.
         let home = tempdir().unwrap();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -608,7 +432,6 @@ mod tests {
             matches!(err, IpcError::ConfigUnparseable { .. }),
             "expected ConfigUnparseable, got {err:?}"
         );
-        // The user's file is untouched on failure.
         assert_eq!(read_config(home.path()), original);
     }
 }

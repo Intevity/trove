@@ -85,7 +85,7 @@ To bump the Collector version, change every `v0.x.y` in `resources/otelcol/manif
 
 ## Adding a new harness adapter
 
-A full walkthrough lives in [`documentation/adding-a-harness.md`](documentation/adding-a-harness.md) (lands in Sprint 4). Until then, the short version: each adapter is a Rust module under `packages/app/src-tauri/src/adapters/` that implements the safety contract (atomic write, backup, sentinel-bracketed managed region, idempotent apply, clean revert) and ships golden-file tests.
+The full walkthrough lives in [`documentation/adding-a-harness.md`](documentation/adding-a-harness.md), including a copy-pasteable adapter template and the seven-case test suite contributors must satisfy. The short version: each adapter is a Rust module under `packages/app/src-tauri/src/adapters/` that declares a `const SPEC: HarnessSpec` and delegates to `adapters::common`. The safety contract (atomic write, backup, sentinel-bracketed managed region, idempotent apply, clean revert) is enforced by the shared module — your adapter only owns `build_region` and its tests.
 
 ## Adding a new backend preset
 
