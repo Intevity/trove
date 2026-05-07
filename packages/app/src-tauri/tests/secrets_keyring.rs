@@ -22,8 +22,7 @@ fn unique_account() -> String {
     // accidental reuse vanishingly unlikely.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     format!("test.pr1.{}.{}", std::process::id(), nanos)
 }
 
