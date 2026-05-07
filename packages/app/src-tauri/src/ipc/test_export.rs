@@ -177,7 +177,7 @@ pub async fn test_export_at(
 }
 
 fn current_log_size(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+    std::fs::metadata(path).map_or(0, |m| m.len())
 }
 
 /// Read `log_path` from `since` to current length and return the first

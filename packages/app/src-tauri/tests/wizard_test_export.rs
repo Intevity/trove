@@ -15,7 +15,9 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+
+use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -260,7 +262,7 @@ fn collector_lock() -> &'static Mutex<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_export_succeeds_against_a_stub_otlp_receiver() {
-    let _guard = collector_lock().lock().expect("collector_lock poisoned");
+    let _guard = collector_lock().lock().await;
     let Some(binary) = locate_binary() else {
         eprintln!(
             "[wizard_test_export] skipping: no trove-otelcol binary found. \
@@ -305,7 +307,7 @@ async fn test_export_succeeds_against_a_stub_otlp_receiver() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_export_reports_failure_when_backend_unreachable() {
-    let _guard = collector_lock().lock().expect("collector_lock poisoned");
+    let _guard = collector_lock().lock().await;
     let Some(binary) = locate_binary() else {
         eprintln!("[wizard_test_export] skipping: no trove-otelcol binary found.");
         return;
