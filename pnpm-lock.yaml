@@ -97,6 +97,16 @@ importers:
         specifier: ^5.4.14
         version: 5.4.21(@types/node@24.12.2)
 
+  packages/collector-presets:
+    dependencies:
+      '@trove/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      typescript:
+        specifier: '*'
+        version: 5.9.3
+
   packages/shared:
     dependencies:
       zod:

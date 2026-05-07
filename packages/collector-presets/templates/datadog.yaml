@@ -1,0 +1,60 @@
+# trove-otelcol — Datadog preset.
+#
+# Uses Datadog's OTLP/HTTP intake. The `site` selects the Datadog region
+# (e.g. datadoghq.com, datadoghq.eu) and shapes the endpoint URL.
+# Authentication is the API key in a `DD-API-KEY` header. We use the
+# generic OTLP/HTTP exporter rather than the vendor `datadog` exporter
+# component to keep the ocb manifest slim — the vendor component pulls
+# in a sizable client library and isn't needed for basic intake.
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+    path: /health
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+  attributes/redact:
+    actions:
+      - { key: user.prompt, action: delete }
+      - { key: prompt.text, action: delete }
+  resource/source:
+    attributes:
+      - { key: trove.source, value: datadog, action: insert }
+
+exporters:
+  otlphttp/datadog:
+    endpoint: ${env:TROVE_DATADOG_ENDPOINT}
+    headers:
+      DD-API-KEY: ${env:TROVE_DATADOG_API_KEY}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/datadog]
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/datadog]
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/datadog]
+  telemetry:
+    logs:
+      level: info
+      encoding: console
+    metrics:
+      level: none

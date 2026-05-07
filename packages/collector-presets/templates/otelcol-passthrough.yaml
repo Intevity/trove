@@ -1,0 +1,58 @@
+# trove-otelcol — local passthrough preset.
+#
+# For users already running their own OpenTelemetry Collector (e.g. a
+# docker-compose self-hosted SigNoz, a corporate ingest gateway). Trove's
+# sidecar acts as the local OTLP target every harness writes to, then
+# forwards everything to the user-chosen endpoint without auth. The
+# user is responsible for whatever security their downstream collector
+# expects — Trove doesn't add credentials in this mode.
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+    path: /health
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+  attributes/redact:
+    actions:
+      - { key: user.prompt, action: delete }
+      - { key: prompt.text, action: delete }
+  resource/source:
+    attributes:
+      - { key: trove.source, value: otelcol-passthrough, action: insert }
+
+exporters:
+  otlphttp/passthrough:
+    endpoint: ${env:TROVE_PASSTHROUGH_ENDPOINT}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/passthrough]
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/passthrough]
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/passthrough]
+  telemetry:
+    logs:
+      level: info
+      encoding: console
+    metrics:
+      level: none

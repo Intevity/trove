@@ -5,6 +5,7 @@
 //! it down cleanly on app exit. State transitions are published via a
 //! [`tokio::sync::watch`] channel that Sprint 6 will surface to the UI.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -49,6 +50,13 @@ pub struct SupervisorOptions {
     /// How long to wait for the child to exit after a graceful kill
     /// before escalating to SIGKILL.
     pub shutdown_grace: Duration,
+    /// Environment variables to set on every spawned child. Sprint 5
+    /// PR 2 uses this to pass backend-specific values
+    /// (`TROVE_SIGNOZ_INGESTION_KEY`, `TROVE_HONEYCOMB_TEAM`, etc.) the
+    /// `${env:...}` placeholders in `collector.yaml` reference. Always
+    /// passed via [`Command::envs`](tokio::process::Command::envs) —
+    /// never argv — so secrets cannot leak via `ps`.
+    pub env: HashMap<String, String>,
 }
 
 impl SupervisorOptions {
@@ -65,7 +73,15 @@ impl SupervisorOptions {
             restart_max_backoff: Duration::from_secs(5),
             restart_healthy_threshold: Duration::from_secs(30),
             shutdown_grace: Duration::from_secs(5),
+            env: HashMap::new(),
         }
+    }
+
+    /// Builder helper. Replaces any previous env map.
+    #[must_use]
+    pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
+        self.env = env;
+        self
     }
 }
 
@@ -270,6 +286,10 @@ async fn supervise_loop(
 fn spawn_child(opts: &SupervisorOptions) -> std::io::Result<Child> {
     let mut cmd = Command::new(&opts.binary_path);
     cmd.arg("--config").arg(&opts.config_path);
+    // Backend-specific env vars (TROVE_SIGNOZ_INGESTION_KEY etc.) the
+    // collector.yaml's ${env:...} placeholders reference. Routed via
+    // `envs` rather than argv so secrets do not surface in `ps`.
+    cmd.envs(&opts.env);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.kill_on_drop(true);

@@ -1,0 +1,60 @@
+# trove-otelcol — Honeycomb preset.
+#
+# Uses OTLP/HTTP. Honeycomb authenticates via the `x-honeycomb-team`
+# header (the API key); the dataset is selected per-signal via
+# `x-honeycomb-dataset`. Both come from the user's wizard input — the
+# team key is a secret pulled from the keychain at spawn time, the
+# dataset is a non-secret string passed via env for consistency.
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+    path: /health
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+  attributes/redact:
+    actions:
+      - { key: user.prompt, action: delete }
+      - { key: prompt.text, action: delete }
+  resource/source:
+    attributes:
+      - { key: trove.source, value: honeycomb, action: insert }
+
+exporters:
+  otlphttp/honeycomb:
+    endpoint: https://api.honeycomb.io
+    headers:
+      x-honeycomb-team: ${env:TROVE_HONEYCOMB_TEAM}
+      x-honeycomb-dataset: ${env:TROVE_HONEYCOMB_DATASET}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/honeycomb]
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/honeycomb]
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/honeycomb]
+  telemetry:
+    logs:
+      level: info
+      encoding: console
+    metrics:
+      level: none

@@ -1,0 +1,60 @@
+# trove-otelcol — Grafana Cloud preset.
+#
+# Grafana Cloud's OTLP gateway speaks OTLP/HTTP. The endpoint is
+# region-specific and copied from the user's stack ("OTel Endpoint" in
+# the Grafana Cloud onboarding page). Auth is HTTP Basic; the wizard
+# captures the already-encoded `Basic <base64>` value the user generates
+# from their instance-id and access-policy token, and passes it through
+# verbatim as the Authorization header.
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+    path: /health
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+  attributes/redact:
+    actions:
+      - { key: user.prompt, action: delete }
+      - { key: prompt.text, action: delete }
+  resource/source:
+    attributes:
+      - { key: trove.source, value: grafana-cloud, action: insert }
+
+exporters:
+  otlphttp/grafana:
+    endpoint: ${env:TROVE_GRAFANA_ENDPOINT}
+    headers:
+      Authorization: ${env:TROVE_GRAFANA_AUTH}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/grafana]
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/grafana]
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlphttp/grafana]
+  telemetry:
+    logs:
+      level: info
+      encoding: console
+    metrics:
+      level: none

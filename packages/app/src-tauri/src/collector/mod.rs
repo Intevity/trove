@@ -7,6 +7,7 @@
 //! backoff capped at 5s) and exposes its current state via a
 //! [`tokio::sync::watch`] channel that Sprint 6 will surface to the UI.
 
+pub mod codegen;
 pub mod health;
 pub mod lifecycle;
 pub mod logs;
@@ -18,3 +19,9 @@ pub mod logs;
 pub use lifecycle::{
     CollectorState, StartError, Supervisor, SupervisorHandle, SupervisorOptions,
 };
+
+/// Tauri-managed state slot for the live supervisor. Sprint 5 PR 2
+/// wraps the handle so `save_backend` / `clear_backend` can swap it
+/// during a collector reload: take → await `shutdown` outside the
+/// lock → start a fresh supervisor → put it back.
+pub type SupervisorState = std::sync::Mutex<Option<SupervisorHandle>>;

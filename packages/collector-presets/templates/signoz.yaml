@@ -1,0 +1,62 @@
+# trove-otelcol — SigNoz cloud preset.
+#
+# Uses OTLP/gRPC with TLS. The endpoint encodes the user's region
+# (`ingest.<region>.signoz.cloud:443`) and authentication is a single
+# header. ${env:...} variables are populated by the Rust supervisor at
+# spawn time from the keychain (TROVE_SIGNOZ_INGESTION_KEY) and the
+# persisted Backend struct (TROVE_SIGNOZ_ENDPOINT). Trove never rewrites
+# this file with secrets inline.
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+    path: /health
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+  attributes/redact:
+    actions:
+      - { key: user.prompt, action: delete }
+      - { key: prompt.text, action: delete }
+  resource/source:
+    attributes:
+      - { key: trove.source, value: signoz, action: insert }
+
+exporters:
+  otlp/signoz:
+    endpoint: ${env:TROVE_SIGNOZ_ENDPOINT}
+    tls:
+      insecure: false
+    headers:
+      signoz-ingestion-key: ${env:TROVE_SIGNOZ_INGESTION_KEY}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlp/signoz]
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlp/signoz]
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes/redact, resource/source]
+      exporters: [otlp/signoz]
+  telemetry:
+    logs:
+      level: info
+      encoding: console
+    metrics:
+      level: none

@@ -13,6 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
+use std::collections::HashMap;
+
 use crate::adapters::{
     ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, gemini_cli, qwen_code,
 };
@@ -20,6 +22,7 @@ use crate::app_state::{
     self, AppState, Backend, BackendDraft, backend_secret_accounts, drain_secrets_from_draft,
     harness_config_from_apply,
 };
+use crate::collector::codegen;
 use crate::detect::{DetectedHarness, detect_all};
 use crate::harness::HarnessId;
 use crate::secrets;
@@ -122,11 +125,9 @@ pub fn get_app_state(app: tauri::AppHandle) -> Result<AppState, IpcError> {
 
 /// Persist a new backend chosen by the wizard. Stores each secret in
 /// the OS keychain, replaces the raw values in `draft` with [`SecretRef`]
-/// handles, and writes the resulting [`Backend`] to `state.json`.
-///
-/// PR 2 of this sprint hooks the collector restart in here — once the
-/// state is saved, we'll regenerate `collector.yaml` from the new
-/// preset and recycle the supervised sidecar.
+/// handles, writes the resulting [`Backend`] to `state.json`, then
+/// regenerates `collector.yaml` and recycles the supervised sidecar so
+/// telemetry begins flowing to the new destination.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn save_backend(app: tauri::AppHandle, draft: BackendDraft) -> Result<Backend, IpcError> {
@@ -140,18 +141,17 @@ pub fn save_backend(app: tauri::AppHandle, draft: BackendDraft) -> Result<Backen
     state.backend = Some(backend.clone());
     app_state::save(&app, &state)?;
 
-    // PR 2: regenerate collector.yaml + restart the supervisor here.
-    tracing::info!(
-        kind = ?std::mem::discriminant(&backend),
-        "backend saved; collector reload pending PR 2",
-    );
+    let rendered = codegen::render(&backend).map_err(render_error_to_ipc)?;
+    let env = unwrap_env(rendered.env);
+    crate::reload_collector(&app, &rendered.yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
 
     Ok(backend)
 }
 
-/// Wipe the active backend: delete every keychain entry it referenced
-/// and null out `state.backend`. Idempotent — a no-op when no backend
-/// is currently saved.
+/// Wipe the active backend: delete every keychain entry it referenced,
+/// null out `state.backend`, restore the smoke `collector.yaml`, and
+/// recycle the supervisor with no env vars set. Idempotent — a no-op
+/// when no backend is currently saved.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn clear_backend(app: tauri::AppHandle) -> Result<(), IpcError> {
@@ -161,8 +161,35 @@ pub fn clear_backend(app: tauri::AppHandle) -> Result<(), IpcError> {
             secrets::delete(&account)?;
         }
         app_state::save(&app, &state)?;
+
+        crate::reload_collector(&app, crate::smoke_config_yaml(), HashMap::new())
+            .map_err(|e| boot_error_to_ipc(&e))?;
     }
     Ok(())
+}
+
+/// Convert codegen's secrecy-wrapped env map into the plain map the
+/// supervisor's `Command::envs` consumes. Each [`Zeroizing`] string
+/// drops as the iterator advances; a momentary plain-`String` copy
+/// lives in the new `HashMap` until the supervisor passes it to the
+/// child. We accept that trade-off — `OsString` (which is what
+/// `Command::env` actually stores) doesn't impl `Zeroize`.
+fn unwrap_env(env: HashMap<String, zeroize::Zeroizing<String>>) -> HashMap<String, String> {
+    env.into_iter().map(|(k, v)| (k, (*v).clone())).collect()
+}
+
+fn render_error_to_ipc(err: codegen::RenderError) -> IpcError {
+    match err {
+        codegen::RenderError::Keychain { account, source } => IpcError::Internal {
+            reason: format!("codegen could not read keychain entry {account}: {source}"),
+        },
+    }
+}
+
+fn boot_error_to_ipc(err: &crate::CollectorBootError) -> IpcError {
+    IpcError::Internal {
+        reason: format!("collector reload failed: {err}"),
+    }
 }
 
 fn home_dir() -> Result<PathBuf, IpcError> {
