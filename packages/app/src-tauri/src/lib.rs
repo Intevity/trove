@@ -20,7 +20,9 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
-use crate::collector::{Supervisor, SupervisorHandle, SupervisorOptions};
+use std::sync::Mutex;
+
+use crate::collector::{Supervisor, SupervisorHandle, SupervisorOptions, SupervisorState};
 
 /// The smoke-test Collector configuration. Sprint 1 ships this baked into
 /// the binary; Sprint 5's wizard codegens a backend-specific YAML over the
@@ -51,19 +53,18 @@ pub fn run() {
         .setup(|app| {
             tray::setup(app.handle())?;
 
-            match start_collector(app.handle()) {
-                Ok(handle) => {
-                    app.manage(handle);
-                }
+            // Always register a SupervisorState slot — even when the
+            // initial spawn fails (missing sidecar binary in dev, etc.).
+            // save_backend can spawn a fresh supervisor into the empty
+            // slot once the user finishes the wizard.
+            let initial = match start_collector(app.handle()) {
+                Ok(handle) => Some(handle),
                 Err(e) => {
-                    // The collector is critical to Trove's job, but a
-                    // missing binary in dev (no `pnpm bundle:sidecar` run
-                    // yet) shouldn't prevent the UI from launching.
-                    // Sprint 6's dashboard surfaces the failure to the
-                    // user; Sprint 1 just logs and continues.
                     tracing::error!(error = %e, "could not start collector supervisor");
+                    None
                 }
-            }
+            };
+            app.manage::<SupervisorState>(Mutex::new(initial));
 
             Ok(())
         })
@@ -146,12 +147,83 @@ fn start_collector(app: &AppHandle) -> Result<SupervisorHandle, CollectorBootErr
     Ok(handle)
 }
 
+/// Atomically rewrite `collector.yaml` and recycle the supervised
+/// sidecar. Sprint 5 PR 2 calls this from `save_backend` (with codegen
+/// output) and `clear_backend` (with the smoke config). The shutdown
+/// of the previous child happens outside the [`SupervisorState`] lock
+/// so we never hold a [`std::sync::Mutex`] across an await.
+///
+/// The ~200ms gap between the old child exiting and the new child
+/// passing its health check is bounded by [`SupervisorOptions::shutdown_grace`]
+/// and the OS spawn cost. Harness OTLP clients buffer and retry through
+/// a gap of that size, so signals already in flight are not dropped in
+/// practice.
+pub fn reload_collector<S: std::hash::BuildHasher>(
+    app: &AppHandle,
+    yaml: &str,
+    env: std::collections::HashMap<String, String, S>,
+) -> Result<(), CollectorBootError> {
+    let binary_path = sidecar_binary_path()?;
+    let config_path = collector_config_path(app)?;
+    let log_path = ensure_log_path(app)?;
+
+    safety::atomic::write_atomic(&config_path, yaml.as_bytes())?;
+
+    // Take the existing handle out, drop the lock, await shutdown,
+    // start fresh, then re-acquire the lock to insert the new handle.
+    // Holding the std::sync::Mutex across `block_on(...shutdown())`
+    // would make the whole thing a !Send mess.
+    let previous = {
+        let state = app.state::<SupervisorState>();
+        let mut guard = state.lock().expect("supervisor state poisoned");
+        guard.take()
+    };
+    if let Some(prev) = previous {
+        tauri::async_runtime::block_on(prev.shutdown());
+    }
+
+    tracing::info!(
+        ?binary_path,
+        ?config_path,
+        ?log_path,
+        env_keys = ?env.keys().collect::<Vec<_>>(),
+        "restarting trove-otelcol with new backend config",
+    );
+    // Re-collect into the supervisor's default-hasher HashMap. The
+    // `S: BuildHasher` parameter exists only to keep callers flexible
+    // (clippy::implicit_hasher); SupervisorOptions stores a concrete
+    // map and doesn't propagate the generic.
+    let env: std::collections::HashMap<String, String> = env.into_iter().collect();
+    let opts = SupervisorOptions::new(binary_path, config_path, log_path).with_env(env);
+    let new_handle = Supervisor::start(opts)?;
+    {
+        let state = app.state::<SupervisorState>();
+        let mut guard = state.lock().expect("supervisor state poisoned");
+        *guard = Some(new_handle);
+    }
+    Ok(())
+}
+
+/// The bytes of the smoke configuration the supervisor falls back to
+/// when no backend has been chosen yet. Exposed so `clear_backend` can
+/// rewrite `collector.yaml` to the pass-through default.
+#[must_use]
+pub fn smoke_config_yaml() -> &'static str {
+    SMOKE_CONFIG_YAML
+}
+
 fn shutdown_collector(handle: &AppHandle) {
-    let Some(state) = handle.try_state::<SupervisorHandle>() else {
+    let Some(state) = handle.try_state::<SupervisorState>() else {
         return;
     };
-    tracing::info!("shutting down trove-otelcol supervisor");
-    tauri::async_runtime::block_on(state.shutdown());
+    let supervisor = {
+        let mut guard = state.lock().expect("supervisor state poisoned");
+        guard.take()
+    };
+    if let Some(supervisor) = supervisor {
+        tracing::info!("shutting down trove-otelcol supervisor");
+        tauri::async_runtime::block_on(supervisor.shutdown());
+    }
 }
 
 fn sidecar_binary_path() -> Result<PathBuf, CollectorBootError> {
@@ -169,13 +241,21 @@ fn sidecar_binary_path() -> Result<PathBuf, CollectorBootError> {
 }
 
 fn ensure_collector_config(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
-    let dir = app.path().app_data_dir()?;
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("collector.yaml");
+    let path = collector_config_path(app)?;
     if !path.exists() {
         std::fs::write(&path, SMOKE_CONFIG_YAML)?;
     }
     Ok(path)
+}
+
+/// Resolve `collector.yaml`'s absolute path, creating the parent
+/// directory if missing. Unlike [`ensure_collector_config`], does not
+/// write any default content — used by [`reload_collector`] which
+/// always overwrites the file via an atomic write.
+fn collector_config_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
+    let dir = app.path().app_data_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("collector.yaml"))
 }
 
 fn ensure_log_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
@@ -184,8 +264,12 @@ fn ensure_log_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
     Ok(dir.join("collector.log"))
 }
 
+/// Failures from `start_collector` / `reload_collector`. Visible as
+/// `pub` because `reload_collector` is itself `pub` (called by the IPC
+/// layer) and Rust's private-interfaces lint forbids returning a
+/// `pub(crate)` type from a `pub fn`.
 #[derive(Debug, thiserror::Error)]
-enum CollectorBootError {
+pub enum CollectorBootError {
     #[error("could not resolve sidecar binary path: current_exe has no parent")]
     ExeWithoutParent,
     #[error(transparent)]
