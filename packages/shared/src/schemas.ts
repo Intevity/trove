@@ -108,3 +108,59 @@ export const AppState = z.object({
   harnesses: z.array(HarnessConfig),
 });
 export type AppState = z.infer<typeof AppState>;
+
+/** Which signal led the detector to flag a harness as installed.
+ *  Mirrors the Rust `DetectionMethod` enum. Listed in preference order:
+ *  config-dir wins over PATH wins over app-bundle when several fire. */
+export const DetectionMethod = z.enum(['path-binary', 'config-dir', 'app-bundle']);
+export type DetectionMethod = z.infer<typeof DetectionMethod>;
+
+/** Whether the host config currently emits telemetry. Tri-state because
+ *  malformed or missing files can't honestly answer; the dashboard maps
+ *  `unknown` to a neutral icon. Mirrors the Rust `TelemetryStatus`. */
+export const TelemetryStatus = z.enum(['on', 'off', 'unknown']);
+export type TelemetryStatus = z.infer<typeof TelemetryStatus>;
+
+/** One row in the dashboard's "Detected harnesses" list. Mirrors the
+ *  Rust `DetectedHarness` struct (camelCase keys on the wire). */
+export const DetectedHarness = z.object({
+  id: HarnessId,
+  detected: z.boolean(),
+  configPath: z.string().nullable(),
+  telemetry: TelemetryStatus,
+  detectionMethod: DetectionMethod.nullable(),
+});
+export type DetectedHarness = z.infer<typeof DetectedHarness>;
+
+/** Discriminated union mirroring the Rust `ipc::IpcError` enum.
+ *  The TS side branches on `kind` to render specific UI affordances
+ *  (e.g. surface the conflicting `path` for region-conflict). */
+export const IpcError = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('config-unparseable'),
+    path: z.string(),
+    reason: z.string(),
+  }),
+  z.object({
+    kind: z.literal('region-conflict'),
+    path: z.string(),
+  }),
+  z.object({
+    kind: z.literal('harness-not-detected'),
+    id: HarnessId,
+  }),
+  z.object({
+    kind: z.literal('harness-not-implemented'),
+    id: HarnessId,
+  }),
+  z.object({
+    kind: z.literal('io'),
+    path: z.string(),
+    reason: z.string(),
+  }),
+  z.object({
+    kind: z.literal('internal'),
+    reason: z.string(),
+  }),
+]);
+export type IpcError = z.infer<typeof IpcError>;
