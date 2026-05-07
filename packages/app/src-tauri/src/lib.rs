@@ -7,6 +7,9 @@
 //! cleanly on `RunEvent::ExitRequested`.
 
 pub mod collector;
+pub mod detect;
+pub mod harness;
+pub mod ipc;
 pub mod safety;
 mod tray;
 
@@ -19,8 +22,7 @@ use crate::collector::{Supervisor, SupervisorHandle, SupervisorOptions};
 /// The smoke-test Collector configuration. Sprint 1 ships this baked into
 /// the binary; Sprint 5's wizard codegens a backend-specific YAML over the
 /// top of this default.
-const SMOKE_CONFIG_YAML: &str =
-    include_str!("../../../../resources/otelcol/smoke-config.yaml");
+const SMOKE_CONFIG_YAML: &str = include_str!("../../../../resources/otelcol/smoke-config.yaml");
 
 /// Returns the application version baked in by Cargo at build time.
 #[must_use]
@@ -34,6 +36,9 @@ pub fn run() {
     init_tracing();
 
     let app = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            ipc::commands::list_detected_harnesses,
+        ])
         .setup(|app| {
             tray::setup(app.handle())?;
 
@@ -85,7 +90,7 @@ pub fn run() {
 /// orphans onto PID 1.
 #[cfg(unix)]
 fn install_signal_handlers(app: &AppHandle) {
-    use tokio::signal::unix::{SignalKind, signal};
+    use tokio::signal::unix::{signal, SignalKind};
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let term = signal(SignalKind::terminate());
@@ -106,7 +111,7 @@ fn install_signal_handlers(app: &AppHandle) {
 fn install_signal_handlers(_app: &AppHandle) {}
 
 fn init_tracing() {
-    use tracing_subscriber::{EnvFilter, fmt};
+    use tracing_subscriber::{fmt, EnvFilter};
     let _ = fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),

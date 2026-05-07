@@ -49,6 +49,11 @@ jsonc-parser = { version = "0.26", features = ["cst", "serde"] }
 toml_edit = "0.22"
 serde_yml = "0.0.12"
 hex = "0.4"
+# Sprint 3: harness detection. `which` resolves PATH binaries
+# cross-platform; `dirs` resolves the user's home directory uniformly
+# (Windows %USERPROFILE%, macOS/Linux $HOME).
+which = "6"
+dirs = "5"
 
 [dev-dependencies]
 proptest = "1"
