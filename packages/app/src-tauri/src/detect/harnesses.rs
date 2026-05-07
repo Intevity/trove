@@ -116,18 +116,34 @@ fn check_gemini_like_telemetry(text: &str) -> TelemetryStatus {
     }
 }
 
-/// Codex CLI exposes telemetry through a `[otel]` table. Sprint 4 will
-/// refine this when the codex-cli adapter lands; for Sprint 3 the
-/// presence of the table is a sufficient "On" heuristic.
+/// Codex CLI's telemetry "master switch" is the kind of the exporter
+/// configured under `[otel.exporter]` / `[otel.trace_exporter]` /
+/// `[otel.metrics_exporter]`. Codex has no boolean enable toggle —
+/// setting any exporter `kind` to `"otlp-http"` or `"otlp-grpc"` turns
+/// OTLP emission on. Presence of the Trove fence also implies On
+/// (Trove only writes the fence when it has installed an OTLP exporter).
+/// Returns Unknown only on TOML parse failure.
 fn check_codex_telemetry(text: &str) -> TelemetryStatus {
+    if text.contains("# trove:start") {
+        return TelemetryStatus::On;
+    }
     let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
         return TelemetryStatus::Unknown;
     };
-    if doc.get("otel").is_some() {
-        TelemetryStatus::On
-    } else {
-        TelemetryStatus::Off
+    let Some(otel) = doc.get("otel").and_then(|v| v.as_table()) else {
+        return TelemetryStatus::Off;
+    };
+    for slot in ["exporter", "trace_exporter", "metrics_exporter"] {
+        let kind = otel
+            .get(slot)
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("kind"))
+            .and_then(|v| v.as_str());
+        if matches!(kind, Some("otlp-http" | "otlp-grpc")) {
+            return TelemetryStatus::On;
+        }
     }
+    TelemetryStatus::Off
 }
 
 #[cfg(test)]
@@ -256,13 +272,56 @@ mod tests {
     }
 
     #[test]
-    fn codex_telemetry_on_when_otel_table_present() {
+    fn codex_telemetry_on_when_otlp_http_exporter_configured() {
         let home = tempdir().unwrap();
         let cfg = home.path().join(".codex").join("config.toml");
-        write_settings(&cfg, "[otel]\nendpoint = \"http://127.0.0.1:4318\"\n");
+        write_settings(
+            &cfg,
+            "[otel.exporter]\nkind = \"otlp-http\"\nendpoint = \"http://127.0.0.1:4318/v1/logs\"\nprotocol = \"binary\"\n",
+        );
 
         let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
         assert_eq!(result.telemetry, TelemetryStatus::On);
+    }
+
+    #[test]
+    fn codex_telemetry_on_when_only_trace_or_metrics_exporter_is_otlp() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(
+            &cfg,
+            "[otel.metrics_exporter]\nkind = \"otlp-grpc\"\nendpoint = \"http://127.0.0.1:4317\"\n",
+        );
+
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::On);
+    }
+
+    #[test]
+    fn codex_telemetry_on_when_trove_fence_present() {
+        // The fence is Trove's signature; treat it as authoritative even
+        // before TOML parsing succeeds.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(
+            &cfg,
+            "# trove:start hash=abc keys=otel.exporter\n[otel.exporter]\nkind = \"otlp-http\"\nendpoint = \"http://127.0.0.1:4318/v1/logs\"\nprotocol = \"binary\"\n# trove:end\n",
+        );
+
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::On);
+    }
+
+    #[test]
+    fn codex_telemetry_off_when_exporter_kind_is_none() {
+        // Codex's `none` exporter means "do not emit" — the user has
+        // explicitly disabled, so we should not surface as On.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, "[otel.exporter]\nkind = \"none\"\n");
+
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::Off);
     }
 
     #[test]
@@ -270,6 +329,16 @@ mod tests {
         let home = tempdir().unwrap();
         let cfg = home.path().join(".codex").join("config.toml");
         write_settings(&cfg, "[user]\nname = \"a\"\n");
+
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::Off);
+    }
+
+    #[test]
+    fn codex_telemetry_off_when_otel_table_has_only_unrelated_keys() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, "[otel]\nlog_user_prompt = false\n");
 
         let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
         assert_eq!(result.telemetry, TelemetryStatus::Off);
