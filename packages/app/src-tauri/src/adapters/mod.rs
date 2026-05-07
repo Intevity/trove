@@ -1,12 +1,16 @@
 //! Per-harness adapters that translate `ApplyOptions` into a managed
-//! region for the host config file. Sprint 3 ships claude-code (PR 2)
-//! and gemini-cli (PR 3); Sprint 4 will extract a shared trait once
-//! four adapters exist to inform the design.
+//! region for the host config file. Tier 1 covers four harnesses:
+//! claude-code, codex-cli, gemini-cli, qwen-code.
 //!
 //! The Tauri `#[command]` layer in `crate::ipc` dispatches by
-//! [`HarnessId`] into the per-adapter free functions. The pattern is
-//! intentionally simple — each adapter has the same shape (`preview`,
-//! `apply`, `revert`) so Sprint 4's trait extraction is mechanical.
+//! [`crate::harness::HarnessId`] into the per-adapter free functions.
+//! Each adapter is a thin wrapper around [`common`]: it declares a
+//! `const SPEC: HarnessSpec` with its config path / format / region
+//! builder and delegates `preview` / `apply` / `revert` to the shared
+//! helpers. See `documentation/adding-a-harness.md` for the contract
+//! contributors must satisfy.
+
+mod common;
 
 pub mod claude_code;
 pub mod codex_cli;

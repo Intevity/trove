@@ -12,19 +12,12 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::ipc::IpcError;
-use crate::safety::atomic::write_atomic;
-use crate::safety::backup::{backup_file, prune_backups};
-use crate::safety::sentinels::{
-    Format, ManagedRegion, SentinelError, extract_region, remove_region, upsert_region,
-};
+use crate::safety::sentinels::{Format, ManagedRegion, SentinelError};
 
-use super::{ApplyOptions, BACKUPS_TO_KEEP, PatchPreview, PreviewStatus, TrovePatch};
-
-const CONFIG_DIR: &str = ".claude";
-const CONFIG_FILE: &str = "settings.json";
+use super::common::{self, HarnessSpec};
+use super::{ApplyOptions, PatchPreview, TrovePatch};
 
 /// The base set of `OTel` env vars Trove writes into `env`. Custom
 /// attributes and the prompt-logging toggle are appended at apply time
@@ -39,196 +32,34 @@ const MANAGED_ENV_KEYS: &[(&str, &str)] = &[
     ("OTEL_LOGS_EXPORT_INTERVAL", "5000"),
 ];
 
+const SPEC: HarnessSpec = HarnessSpec {
+    config_dir: ".claude",
+    config_file: "settings.json",
+    format: Format::Json,
+    build_region,
+};
+
 /// Resolve the absolute path of the Claude Code settings file under
 /// `home`. Pure helper so tests can scope to a `tempdir`.
 #[must_use]
 pub fn config_path(home: &Path) -> PathBuf {
-    home.join(CONFIG_DIR).join(CONFIG_FILE)
+    common::config_path(&SPEC, home)
 }
 
 /// Compute the diff between the current file and what an apply with
-/// `opts` would write. Always succeeds when the file is parseable;
-/// returns `IpcError::ConfigUnparseable` otherwise.
+/// `opts` would write.
 pub fn preview(home: &Path, opts: &ApplyOptions) -> Result<PatchPreview, IpcError> {
-    let path = config_path(home);
-    let (current, _existed) = read_or_empty(&path)?;
-    let working = if current.is_empty() { "{}".to_string() } else { current.clone() };
-
-    let region = build_region(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    let status = classify(&working, &region, &path)?;
-
-    let after = upsert_region(Format::Json, &working, &region).map_err(|e| match e {
-        SentinelError::Malformed { .. } | SentinelError::RegionMalformed(_) => {
-            IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            }
-        }
-        other => IpcError::Internal {
-            reason: other.to_string(),
-        },
-    })?;
-
-    Ok(PatchPreview {
-        config_path: path,
-        format: Format::Json,
-        before: current,
-        after,
-        status,
-    })
+    common::preview(&SPEC, home, opts)
 }
 
-/// Apply the patch. Backs the existing file up, atomically writes the
-/// new content, and prunes old backups. Idempotent when the existing
-/// managed region matches what we'd write; refuses with
-/// [`IpcError::RegionConflict`] when it doesn't (Sprint 8 will replace
-/// the refusal with a 3-way merge UI).
+/// Apply the patch. See [`common::apply`] for the safety contract.
 pub fn apply(home: &Path, opts: &ApplyOptions) -> Result<TrovePatch, IpcError> {
-    let path = config_path(home);
-    let (current, existed) = read_or_empty(&path)?;
-    let working = if current.is_empty() { "{}".to_string() } else { current.clone() };
-
-    let region = build_region(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    match classify(&working, &region, &path)? {
-        PreviewStatus::Idempotent => {
-            // Existing block already matches; return the current
-            // metadata without re-writing. The file hash reflects what's
-            // on disk now.
-            return Ok(TrovePatch {
-                managed_block_hash: region.hash.clone(),
-                file_hash_at_last_write: hash_hex(current.as_bytes()),
-                format: Format::Json,
-            });
-        }
-        PreviewStatus::Conflict => {
-            return Err(IpcError::RegionConflict {
-                path: path.display().to_string(),
-            });
-        }
-        PreviewStatus::Fresh => {}
-    }
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| IpcError::Io {
-            path: parent.display().to_string(),
-            reason: e.to_string(),
-        })?;
-    }
-
-    if existed {
-        backup_file(&path).map_err(|e| IpcError::Io {
-            path: path.display().to_string(),
-            reason: format!("backup failed: {e}"),
-        })?;
-    }
-
-    let after = upsert_region(Format::Json, &working, &region).map_err(|e| match e {
-        SentinelError::Malformed { .. } | SentinelError::RegionMalformed(_) => {
-            IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            }
-        }
-        other => IpcError::Internal {
-            reason: other.to_string(),
-        },
-    })?;
-
-    write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    // Best-effort prune; a failure here doesn't poison the apply (the
-    // user's config has already been written successfully).
-    let _ = prune_backups(&path, BACKUPS_TO_KEEP);
-
-    Ok(TrovePatch {
-        managed_block_hash: region.hash.clone(),
-        file_hash_at_last_write: hash_hex(after.as_bytes()),
-        format: Format::Json,
-    })
+    common::apply(&SPEC, home, opts)
 }
 
-/// Remove any Trove-managed region from the host file. Permissive: any
-/// region present is removed even without stored metadata, so a user
-/// who reinstalls Trove on a fresh machine can still unwire the
-/// previous machine's patch. No-op when the file is missing or contains
-/// no managed region.
+/// Remove any Trove-managed region from the host file.
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    let path = config_path(home);
-    let (current, existed) = read_or_empty(&path)?;
-    if !existed {
-        return Ok(());
-    }
-
-    match extract_region(Format::Json, &current) {
-        Ok(Some(_)) => {}
-        Ok(None) => return Ok(()),
-        Err(e) => {
-            return Err(IpcError::ConfigUnparseable {
-                path: path.display().to_string(),
-                reason: e.to_string(),
-            });
-        }
-    }
-
-    backup_file(&path).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: format!("backup failed: {e}"),
-    })?;
-
-    let after = remove_region(Format::Json, &current).map_err(|e| IpcError::ConfigUnparseable {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
-        path: path.display().to_string(),
-        reason: e.to_string(),
-    })?;
-
-    let _ = prune_backups(&path, BACKUPS_TO_KEEP);
-
-    Ok(())
-}
-
-/// Read the host file or return an empty string if absent. The boolean
-/// distinguishes "missing" from "present and empty" — apply skips the
-/// backup step when the file didn't exist before.
-fn read_or_empty(path: &Path) -> Result<(String, bool), IpcError> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok((text, true)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((String::new(), false)),
-        Err(e) => Err(IpcError::Io {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        }),
-    }
-}
-
-/// Decide whether `region` would be a fresh write, an idempotent
-/// no-op, or a refused conflict against `current`.
-fn classify(
-    current: &str,
-    region: &ManagedRegion,
-    path: &Path,
-) -> Result<PreviewStatus, IpcError> {
-    match extract_region(Format::Json, current) {
-        Ok(Some(existing)) if existing.hash == region.hash => Ok(PreviewStatus::Idempotent),
-        Ok(Some(_)) => Ok(PreviewStatus::Conflict),
-        Ok(None) => Ok(PreviewStatus::Fresh),
-        Err(e) => Err(IpcError::ConfigUnparseable {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        }),
-    }
+    common::revert(&SPEC, home)
 }
 
 /// Build the [`ManagedRegion`] for a JSON merge of the env block.
@@ -263,15 +94,10 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     ManagedRegion::for_json_patches(&top)
 }
 
-fn hash_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::PreviewStatus;
     use std::fs;
     use tempfile::tempdir;
 
@@ -287,7 +113,6 @@ mod tests {
         let patch = apply(home.path(), &ApplyOptions::default()).unwrap();
 
         let written = read_config(home.path());
-        // Plan agent flag: assert the file actually parses as JSON.
         let parsed: Value = serde_json::from_str(&written).unwrap();
 
         let env = parsed.get("env").and_then(Value::as_object).unwrap();
@@ -312,7 +137,7 @@ mod tests {
         let after_second = read_config(home.path());
         assert_eq!(after_first, after_second);
         // The returned hashes are identical too.
-        let expected = hash_hex(after_second.as_bytes());
+        let expected = common::hash_hex(after_second.as_bytes());
         assert_eq!(second.file_hash_at_last_write, expected);
     }
 
@@ -323,7 +148,6 @@ mod tests {
         let home = tempdir().unwrap();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        // User has an unrelated top-level key plus their own env var.
         fs::write(
             &path,
             r#"{"theme":"dark","env":{"MY_USER_VAR":"keepme"}}"#,
@@ -336,7 +160,6 @@ mod tests {
         assert_eq!(parsed["theme"], "dark");
         let env = parsed.get("env").and_then(Value::as_object).unwrap();
         assert_eq!(env["MY_USER_VAR"], "keepme");
-        // And our keys are present alongside.
         assert_eq!(env["OTEL_EXPORTER_OTLP_ENDPOINT"], "http://127.0.0.1:4318");
     }
 
@@ -347,8 +170,6 @@ mod tests {
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
 
-        // Tamper with one of Trove's managed values without touching
-        // the sentinel _trove.hash field.
         let path = config_path(home.path());
         let written = read_config(home.path());
         let edited =
@@ -364,7 +185,6 @@ mod tests {
             other => panic!("expected RegionConflict, got {other:?}"),
         }
 
-        // The conflicting file is left untouched (no silent overwrite).
         assert_eq!(read_config(home.path()), edited);
     }
 
@@ -382,7 +202,6 @@ mod tests {
             matches!(err, IpcError::ConfigUnparseable { .. }),
             "expected ConfigUnparseable, got {err:?}"
         );
-        // The malformed file is left untouched.
         assert_eq!(read_config(home.path()), "{not valid json");
     }
 
@@ -391,7 +210,6 @@ mod tests {
     #[test]
     fn missing_parent_dir_is_created_automatically() {
         let home = tempdir().unwrap();
-        // .claude doesn't exist yet — apply must create it.
         assert!(!home.path().join(".claude").exists());
         apply(home.path(), &ApplyOptions::default()).unwrap();
         assert!(home.path().join(".claude").exists());
@@ -405,16 +223,12 @@ mod tests {
     fn readonly_parent_dir_yields_io_error() {
         use std::os::unix::fs::PermissionsExt;
         let home = tempdir().unwrap();
-        // Create the parent ahead of time and lock it down.
         let parent = home.path().join(".claude");
         fs::create_dir_all(&parent).unwrap();
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
 
         let err = apply(home.path(), &ApplyOptions::default()).unwrap_err();
-
-        // Restore permissions so tempdir cleanup works.
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
-
         assert!(
             matches!(err, IpcError::Io { .. }),
             "expected Io error, got {err:?}"
@@ -435,8 +249,6 @@ mod tests {
         revert(home.path()).unwrap();
 
         let after = read_config(home.path());
-        // The plan agent flagged this as load-bearing: byte-identity
-        // including the trailing newline.
         assert_eq!(after, original);
     }
 
@@ -486,7 +298,6 @@ mod tests {
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let preview = preview(home.path(), &ApplyOptions::default()).unwrap();
         assert_eq!(preview.status, PreviewStatus::Idempotent);
-        // Idempotent preview's after should equal the current file.
         assert_eq!(preview.after, preview.before);
     }
 
@@ -518,7 +329,6 @@ mod tests {
         let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
         let env = parsed.get("env").and_then(Value::as_object).unwrap();
         let attrs = env["OTEL_RESOURCE_ATTRIBUTES"].as_str().unwrap();
-        // BTreeMap is sorted; output is deterministic.
         assert_eq!(attrs, "env=prod,team=platform");
     }
 
@@ -557,7 +367,6 @@ mod tests {
         let err = apply(home.path(), &opts2).unwrap_err();
         assert!(matches!(err, IpcError::RegionConflict { .. }));
 
-        // Revert + re-apply with the new options succeeds.
         revert(home.path()).unwrap();
         apply(home.path(), &opts2).unwrap();
         let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
