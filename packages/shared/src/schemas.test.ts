@@ -4,6 +4,7 @@ import {
   ApplyOptions,
   AppState,
   Backend,
+  BackendDraft,
   ConflictState,
   DetectedHarness,
   DetectionMethod,
@@ -108,6 +109,49 @@ describe('Backend', () => {
         endpoint: 'not-a-url',
       }),
     ).toThrow();
+  });
+});
+
+describe('BackendDraft', () => {
+  it('parses each variant with raw string secrets', () => {
+    expect(
+      BackendDraft.parse({ kind: 'signoz', region: 'us', ingestionKey: 'raw-secret' }).kind,
+    ).toBe('signoz');
+    expect(
+      BackendDraft.parse({ kind: 'honeycomb', team: 'raw-secret', dataset: 'main' }).kind,
+    ).toBe('honeycomb');
+    expect(
+      BackendDraft.parse({
+        kind: 'grafana-cloud',
+        endpoint: 'https://grafana.example.com',
+        auth: 'raw-secret',
+      }).kind,
+    ).toBe('grafana-cloud');
+    expect(
+      BackendDraft.parse({ kind: 'datadog', site: 'datadoghq.com', apiKey: 'raw-secret' }).kind,
+    ).toBe('datadog');
+    expect(
+      BackendDraft.parse({
+        kind: 'otlp-generic',
+        endpoint: 'https://otel.example.com',
+        protocol: 'http',
+        headers: { 'x-api-key': 'raw-secret' },
+      }).kind,
+    ).toBe('otlp-generic');
+    expect(
+      BackendDraft.parse({
+        kind: 'otelcol-passthrough',
+        endpoint: 'https://collector.example.com',
+      }).kind,
+    ).toBe('otelcol-passthrough');
+  });
+
+  it('rejects an empty raw secret', () => {
+    expect(() => BackendDraft.parse({ kind: 'signoz', region: 'us', ingestionKey: '' })).toThrow();
+  });
+
+  it('rejects an unknown draft kind', () => {
+    expect(() => BackendDraft.parse({ kind: 'newrelic' })).toThrow();
   });
 });
 

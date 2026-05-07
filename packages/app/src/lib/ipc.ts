@@ -1,12 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   ApplyPatchResponse,
+  ClearBackendResponse,
+  GetAppStateResponse,
   IpcCommandName,
   IpcError,
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
   RevertPatchResponse,
+  SaveBackendResponse,
+  type AppState,
   type ApplyOptions,
+  type Backend,
+  type BackendDraft,
   type DetectedHarness,
   type HarnessId,
   type PatchPreview,
@@ -80,4 +86,24 @@ export async function applyPatch(harnessId: HarnessId, options: ApplyOptions): P
 /** Remove Trove's patch from the harness's host config. */
 export async function revertPatch(harnessId: HarnessId): Promise<void> {
   await invokeIpc(IpcCommandName.RevertPatch, { harnessId }, RevertPatchResponse);
+}
+
+/** Read the persisted `AppState`. A fresh launch with no `state.json`
+ *  yet returns the schema-v2 default (null backend, empty harnesses). */
+export async function getAppState(): Promise<AppState> {
+  return invokeIpc(IpcCommandName.GetAppState, undefined, GetAppStateResponse);
+}
+
+/** Persist a new backend chosen by the wizard. Stores each secret
+ *  inline in the OS keychain; the returned `Backend` carries
+ *  `SecretRef` handles only. PR 2 of Sprint 5 wires the collector
+ *  reload that follows a successful save. */
+export async function saveBackend(draft: BackendDraft): Promise<Backend> {
+  return invokeIpc(IpcCommandName.SaveBackend, { draft }, SaveBackendResponse);
+}
+
+/** Wipe the active backend: deletes every keychain entry it referenced
+ *  and nulls out `state.backend`. Idempotent. */
+export async function clearBackend(): Promise<void> {
+  await invokeIpc(IpcCommandName.ClearBackend, undefined, ClearBackendResponse);
 }

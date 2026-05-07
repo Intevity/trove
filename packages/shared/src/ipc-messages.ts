@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { DetectedHarness, PatchPreview, TrovePatch } from './schemas.js';
+import { AppState, Backend, DetectedHarness, PatchPreview, TrovePatch } from './schemas.js';
 
 /** Tauri command name → response shape table. Each command's request
  *  args are passed positionally via `invoke(name, args)`; only response
@@ -18,13 +18,32 @@ export const PreviewPatchResponse = PatchPreview;
 export type PreviewPatchResponse = z.infer<typeof PreviewPatchResponse>;
 
 /** `apply_patch` — args: { harnessId, options }. Returns a `TrovePatch`
- *  carrying the hash pair Sprint 5+ will persist into `state.json`. */
+ *  carrying the hash pair persisted into `state.json` for Sprint 8's
+ *  three-way conflict UI. The `HarnessConfig` upsert into `state.json`
+ *  happens server-side; the response is unchanged from Sprint 4. */
 export const ApplyPatchResponse = TrovePatch;
 export type ApplyPatchResponse = z.infer<typeof ApplyPatchResponse>;
 
 /** `revert_patch` — args: { harnessId }. Returns nothing on success. */
 export const RevertPatchResponse = z.null();
 export type RevertPatchResponse = z.infer<typeof RevertPatchResponse>;
+
+/** `get_app_state` — no arguments. Returns the current `AppState`
+ *  (a fresh launch with no `state.json` returns the default). */
+export const GetAppStateResponse = AppState;
+export type GetAppStateResponse = z.infer<typeof GetAppStateResponse>;
+
+/** `save_backend` — args: { draft: BackendDraft }. Stores each secret
+ *  in the OS keychain, persists the resulting Backend (with `SecretRef`
+ *  handles) into `state.json`, and triggers a collector reload (PR 2).
+ *  Returns the persisted Backend. */
+export const SaveBackendResponse = Backend;
+export type SaveBackendResponse = z.infer<typeof SaveBackendResponse>;
+
+/** `clear_backend` — no arguments. Deletes the keychain entries for
+ *  the active backend and nulls out `state.backend`. Returns nothing. */
+export const ClearBackendResponse = z.null();
+export type ClearBackendResponse = z.infer<typeof ClearBackendResponse>;
 
 /** Canonical Tauri command names, kept here so the IPC client wrapper
  *  and tests share a single source of truth. The Rust side registers
@@ -35,5 +54,8 @@ export const IpcCommandName = {
   PreviewPatch: 'preview_patch',
   ApplyPatch: 'apply_patch',
   RevertPatch: 'revert_patch',
+  GetAppState: 'get_app_state',
+  SaveBackend: 'save_backend',
+  ClearBackend: 'clear_backend',
 } as const;
 export type IpcCommandName = (typeof IpcCommandName)[keyof typeof IpcCommandName];

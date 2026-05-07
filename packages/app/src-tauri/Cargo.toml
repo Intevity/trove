@@ -54,6 +54,22 @@ hex = "0.4"
 # (Windows %USERPROFILE%, macOS/Linux $HOME).
 which = "6"
 dirs = "5"
+# Sprint 5 PR 1: backend secrets + app state persistence.
+# `keyring` is the unified wrapper over macOS Keychain / Linux Secret
+# Service / Windows Credential Manager — Trove never writes raw secrets
+# to disk. v3 requires explicit feature flags to opt into a platform
+# backend; `apple-native` covers macOS, `windows-native` covers Windows,
+# `sync-secret-service` covers Linux via D-Bus + libsecret. Without
+# these the crate compiles but every operation returns `NoEntry`.
+# `zeroize` wraps in-memory secret strings so the heap buffer is wiped
+# on drop (codegen reads from keychain, hands env vars to the child
+# process, then drops; without Zeroizing the value lingers).
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [dev-dependencies]
 proptest = "1"
