@@ -48,6 +48,32 @@ pub enum IpcError {
     Internal { reason: String },
 }
 
+impl From<crate::secrets::SecretsError> for IpcError {
+    fn from(value: crate::secrets::SecretsError) -> Self {
+        // Keychain operations don't carry a meaningful filesystem path —
+        // map to Internal with the underlying message preserved. The
+        // wizard surfaces these distinctly via the `kind` discriminator
+        // on the TS side.
+        IpcError::Internal {
+            reason: format!("keychain: {value}"),
+        }
+    }
+}
+
+impl From<crate::app_state::AppStateError> for IpcError {
+    fn from(value: crate::app_state::AppStateError) -> Self {
+        match value {
+            crate::app_state::AppStateError::Io { path, source } => IpcError::Io {
+                path: path.display().to_string(),
+                reason: source.to_string(),
+            },
+            other => IpcError::Internal {
+                reason: other.to_string(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

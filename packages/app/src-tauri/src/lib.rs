@@ -7,11 +7,13 @@
 //! cleanly on `RunEvent::ExitRequested`.
 
 pub mod adapters;
+pub mod app_state;
 pub mod collector;
 pub mod detect;
 pub mod harness;
 pub mod ipc;
 pub mod safety;
+pub mod secrets;
 mod tray;
 
 use std::path::PathBuf;
@@ -42,6 +44,9 @@ pub fn run() {
             ipc::commands::preview_patch,
             ipc::commands::apply_patch,
             ipc::commands::revert_patch,
+            ipc::commands::get_app_state,
+            ipc::commands::save_backend,
+            ipc::commands::clear_backend,
         ])
         .setup(|app| {
             tray::setup(app.handle())?;

@@ -57,6 +57,49 @@ export const Backend = z.discriminatedUnion('kind', [
 ]);
 export type Backend = z.infer<typeof Backend>;
 
+/** Wire-format draft of {@link Backend} with raw secret values inline.
+ *  Used **only** for the `save_backend` IPC payload — never persisted.
+ *  The Rust handler stores each secret in the OS keychain, replaces it
+ *  with a {@link SecretRef}, and writes the resulting `Backend` to
+ *  `state.json`. Defining the raw-secret schema explicitly (rather than
+ *  reusing `Backend` with a generic) keeps the IPC boundary
+ *  unmistakable: any call site that constructs `BackendDraft` is by
+ *  definition holding a raw secret in memory.
+ *  Mirrors the Rust `BackendDraft` enum in `app_state::mod.rs`. */
+export const BackendDraft = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('signoz'),
+    region: z.string().min(1),
+    ingestionKey: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('honeycomb'),
+    team: z.string().min(1),
+    dataset: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('grafana-cloud'),
+    endpoint: z.string().url(),
+    auth: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('datadog'),
+    site: z.string().min(1),
+    apiKey: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('otlp-generic'),
+    endpoint: z.string().url(),
+    protocol: z.enum(['grpc', 'http']),
+    headers: z.record(z.string(), z.string()),
+  }),
+  z.object({
+    kind: z.literal('otelcol-passthrough'),
+    endpoint: z.string().url(),
+  }),
+]);
+export type BackendDraft = z.infer<typeof BackendDraft>;
+
 /** Config-file format Trove patches. Mirrors the Rust `Format` enum. */
 export const PatchFormat = z.enum(['json', 'jsonc', 'toml', 'yaml']);
 export type PatchFormat = z.infer<typeof PatchFormat>;

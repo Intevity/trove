@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   TroveIpcError,
   applyPatch,
+  clearBackend,
+  getAppState,
   listDetectedHarnesses,
   previewPatch,
   revertPatch,
+  saveBackend,
 } from './ipc.js';
 
 const invokeMock = vi.fn();
@@ -166,5 +169,75 @@ describe('revertPatch', () => {
   it('rejects when Rust returns a non-null payload', async () => {
     invokeMock.mockResolvedValueOnce({});
     await expect(revertPatch('claude-code')).rejects.toThrow();
+  });
+});
+
+describe('getAppState', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('returns the parsed AppState on success', async () => {
+    const expected = {
+      schemaVersion: 2 as const,
+      backend: null,
+      harnesses: [],
+    };
+    invokeMock.mockResolvedValueOnce(expected);
+    const result = await getAppState();
+    expect(result).toEqual(expected);
+    expect(invokeMock).toHaveBeenCalledWith('get_app_state', undefined);
+  });
+
+  it('rejects when the response shape is wrong', async () => {
+    invokeMock.mockResolvedValueOnce({ schemaVersion: 1, backend: null, harnesses: [] });
+    await expect(getAppState()).rejects.toThrow();
+  });
+});
+
+describe('saveBackend', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('forwards the draft and parses the persisted Backend', async () => {
+    const draft = {
+      kind: 'signoz' as const,
+      region: 'us-east',
+      ingestionKey: 'raw-secret-DO-NOT-PERSIST',
+    };
+    const persisted = {
+      kind: 'signoz' as const,
+      region: 'us-east',
+      ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
+    };
+    invokeMock.mockResolvedValueOnce(persisted);
+    const result = await saveBackend(draft);
+    expect(result).toEqual(persisted);
+    expect(invokeMock).toHaveBeenCalledWith('save_backend', { draft });
+  });
+
+  it('rethrows internal errors as TroveIpcError', async () => {
+    invokeMock.mockRejectedValueOnce({ kind: 'internal', reason: 'keychain locked' });
+    await expect(
+      saveBackend({ kind: 'datadog', site: 'datadoghq.eu', apiKey: 'k' }),
+    ).rejects.toBeInstanceOf(TroveIpcError);
+  });
+});
+
+describe('clearBackend', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('resolves when Rust returns null', async () => {
+    invokeMock.mockResolvedValueOnce(null);
+    await expect(clearBackend()).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith('clear_backend', undefined);
+  });
+
+  it('rejects when Rust returns a non-null payload', async () => {
+    invokeMock.mockResolvedValueOnce({});
+    await expect(clearBackend()).rejects.toThrow();
   });
 });
