@@ -207,6 +207,17 @@ export const PatchPreview = z.object({
 });
 export type PatchPreview = z.infer<typeof PatchPreview>;
 
+/** Outcome of the wizard's "Test export" button. The Rust IPC sends a
+ *  synthetic OTLP payload to the local collector and watches its log
+ *  for the otelcol "successfully sent" line within a 5s budget. The
+ *  status drives the wizard's green/red banner; `detail` is shown
+ *  inline as a one-liner. Mirrors the Rust `TestExportResult` struct. */
+export const TestExportResult = z.object({
+  status: z.enum(['ok', 'failed', 'timeout']),
+  detail: z.string(),
+});
+export type TestExportResult = z.infer<typeof TestExportResult>;
+
 /** Discriminated union mirroring the Rust `ipc::IpcError` enum.
  *  The TS side branches on `kind` to render specific UI affordances
  *  (e.g. surface the conflicting `path` for region-conflict). */

@@ -44,6 +44,9 @@ importers:
       '@tauri-apps/api':
         specifier: ^2.4.0
         version: 2.11.0
+      '@trove/collector-presets':
+        specifier: workspace:*
+        version: link:../collector-presets
       '@trove/shared':
         specifier: workspace:*
         version: link:../shared

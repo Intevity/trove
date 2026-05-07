@@ -16,6 +16,7 @@ import {
   PreviewStatus,
   SecretRef,
   TelemetryStatus,
+  TestExportResult,
   TrovePatch,
 } from './schemas.js';
 
@@ -375,6 +376,20 @@ describe('PatchPreview', () => {
         status: 'fresh',
       }),
     ).toThrow();
+  });
+});
+
+describe('TestExportResult', () => {
+  it('parses each of the three terminal statuses', () => {
+    expect(TestExportResult.parse({ status: 'ok', detail: 'all good' }).status).toBe('ok');
+    expect(TestExportResult.parse({ status: 'failed', detail: 'rejected' }).status).toBe('failed');
+    expect(TestExportResult.parse({ status: 'timeout', detail: 'no log line' }).status).toBe(
+      'timeout',
+    );
+  });
+
+  it('rejects unknown statuses', () => {
+    expect(() => TestExportResult.parse({ status: 'maybe', detail: '' })).toThrow();
   });
 });
 

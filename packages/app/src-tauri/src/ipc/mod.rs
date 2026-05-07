@@ -6,6 +6,7 @@
 //! branching stays type-safe across the wire.
 
 pub mod commands;
+pub mod test_export;
 
 use serde::Serialize;
 use thiserror::Error;

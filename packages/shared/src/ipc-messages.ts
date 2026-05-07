@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { AppState, Backend, DetectedHarness, PatchPreview, TrovePatch } from './schemas.js';
+import {
+  AppState,
+  Backend,
+  DetectedHarness,
+  PatchPreview,
+  TestExportResult,
+  TrovePatch,
+} from './schemas.js';
 
 /** Tauri command name → response shape table. Each command's request
  *  args are passed positionally via `invoke(name, args)`; only response
@@ -45,6 +52,12 @@ export type SaveBackendResponse = z.infer<typeof SaveBackendResponse>;
 export const ClearBackendResponse = z.null();
 export type ClearBackendResponse = z.infer<typeof ClearBackendResponse>;
 
+/** `test_export` — no arguments. Sends a synthetic OTLP payload through
+ *  the local collector and watches the collector log for an otelcol
+ *  "successfully sent" line within ~5s. Returns the resolved status. */
+export const TestExportResponse = TestExportResult;
+export type TestExportResponse = z.infer<typeof TestExportResponse>;
+
 /** Canonical Tauri command names, kept here so the IPC client wrapper
  *  and tests share a single source of truth. The Rust side registers
  *  these in `tauri::generate_handler!` in lib.rs; renames must update
@@ -57,5 +70,6 @@ export const IpcCommandName = {
   GetAppState: 'get_app_state',
   SaveBackend: 'save_backend',
   ClearBackend: 'clear_backend',
+  TestExport: 'test_export',
 } as const;
 export type IpcCommandName = (typeof IpcCommandName)[keyof typeof IpcCommandName];
