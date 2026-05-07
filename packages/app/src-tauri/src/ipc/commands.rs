@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use crate::adapters::{ApplyOptions, PatchPreview, TrovePatch, claude_code};
+use crate::adapters::{ApplyOptions, PatchPreview, TrovePatch, claude_code, gemini_cli};
 use crate::detect::{DetectedHarness, detect_all};
 use crate::harness::HarnessId;
 
@@ -33,7 +33,7 @@ pub fn preview_patch(
     let home = home_dir()?;
     match harness_id {
         HarnessId::ClaudeCode => claude_code::preview(&home, &options),
-        // PR 3 swaps GeminiCli's arm to gemini_cli::preview.
+        HarnessId::GeminiCli => gemini_cli::preview(&home, &options),
         // codex-cli + qwen-code adapters land in Sprint 4.
         // Tier 2 / Tier 3 land in later sprints.
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
@@ -52,6 +52,7 @@ pub fn apply_patch(
     let home = home_dir()?;
     match harness_id {
         HarnessId::ClaudeCode => claude_code::apply(&home, &options),
+        HarnessId::GeminiCli => gemini_cli::apply(&home, &options),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -64,6 +65,7 @@ pub fn revert_patch(harness_id: HarnessId) -> Result<(), IpcError> {
     let home = home_dir()?;
     match harness_id {
         HarnessId::ClaudeCode => claude_code::revert(&home),
+        HarnessId::GeminiCli => gemini_cli::revert(&home),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -121,16 +123,7 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn gemini_cli_dispatch_is_not_implemented_in_pr_2() {
-        // PR 3 will replace this with a real adapter call; this test
-        // documents the current contract so PR 3 has to update it.
-        let err = preview_patch(HarnessId::GeminiCli, ApplyOptions::default()).unwrap_err();
-        assert!(matches!(
-            err,
-            IpcError::HarnessNotImplemented {
-                id: HarnessId::GeminiCli
-            }
-        ));
-    }
+    // PR 3 swapped Gemini CLI's arm to a real adapter; the integration
+    // round-trip in `tests/adapters_roundtrip.rs` exercises the full
+    // detect-apply-revert path against a temp $HOME.
 }
