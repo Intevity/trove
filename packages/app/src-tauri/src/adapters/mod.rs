@@ -9,6 +9,7 @@
 //! `apply`, `revert`) so Sprint 4's trait extraction is mechanical.
 
 pub mod claude_code;
+pub mod codex_cli;
 pub mod gemini_cli;
 
 use std::collections::BTreeMap;

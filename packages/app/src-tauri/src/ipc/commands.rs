@@ -4,7 +4,9 @@
 
 use std::path::PathBuf;
 
-use crate::adapters::{ApplyOptions, PatchPreview, TrovePatch, claude_code, gemini_cli};
+use crate::adapters::{
+    ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, gemini_cli,
+};
 use crate::detect::{DetectedHarness, detect_all};
 use crate::harness::HarnessId;
 
@@ -33,9 +35,9 @@ pub fn preview_patch(
     let home = home_dir()?;
     match harness_id {
         HarnessId::ClaudeCode => claude_code::preview(&home, &options),
+        HarnessId::CodexCli => codex_cli::preview(&home, &options),
         HarnessId::GeminiCli => gemini_cli::preview(&home, &options),
-        // codex-cli + qwen-code adapters land in Sprint 4.
-        // Tier 2 / Tier 3 land in later sprints.
+        // qwen-code lands in Sprint 4 PR 2; Tier 2/3 in later sprints.
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -52,6 +54,7 @@ pub fn apply_patch(
     let home = home_dir()?;
     match harness_id {
         HarnessId::ClaudeCode => claude_code::apply(&home, &options),
+        HarnessId::CodexCli => codex_cli::apply(&home, &options),
         HarnessId::GeminiCli => gemini_cli::apply(&home, &options),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
@@ -65,6 +68,7 @@ pub fn revert_patch(harness_id: HarnessId) -> Result<(), IpcError> {
     let home = home_dir()?;
     match harness_id {
         HarnessId::ClaudeCode => claude_code::revert(&home),
+        HarnessId::CodexCli => codex_cli::revert(&home),
         HarnessId::GeminiCli => gemini_cli::revert(&home),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
@@ -92,11 +96,12 @@ mod tests {
 
     #[test]
     fn preview_patch_for_unimplemented_harness_returns_not_implemented() {
-        let err = preview_patch(HarnessId::CodexCli, ApplyOptions::default()).unwrap_err();
+        // Cline is Tier 3 (Sprint 9), still unimplemented at this point.
+        let err = preview_patch(HarnessId::Cline, ApplyOptions::default()).unwrap_err();
         assert!(matches!(
             err,
             IpcError::HarnessNotImplemented {
-                id: HarnessId::CodexCli
+                id: HarnessId::Cline
             }
         ));
     }
