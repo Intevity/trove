@@ -68,8 +68,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build @trove/shared (downstream packages need dist/)
-        run: pnpm --filter @trove/shared build
+      - name: Build TS workspace libraries (downstream packages need dist/)
+        run: pnpm --filter @trove/shared --filter @trove/collector-presets build
 
       # Tauri's externalBin check at build time requires the per-triple
       # binary to exist before clippy/cargo can build the Rust crate.
@@ -160,8 +160,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build @trove/shared
-        run: pnpm --filter @trove/shared build
+      - name: Build TS workspace libraries
+        run: pnpm --filter @trove/shared --filter @trove/collector-presets build
 
       - name: Install Playwright browsers
         run: pnpm --filter @trove/app exec playwright install --with-deps chromium
@@ -225,8 +225,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build @trove/shared
-        run: pnpm --filter @trove/shared build
+      - name: Build TS workspace libraries
+        run: pnpm --filter @trove/shared --filter @trove/collector-presets build
 
       - name: Build trove-otelcol sidecar
         run: pnpm build:collector
