@@ -89,6 +89,18 @@ describe('HarnessList', () => {
     expect(toggle.textContent).toBe('Enable');
   });
 
+  it('enables the gemini-cli toggle (Sprint 3 PR 3)', () => {
+    render(
+      <HarnessList
+        harnesses={[row({ id: 'gemini-cli', configPath: '/home/me/.gemini/settings.json' })]}
+        loading={false}
+      />,
+    );
+    const toggle = screen.getByLabelText('toggle-gemini-cli') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.textContent).toBe('Enable');
+  });
+
   it('shows Disable label when troveRegionPresent is true', () => {
     render(
       <HarnessList
