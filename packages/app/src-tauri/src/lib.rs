@@ -6,6 +6,7 @@
 //! during `setup`, supervised on a background tokio task, and shut down
 //! cleanly on `RunEvent::ExitRequested`.
 
+pub mod adapters;
 pub mod collector;
 pub mod detect;
 pub mod harness;
@@ -38,6 +39,9 @@ pub fn run() {
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             ipc::commands::list_detected_harnesses,
+            ipc::commands::preview_patch,
+            ipc::commands::apply_patch,
+            ipc::commands::revert_patch,
         ])
         .setup(|app| {
             tray::setup(app.handle())?;

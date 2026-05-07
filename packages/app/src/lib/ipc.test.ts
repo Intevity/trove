@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TroveIpcError, listDetectedHarnesses } from './ipc.js';
+import {
+  TroveIpcError,
+  applyPatch,
+  listDetectedHarnesses,
+  previewPatch,
+  revertPatch,
+} from './ipc.js';
 
 const invokeMock = vi.fn();
 
@@ -25,6 +31,7 @@ describe('listDetectedHarnesses', () => {
         configPath: '/home/me/.claude/settings.json',
         telemetry: 'off',
         detectionMethod: 'config-dir',
+        troveRegionPresent: false,
       },
     ]);
     const result = await listDetectedHarnesses();
@@ -84,5 +91,80 @@ describe('listDetectedHarnesses', () => {
   it('rejects when the response shape is wrong', async () => {
     invokeMock.mockResolvedValueOnce([{ id: 'claude-code' /* missing fields */ }]);
     await expect(listDetectedHarnesses()).rejects.toThrow();
+  });
+});
+
+describe('previewPatch', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('forwards args and parses the response', async () => {
+    const expected = {
+      configPath: '/home/me/.claude/settings.json',
+      format: 'json' as const,
+      before: '',
+      after: '{"_trove":{}}',
+      status: 'fresh' as const,
+    };
+    invokeMock.mockResolvedValueOnce(expected);
+    const result = await previewPatch('claude-code', {
+      logUserPrompts: false,
+      customAttributes: {},
+    });
+    expect(result).toEqual(expected);
+    expect(invokeMock).toHaveBeenCalledWith('preview_patch', {
+      harnessId: 'claude-code',
+      options: { logUserPrompts: false, customAttributes: {} },
+    });
+  });
+
+  it('rethrows region-conflict as TroveIpcError', async () => {
+    invokeMock.mockRejectedValueOnce({
+      kind: 'region-conflict',
+      path: '/home/me/.claude/settings.json',
+    });
+    await expect(
+      previewPatch('claude-code', { logUserPrompts: false, customAttributes: {} }),
+    ).rejects.toBeInstanceOf(TroveIpcError);
+  });
+});
+
+describe('applyPatch', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('parses the TrovePatch response', async () => {
+    const expected = {
+      managedBlockHash: 'a'.repeat(64),
+      fileHashAtLastWrite: 'b'.repeat(64),
+      format: 'json' as const,
+    };
+    invokeMock.mockResolvedValueOnce(expected);
+    const result = await applyPatch('claude-code', {
+      logUserPrompts: false,
+      customAttributes: {},
+    });
+    expect(result).toEqual(expected);
+  });
+});
+
+describe('revertPatch', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('resolves when Rust returns null', async () => {
+    invokeMock.mockResolvedValueOnce(null);
+    await expect(revertPatch('claude-code')).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith('revert_patch', {
+      harnessId: 'claude-code',
+    });
+  });
+
+  it('rejects when Rust returns a non-null payload', async () => {
+    invokeMock.mockResolvedValueOnce({});
+    await expect(revertPatch('claude-code')).rejects.toThrow();
   });
 });

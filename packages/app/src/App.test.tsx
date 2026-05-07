@@ -52,6 +52,7 @@ describe('App', () => {
         configPath: '/home/me/.claude/settings.json',
         telemetry: 'off',
         detectionMethod: 'config-dir',
+        troveRegionPresent: false,
       },
     ]);
     render(<App />);

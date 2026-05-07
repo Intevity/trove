@@ -1,9 +1,16 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
+  ApplyPatchResponse,
   IpcCommandName,
   IpcError,
   ListDetectedHarnessesResponse,
+  PreviewPatchResponse,
+  RevertPatchResponse,
+  type ApplyOptions,
   type DetectedHarness,
+  type HarnessId,
+  type PatchPreview,
+  type TrovePatch,
 } from '@trove/shared';
 
 /** Thrown by IPC wrappers when the Rust side rejected. The structured
@@ -52,4 +59,25 @@ async function invokeIpc<T>(
  *  rows for missing harnesses come back with `detected: false`. */
 export async function listDetectedHarnesses(): Promise<DetectedHarness[]> {
   return invokeIpc(IpcCommandName.ListDetectedHarnesses, undefined, ListDetectedHarnessesResponse);
+}
+
+/** Compute the diff Trove would write for a harness. The diff modal
+ *  renders the result client-side via the `diff` npm package. */
+export async function previewPatch(
+  harnessId: HarnessId,
+  options: ApplyOptions,
+): Promise<PatchPreview> {
+  return invokeIpc(IpcCommandName.PreviewPatch, { harnessId, options }, PreviewPatchResponse);
+}
+
+/** Apply Trove's patch to the harness's host config. Returns the
+ *  `TrovePatch` the caller can persist (Sprint 5+) for later
+ *  three-way conflict detection. */
+export async function applyPatch(harnessId: HarnessId, options: ApplyOptions): Promise<TrovePatch> {
+  return invokeIpc(IpcCommandName.ApplyPatch, { harnessId, options }, ApplyPatchResponse);
+}
+
+/** Remove Trove's patch from the harness's host config. */
+export async function revertPatch(harnessId: HarnessId): Promise<void> {
+  await invokeIpc(IpcCommandName.RevertPatch, { harnessId }, RevertPatchResponse);
 }

@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { DetectedHarness } from '@trove/shared';
 
@@ -12,6 +12,7 @@ function row(overrides: Partial<DetectedHarness>): DetectedHarness {
     configPath: '/home/me/.claude/settings.json',
     telemetry: 'off',
     detectionMethod: 'config-dir',
+    troveRegionPresent: false,
     ...overrides,
   };
 }
@@ -86,6 +87,52 @@ describe('HarnessList', () => {
     const toggle = screen.getByLabelText('toggle-claude-code') as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(toggle.textContent).toBe('Enable');
+  });
+
+  it('shows Disable label when troveRegionPresent is true', () => {
+    render(
+      <HarnessList
+        harnesses={[row({ id: 'claude-code', troveRegionPresent: true })]}
+        loading={false}
+      />,
+    );
+    const toggle = screen.getByLabelText('toggle-claude-code') as HTMLButtonElement;
+    expect(toggle.textContent).toBe('Disable');
+  });
+
+  it('calls onEnable when an Enable click fires', () => {
+    const onEnable = vi.fn();
+    render(
+      <HarnessList harnesses={[row({ id: 'claude-code' })]} loading={false} onEnable={onEnable} />,
+    );
+    fireEvent.click(screen.getByLabelText('toggle-claude-code'));
+    expect(onEnable).toHaveBeenCalledWith('claude-code');
+  });
+
+  it('calls onDisable when a Disable click fires', () => {
+    const onDisable = vi.fn();
+    render(
+      <HarnessList
+        harnesses={[row({ id: 'claude-code', troveRegionPresent: true })]}
+        loading={false}
+        onDisable={onDisable}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('toggle-claude-code'));
+    expect(onDisable).toHaveBeenCalledWith('claude-code');
+  });
+
+  it('shows the busy label when the row is mid-revert', () => {
+    render(
+      <HarnessList
+        harnesses={[row({ id: 'claude-code', troveRegionPresent: true })]}
+        loading={false}
+        busyIds={new Set(['claude-code'])}
+      />,
+    );
+    const toggle = screen.getByLabelText('toggle-claude-code') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.textContent).toBe('Disabling…');
   });
 
   it('renders the telemetry status label for each row', () => {

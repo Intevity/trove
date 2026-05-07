@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use crate::harness::HarnessId;
+use crate::safety::sentinels::{Format, extract_region};
 
 use super::paths::{app_bundle_path, config_search_paths};
 use super::probe::{probe_path, probe_path_in};
@@ -36,9 +37,9 @@ pub fn detect(id: HarnessId, detector: &Detector) -> DetectedHarness {
         detection_method = Some(DetectionMethod::AppBundle);
     }
 
-    let telemetry = match config_path.as_deref() {
-        Some(path) => read_telemetry(id, path),
-        None => TelemetryStatus::Unknown,
+    let (telemetry, trove_region_present) = match config_path.as_deref() {
+        Some(path) => (read_telemetry(id, path), read_trove_region_present(id, path)),
+        None => (TelemetryStatus::Unknown, false),
     };
 
     DetectedHarness {
@@ -47,6 +48,7 @@ pub fn detect(id: HarnessId, detector: &Detector) -> DetectedHarness {
         config_path,
         telemetry,
         detection_method,
+        trove_region_present,
     }
 }
 
@@ -58,6 +60,22 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
         HarnessId::QwenCode => Some("qwen"),
         _ => None,
     }
+}
+
+/// Whether `path` contains a Trove-managed region. Returns false on
+/// missing or unparseable files (the dashboard surfaces the parse
+/// failure separately via the telemetry-status `Unknown` and the
+/// preview/apply error path).
+fn read_trove_region_present(id: HarnessId, path: &Path) -> bool {
+    let format = match id {
+        HarnessId::ClaudeCode | HarnessId::GeminiCli | HarnessId::QwenCode => Format::Json,
+        HarnessId::CodexCli => Format::Toml,
+        _ => return false,
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    matches!(extract_region(format, &text), Ok(Some(_)))
 }
 
 fn read_telemetry(id: HarnessId, path: &Path) -> TelemetryStatus {
@@ -265,6 +283,35 @@ mod tests {
 
         let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
         assert_eq!(result.telemetry, TelemetryStatus::Unknown);
+    }
+
+    #[test]
+    fn trove_region_present_false_for_user_only_settings() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".claude").join("settings.json");
+        write_settings(&cfg, r#"{"theme":"dark"}"#);
+        let result = detect(HarnessId::ClaudeCode, &detector_for(home.path()));
+        assert!(!result.trove_region_present);
+    }
+
+    #[test]
+    fn trove_region_present_true_after_trove_writes_block() {
+        // Stub a settings.json that already carries the _trove sentinel
+        // a real apply would write. extract_region should see it.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".claude").join("settings.json");
+        write_settings(
+            &cfg,
+            r#"{
+              "_trove": {
+                "managed_keys": ["env.OTEL_FOO"],
+                "hash": "deadbeef"
+              },
+              "env": {"OTEL_FOO": "bar"}
+            }"#,
+        );
+        let result = detect(HarnessId::ClaudeCode, &detector_for(home.path()));
+        assert!(result.trove_region_present);
     }
 
     #[test]

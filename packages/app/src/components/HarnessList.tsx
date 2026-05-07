@@ -22,9 +22,24 @@ const ADAPTERS_AVAILABLE_IN_SPRINT_3: HarnessId[] = ['claude-code', 'gemini-cli'
 export interface HarnessListProps {
   harnesses: DetectedHarness[];
   loading: boolean;
+  /** Called when the user clicks "Enable" — the parent opens the
+   *  PatchPreviewModal for `id`. */
+  onEnable?: (id: HarnessId) => void;
+  /** Called when the user clicks "Disable" — the parent calls
+   *  `revertPatch` for `id`. */
+  onDisable?: (id: HarnessId) => void;
+  /** Set of harness IDs whose row is currently mid-revert (button
+   *  disables + label changes). */
+  busyIds?: ReadonlySet<HarnessId>;
 }
 
-export function HarnessList({ harnesses, loading }: HarnessListProps): JSX.Element {
+export function HarnessList({
+  harnesses,
+  loading,
+  onEnable,
+  onDisable,
+  busyIds,
+}: HarnessListProps): JSX.Element {
   if (loading) {
     return (
       <p className="text-sm text-slate-500 dark:text-slate-400" data-testid="harness-list-loading">
@@ -47,7 +62,13 @@ export function HarnessList({ harnesses, loading }: HarnessListProps): JSX.Eleme
       data-testid="harness-list"
     >
       {harnesses.map((harness) => (
-        <HarnessRow key={harness.id} harness={harness} />
+        <HarnessRow
+          key={harness.id}
+          harness={harness}
+          onEnable={onEnable}
+          onDisable={onDisable}
+          busy={busyIds?.has(harness.id) ?? false}
+        />
       ))}
     </ul>
   );
@@ -55,12 +76,35 @@ export function HarnessList({ harnesses, loading }: HarnessListProps): JSX.Eleme
 
 interface HarnessRowProps {
   harness: DetectedHarness;
+  onEnable: ((id: HarnessId) => void) | undefined;
+  onDisable: ((id: HarnessId) => void) | undefined;
+  busy: boolean;
 }
 
-function HarnessRow({ harness }: HarnessRowProps): JSX.Element {
+function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JSX.Element {
   const adapterAvailable = ADAPTERS_AVAILABLE_IN_SPRINT_3.includes(harness.id);
   const detectionLabel = describeDetection(harness);
   const telemetryLabel = describeTelemetry(harness);
+  const enabled = harness.troveRegionPresent;
+
+  const buttonLabel = busy
+    ? enabled
+      ? 'Disabling…'
+      : 'Enabling…'
+    : !adapterAvailable
+      ? 'Adapter coming in Sprint 4'
+      : enabled
+        ? 'Disable'
+        : 'Enable';
+
+  const handleClick = (): void => {
+    if (!adapterAvailable || busy) return;
+    if (enabled) {
+      onDisable?.(harness.id);
+    } else {
+      onEnable?.(harness.id);
+    }
+  };
 
   return (
     <li
@@ -82,11 +126,12 @@ function HarnessRow({ harness }: HarnessRowProps): JSX.Element {
         </span>
         <button
           type="button"
-          disabled={!harness.detected || !adapterAvailable}
+          onClick={handleClick}
+          disabled={!harness.detected || !adapterAvailable || busy}
           className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-900 shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           aria-label={`toggle-${harness.id}`}
         >
-          {adapterAvailable ? 'Enable' : 'Adapter coming in Sprint 4'}
+          {buttonLabel}
         </button>
       </div>
     </li>
