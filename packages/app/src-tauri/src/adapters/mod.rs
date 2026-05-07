@@ -11,6 +11,7 @@
 pub mod claude_code;
 pub mod codex_cli;
 pub mod gemini_cli;
+pub mod qwen_code;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use crate::adapters::{
-    ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, gemini_cli,
+    ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, gemini_cli, qwen_code,
 };
 use crate::detect::{DetectedHarness, detect_all};
 use crate::harness::HarnessId;
@@ -37,7 +37,8 @@ pub fn preview_patch(
         HarnessId::ClaudeCode => claude_code::preview(&home, &options),
         HarnessId::CodexCli => codex_cli::preview(&home, &options),
         HarnessId::GeminiCli => gemini_cli::preview(&home, &options),
-        // qwen-code lands in Sprint 4 PR 2; Tier 2/3 in later sprints.
+        HarnessId::QwenCode => qwen_code::preview(&home, &options),
+        // Tier 2 / Tier 3 land in later sprints.
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -56,6 +57,7 @@ pub fn apply_patch(
         HarnessId::ClaudeCode => claude_code::apply(&home, &options),
         HarnessId::CodexCli => codex_cli::apply(&home, &options),
         HarnessId::GeminiCli => gemini_cli::apply(&home, &options),
+        HarnessId::QwenCode => qwen_code::apply(&home, &options),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -70,6 +72,7 @@ pub fn revert_patch(harness_id: HarnessId) -> Result<(), IpcError> {
         HarnessId::ClaudeCode => claude_code::revert(&home),
         HarnessId::CodexCli => codex_cli::revert(&home),
         HarnessId::GeminiCli => gemini_cli::revert(&home),
+        HarnessId::QwenCode => qwen_code::revert(&home),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -108,11 +111,12 @@ mod tests {
 
     #[test]
     fn apply_patch_for_unimplemented_harness_returns_not_implemented() {
-        let err = apply_patch(HarnessId::QwenCode, ApplyOptions::default()).unwrap_err();
+        // Aider is Tier 3 (Sprint 9), still unimplemented at this point.
+        let err = apply_patch(HarnessId::Aider, ApplyOptions::default()).unwrap_err();
         assert!(matches!(
             err,
             IpcError::HarnessNotImplemented {
-                id: HarnessId::QwenCode
+                id: HarnessId::Aider
             }
         ));
     }
