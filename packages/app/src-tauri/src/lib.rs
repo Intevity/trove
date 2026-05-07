@@ -49,6 +49,7 @@ pub fn run() {
             ipc::commands::get_app_state,
             ipc::commands::save_backend,
             ipc::commands::clear_backend,
+            ipc::commands::test_export,
         ])
         .setup(|app| {
             tray::setup(app.handle())?;
@@ -262,6 +263,13 @@ fn ensure_log_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
     let dir = app.path().app_log_dir()?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("collector.log"))
+}
+
+/// Public accessor for the collector log path the supervisor tees its
+/// child output to. Used by the `test_export` IPC command to scan for
+/// otelcol exporter failure markers after sending its synthetic payload.
+pub fn collector_log_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
+    ensure_log_path(app)
 }
 
 /// Failures from `start_collector` / `reload_collector`. Visible as

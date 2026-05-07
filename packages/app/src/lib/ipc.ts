@@ -9,6 +9,7 @@ import {
   PreviewPatchResponse,
   RevertPatchResponse,
   SaveBackendResponse,
+  TestExportResponse,
   type AppState,
   type ApplyOptions,
   type Backend,
@@ -16,6 +17,7 @@ import {
   type DetectedHarness,
   type HarnessId,
   type PatchPreview,
+  type TestExportResult,
   type TrovePatch,
 } from '@trove/shared';
 
@@ -106,4 +108,12 @@ export async function saveBackend(draft: BackendDraft): Promise<Backend> {
  *  and nulls out `state.backend`. Idempotent. */
 export async function clearBackend(): Promise<void> {
   await invokeIpc(IpcCommandName.ClearBackend, undefined, ClearBackendResponse);
+}
+
+/** Send a synthetic OTLP payload through the local collector and wait
+ *  (up to ~5s) for the otelcol "successfully sent" log line. Drives the
+ *  wizard's "Test export" button — `ok` enables Save, `failed`/`timeout`
+ *  surface the underlying detail and unlock a "Save anyway" affordance. */
+export async function testExport(): Promise<TestExportResult> {
+  return invokeIpc(IpcCommandName.TestExport, undefined, TestExportResponse);
 }

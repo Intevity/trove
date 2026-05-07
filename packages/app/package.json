@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.4.0",
+    "@trove/collector-presets": "workspace:*",
     "@trove/shared": "workspace:*",
     "diff": "^9.0.0",
     "react": "^18.3.1",

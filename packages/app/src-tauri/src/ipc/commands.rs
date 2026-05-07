@@ -28,6 +28,7 @@ use crate::harness::HarnessId;
 use crate::secrets;
 
 use super::IpcError;
+use super::test_export::{DEFAULT_TEST_BUDGET, TestExportResult, test_export_at};
 
 /// Detect every Tier 1 harness on the user's machine. Always succeeds —
 /// missing harnesses come back with `detected: false` rather than as
@@ -146,6 +147,26 @@ pub fn save_backend(app: tauri::AppHandle, draft: BackendDraft) -> Result<Backen
     crate::reload_collector(&app, &rendered.yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
 
     Ok(backend)
+}
+
+/// Send a synthetic OTLP/HTTP traces payload through the local
+/// collector and return the wizard's "Test export" result. See
+/// [`super::test_export`] for the underlying logic.
+///
+/// The endpoint is hard-coded to `127.0.0.1:4318/v1/traces` — the
+/// loopback address the supervised collector binds, identical across
+/// every backend. Whether the export succeeds end-to-end depends on
+/// the user's saved backend (which the collector forwards to).
+#[tauri::command]
+pub async fn test_export(app: tauri::AppHandle) -> Result<TestExportResult, IpcError> {
+    let log_path = crate::collector_log_path(&app).map_err(|e| boot_error_to_ipc(&e))?;
+    let result = test_export_at(
+        "http://127.0.0.1:4318/v1/traces",
+        &log_path,
+        DEFAULT_TEST_BUDGET,
+    )
+    .await;
+    Ok(result)
 }
 
 /// Wipe the active backend: delete every keychain entry it referenced,

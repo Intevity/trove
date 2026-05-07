@@ -9,6 +9,7 @@ import {
   previewPatch,
   revertPatch,
   saveBackend,
+  testExport,
 } from './ipc.js';
 
 const invokeMock = vi.fn();
@@ -239,5 +240,39 @@ describe('clearBackend', () => {
   it('rejects when Rust returns a non-null payload', async () => {
     invokeMock.mockResolvedValueOnce({});
     await expect(clearBackend()).rejects.toThrow();
+  });
+});
+
+describe('testExport', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('parses a green ok result', async () => {
+    invokeMock.mockResolvedValueOnce({ status: 'ok', detail: '1 trace exported' });
+    const result = await testExport();
+    expect(result.status).toBe('ok');
+    expect(invokeMock).toHaveBeenCalledWith('test_export', undefined);
+  });
+
+  it('parses a failed result with detail', async () => {
+    invokeMock.mockResolvedValueOnce({ status: 'failed', detail: 'Permanent error: 401' });
+    const result = await testExport();
+    expect(result.status).toBe('failed');
+    expect(result.detail).toContain('401');
+  });
+
+  it('parses a timeout result', async () => {
+    invokeMock.mockResolvedValueOnce({
+      status: 'timeout',
+      detail: 'no exporter log line within 5s',
+    });
+    const result = await testExport();
+    expect(result.status).toBe('timeout');
+  });
+
+  it('rejects an unknown status', async () => {
+    invokeMock.mockResolvedValueOnce({ status: 'maybe', detail: '' });
+    await expect(testExport()).rejects.toThrow();
   });
 });
