@@ -7,12 +7,14 @@
 //! keys in the harness's native config format.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use tempfile::tempdir;
 
-use trove_app::adapters::{ApplyOptions, claude_code, codex_cli, gemini_cli, qwen_code};
+use trove_app::adapters::{
+    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, qwen_code,
+};
 
 const CLAUDE_ORIGINAL: &str =
     "{\n  \"theme\": \"dark\",\n  \"env\": {\n    \"MY_USER_VAR\": \"keepme\"\n  }\n}\n";
@@ -188,4 +190,79 @@ fn fresh_install_works_when_no_files_exist() {
     let _gemini: Value =
         serde_json::from_str(&fs::read_to_string(&gemini_path).unwrap()).unwrap();
     let _qwen: Value = serde_json::from_str(&fs::read_to_string(&qwen_path).unwrap()).unwrap();
+}
+
+const CURSOR_ORIGINAL: &str = "{\n  \"unrelatedUserKey\": \"keepme\"\n}\n";
+const CURSOR_HOOK_SCRIPT_FIXTURE: &str = "/opt/trove/resources/hooks/cursor-otel-hook.cjs";
+
+fn cursor_hook_path() -> PathBuf {
+    PathBuf::from(CURSOR_HOOK_SCRIPT_FIXTURE)
+}
+
+#[test]
+fn cursor_ide_apply_then_revert_is_byte_identical() {
+    let home = tempdir().unwrap();
+    let path = cursor_ide::config_path(home.path());
+    write(&path, CURSOR_ORIGINAL);
+
+    let metadata =
+        cursor_ide::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
+    assert_eq!(metadata.managed_block_hash.len(), 64);
+
+    // Post-apply: user key still present, both hook events installed.
+    let after: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(after["unrelatedUserKey"], "keepme");
+    assert_eq!(after["version"], 1);
+    assert_eq!(
+        after["hooks"]["beforeShellExecution"][0]["command"],
+        CURSOR_HOOK_SCRIPT_FIXTURE,
+    );
+    assert_eq!(
+        after["hooks"]["afterShellExecution"][0]["command"],
+        CURSOR_HOOK_SCRIPT_FIXTURE,
+    );
+    assert!(after.get("_trove").is_some());
+
+    cursor_ide::revert(home.path()).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), CURSOR_ORIGINAL);
+}
+
+#[test]
+fn cursor_ide_and_cli_share_a_managed_region() {
+    // Sprint 7 PR 1 contract: enabling either cursor harness writes the
+    // same block; enabling the second is a no-op (idempotent) and
+    // reverting via either fully removes the block.
+    let home = tempdir().unwrap();
+    let path = cursor_ide::config_path(home.path());
+
+    cursor_ide::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
+    let after_ide = fs::read_to_string(&path).unwrap();
+
+    cursor_cli::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
+    let after_cli = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        after_ide, after_cli,
+        "cursor_cli::apply after cursor_ide::apply must be byte-identical (shared region)"
+    );
+
+    // Revert via cli; cursor_ide's enable state should also be cleared
+    // because they share a region.
+    cursor_cli::revert(home.path()).unwrap();
+    let after_revert: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(after_revert.get("_trove").is_none());
+}
+
+#[test]
+fn applying_cursor_does_not_disturb_tier_1_files() {
+    let home = tempdir().unwrap();
+
+    let claude_path = claude_code::config_path(home.path());
+    let codex_path = codex_cli::config_path(home.path());
+    write(&claude_path, CLAUDE_ORIGINAL);
+    write(&codex_path, CODEX_ORIGINAL);
+
+    cursor_ide::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
+
+    assert_eq!(fs::read_to_string(&claude_path).unwrap(), CLAUDE_ORIGINAL);
+    assert_eq!(fs::read_to_string(&codex_path).unwrap(), CODEX_ORIGINAL);
 }

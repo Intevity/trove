@@ -10,15 +10,23 @@
 //! dispatch and the `AppHandle::path()` lookup live above this layer,
 //! and both are exercised by the dev `pnpm tauri:dev` flow.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tempfile::tempdir;
 
-use trove_app::adapters::{ApplyOptions, claude_code, codex_cli, gemini_cli, qwen_code};
+use trove_app::adapters::{
+    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, qwen_code,
+};
 use trove_app::app_state::{
     AppState, harness_config_from_apply, load_from_dir, remove_harness_in, upsert_harness_in,
 };
 use trove_app::harness::HarnessId;
+
+const CURSOR_HOOK_SCRIPT_FIXTURE: &str = "/opt/trove/resources/hooks/cursor-otel-hook.cjs";
+
+fn cursor_hook_path() -> PathBuf {
+    PathBuf::from(CURSOR_HOOK_SCRIPT_FIXTURE)
+}
 
 /// Stand-in for `apply_patch` + the post-apply state.json upsert. This
 /// is exactly the sequence `ipc::commands::apply_patch` runs once the
@@ -239,4 +247,98 @@ fn options_round_trip_through_state_json() {
     assert_eq!(entry.options, options);
     assert!(entry.options.log_user_prompts);
     assert_eq!(entry.options.custom_attributes.len(), 2);
+}
+
+// --- Sprint 7 PR 1: cursor harness state.json wiring -----------------------
+
+/// Cursor analogue of `apply_then_persist`. Tier 1 helpers can't be
+/// reused because cursor adapters take an additional `hook_script_path`
+/// parameter; the rest of the wiring (`harness_config_from_apply` →
+/// `upsert_harness_in`) is identical.
+fn apply_cursor_then_persist(
+    id: HarnessId,
+    home: &Path,
+    config_dir: &Path,
+    options: ApplyOptions,
+    hook_path: &Path,
+) -> trove_app::adapters::TrovePatch {
+    let (patch, config_path) = match id {
+        HarnessId::CursorIde => (
+            cursor_ide::apply(home, &options, hook_path).unwrap(),
+            cursor_ide::config_path(home),
+        ),
+        HarnessId::CursorCli => (
+            cursor_cli::apply(home, &options, hook_path).unwrap(),
+            cursor_cli::config_path(home),
+        ),
+        other => panic!("apply_cursor_then_persist called with non-cursor id {other:?}"),
+    };
+    let entry = harness_config_from_apply(id, &config_path, options, patch.clone());
+    upsert_harness_in(config_dir, entry).unwrap();
+    patch
+}
+
+#[test]
+fn cursor_ide_apply_lands_a_harness_config_in_state_json() {
+    let home = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+
+    let patch = apply_cursor_then_persist(
+        HarnessId::CursorIde,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+        &cursor_hook_path(),
+    );
+
+    let state: AppState = load_from_dir(cfg.path()).unwrap();
+    assert_eq!(state.harnesses.len(), 1);
+    let entry = &state.harnesses[0];
+    assert_eq!(entry.id, HarnessId::CursorIde);
+    assert!(entry.enabled);
+    assert!(
+        entry.config_path.ends_with(".cursor/hooks.json"),
+        "config_path was {}",
+        entry.config_path,
+    );
+    assert_eq!(entry.trove_patch, patch);
+    assert!(entry.last_patched_at.contains('T'));
+}
+
+#[test]
+fn cursor_cli_apply_lands_a_harness_config_in_state_json() {
+    let home = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+
+    apply_cursor_then_persist(
+        HarnessId::CursorCli,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+        &cursor_hook_path(),
+    );
+
+    let state: AppState = load_from_dir(cfg.path()).unwrap();
+    assert_eq!(state.harnesses.len(), 1);
+    assert_eq!(state.harnesses[0].id, HarnessId::CursorCli);
+}
+
+#[test]
+fn cursor_ide_revert_removes_state_json_entry() {
+    let home = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+
+    apply_cursor_then_persist(
+        HarnessId::CursorIde,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+        &cursor_hook_path(),
+    );
+    assert_eq!(load_from_dir(cfg.path()).unwrap().harnesses.len(), 1);
+
+    cursor_ide::revert(home.path()).unwrap();
+    remove_harness_in(cfg.path(), HarnessId::CursorIde).unwrap();
+
+    assert!(load_from_dir(cfg.path()).unwrap().harnesses.is_empty());
 }

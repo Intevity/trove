@@ -14,6 +14,9 @@ mod common;
 
 pub mod claude_code;
 pub mod codex_cli;
+pub mod cursor_cli;
+pub mod cursor_common;
+pub mod cursor_ide;
 pub mod gemini_cli;
 pub mod qwen_code;
 

@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 use crate::adapters::{
-    ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, gemini_cli, qwen_code,
+    ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, cursor_cli, cursor_ide,
+    gemini_cli, qwen_code,
 };
 use crate::app_state::{
     self, AppState, Backend, BackendDraft, backend_secret_accounts, drain_secrets_from_draft,
@@ -47,16 +48,35 @@ pub fn list_detected_harnesses() -> Result<Vec<DetectedHarness>, IpcError> {
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn preview_patch(
+    app: tauri::AppHandle,
     harness_id: HarnessId,
     options: ApplyOptions,
 ) -> Result<PatchPreview, IpcError> {
     let home = home_dir()?;
+    preview_patch_inner(harness_id, &options, &home, || cursor_hook_script_path(&app))
+}
+
+/// Free-function inner for [`preview_patch`] so unit tests can exercise
+/// the dispatch without synthesising a Tauri `AppHandle`. `hook_resolver`
+/// is invoked only on the Cursor arms; Tier 1 / fallback arms never call
+/// it (tests can pass a closure that panics).
+fn preview_patch_inner<F>(
+    harness_id: HarnessId,
+    options: &ApplyOptions,
+    home: &Path,
+    hook_resolver: F,
+) -> Result<PatchPreview, IpcError>
+where
+    F: FnOnce() -> Result<PathBuf, IpcError>,
+{
     match harness_id {
-        HarnessId::ClaudeCode => claude_code::preview(&home, &options),
-        HarnessId::CodexCli => codex_cli::preview(&home, &options),
-        HarnessId::GeminiCli => gemini_cli::preview(&home, &options),
-        HarnessId::QwenCode => qwen_code::preview(&home, &options),
-        // Tier 2 / Tier 3 land in later sprints.
+        HarnessId::ClaudeCode => claude_code::preview(home, options),
+        HarnessId::CodexCli => codex_cli::preview(home, options),
+        HarnessId::GeminiCli => gemini_cli::preview(home, options),
+        HarnessId::QwenCode => qwen_code::preview(home, options),
+        HarnessId::CursorIde => cursor_ide::preview(home, options, &hook_resolver()?),
+        HarnessId::CursorCli => cursor_cli::preview(home, options, &hook_resolver()?),
+        // OpenCode (Sprint 7 PR 2) and Tier 3 (Sprint 9) land later.
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -78,6 +98,14 @@ pub fn apply_patch(
         HarnessId::CodexCli => codex_cli::apply(&home, &options),
         HarnessId::GeminiCli => gemini_cli::apply(&home, &options),
         HarnessId::QwenCode => qwen_code::apply(&home, &options),
+        HarnessId::CursorIde => {
+            let hook = cursor_hook_script_path(&app)?;
+            cursor_ide::apply(&home, &options, &hook)
+        }
+        HarnessId::CursorCli => {
+            let hook = cursor_hook_script_path(&app)?;
+            cursor_cli::apply(&home, &options, &hook)
+        }
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }?;
 
@@ -107,6 +135,13 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         HarnessId::CodexCli => codex_cli::revert(&home),
         HarnessId::GeminiCli => gemini_cli::revert(&home),
         HarnessId::QwenCode => qwen_code::revert(&home),
+        // Both Cursor harnesses share `~/.cursor/hooks.json`; either
+        // adapter's revert removes the entire managed block. We keep
+        // the dispatch separate (rather than collapsing onto a shared
+        // arm) so the per-harness state.json upsert/remove call below
+        // still receives the correct id.
+        HarnessId::CursorIde => cursor_ide::revert(&home),
+        HarnessId::CursorCli => cursor_cli::revert(&home),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }?;
 
@@ -228,10 +263,31 @@ fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         HarnessId::CodexCli => codex_cli::config_path(home),
         HarnessId::GeminiCli => gemini_cli::config_path(home),
         HarnessId::QwenCode => qwen_code::config_path(home),
-        // Tier 2 / Tier 3 don't reach this code path because their
+        // Both Cursor harnesses share `~/.cursor/hooks.json`. The
+        // state.json entry records the same path under either id; the
+        // shared underlying file is the source of truth.
+        HarnessId::CursorIde => cursor_ide::config_path(home),
+        HarnessId::CursorCli => cursor_cli::config_path(home),
+        // Tier 3 + Opencode don't reach this code path because their
         // adapters error out before we try to record state.
         _ => PathBuf::new(),
     }
+}
+
+/// Resolve the absolute path of the bundled `cursor-otel-hook.cjs`
+/// script. Tauri stages the file under the app's `resource_dir()` at
+/// install time via the `bundle.resources` entry in `tauri.conf.json`;
+/// in development, it resolves to the equivalent path under the
+/// `target/<profile>` build output.
+fn cursor_hook_script_path(app: &tauri::AppHandle) -> Result<PathBuf, IpcError> {
+    use tauri::Manager as _;
+    let resource_dir = app.path().resource_dir().map_err(|e| IpcError::Internal {
+        reason: format!("could not resolve Tauri resource_dir for cursor hook: {e}"),
+    })?;
+    Ok(resource_dir
+        .join("resources")
+        .join("hooks")
+        .join("cursor-otel-hook.cjs"))
 }
 
 #[cfg(test)]
@@ -239,25 +295,105 @@ mod tests {
     use super::*;
 
     #[test]
-    fn list_detected_harnesses_returns_a_row_per_tier_1_harness() {
-        // Calls into the real environment — every Tier 1 harness still
-        // returns a row even when nothing is installed (`detected: false`).
-        // The detect module's hermetic tests already cover scoping; this
-        // test asserts the IPC entry point doesn't drop or reorder rows.
+    fn list_detected_harnesses_returns_a_row_per_supported_harness() {
+        // Calls into the real environment — every supported harness
+        // returns a row even when nothing is installed (`detected:
+        // false`). The detect module's hermetic tests already cover
+        // scoping; this test asserts the IPC entry point doesn't drop
+        // or reorder rows.
         let result = list_detected_harnesses().unwrap();
-        assert_eq!(result.len(), HarnessId::tier_1().len());
+        let expected = HarnessId::tier_1().len() + HarnessId::tier_2().len();
+        assert_eq!(result.len(), expected);
     }
 
     #[test]
-    fn preview_patch_for_unimplemented_harness_returns_not_implemented() {
+    fn preview_patch_inner_for_unimplemented_harness_returns_not_implemented() {
         // Cline is Tier 3 (Sprint 9), still unimplemented at this point.
-        let err = preview_patch(HarnessId::Cline, ApplyOptions::default()).unwrap_err();
+        // The hook resolver should never be called for non-cursor harnesses.
+        let home = std::path::PathBuf::from("/tmp/should-not-be-touched");
+        let err = preview_patch_inner(
+            HarnessId::Cline,
+            &ApplyOptions::default(),
+            &home,
+            || panic!("hook resolver must not be invoked for Tier 3 harnesses"),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             IpcError::HarnessNotImplemented {
                 id: HarnessId::Cline
             }
         ));
+    }
+
+    #[test]
+    fn preview_patch_inner_for_opencode_still_returns_not_implemented() {
+        // OpenCode lands in Sprint 7 PR 2; PR 1 must still surface the
+        // not-implemented error rather than a panic.
+        let home = std::path::PathBuf::from("/tmp/should-not-be-touched");
+        let err = preview_patch_inner(
+            HarnessId::Opencode,
+            &ApplyOptions::default(),
+            &home,
+            || panic!("hook resolver must not be invoked for non-cursor harnesses"),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            IpcError::HarnessNotImplemented {
+                id: HarnessId::Opencode
+            }
+        ));
+    }
+
+    #[test]
+    fn preview_patch_inner_routes_cursor_ide_through_resolver_and_adapter() {
+        let home = tempfile::tempdir().unwrap();
+        let fake_hook = std::path::PathBuf::from("/opt/trove/cursor-otel-hook.cjs");
+        let resolver_called = std::cell::Cell::new(false);
+        let result = preview_patch_inner(
+            HarnessId::CursorIde,
+            &ApplyOptions::default(),
+            home.path(),
+            || {
+                resolver_called.set(true);
+                Ok(fake_hook.clone())
+            },
+        )
+        .unwrap();
+        assert!(resolver_called.get(), "resolver must be called for cursor-ide");
+        assert!(result.after.contains("/opt/trove/cursor-otel-hook.cjs"));
+    }
+
+    #[test]
+    fn preview_patch_inner_routes_cursor_cli_through_resolver_and_adapter() {
+        let home = tempfile::tempdir().unwrap();
+        let fake_hook = std::path::PathBuf::from("/opt/trove/cursor-otel-hook.cjs");
+        let result = preview_patch_inner(
+            HarnessId::CursorCli,
+            &ApplyOptions::default(),
+            home.path(),
+            || Ok(fake_hook.clone()),
+        )
+        .unwrap();
+        assert!(result.after.contains("/opt/trove/cursor-otel-hook.cjs"));
+    }
+
+    #[test]
+    fn preview_patch_inner_propagates_hook_resolver_errors() {
+        let home = std::path::PathBuf::from("/tmp/should-not-be-touched");
+        let err = preview_patch_inner(
+            HarnessId::CursorIde,
+            &ApplyOptions::default(),
+            &home,
+            || {
+                Err(IpcError::Internal {
+                    reason: "could not resolve resource_dir".to_string(),
+                })
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, IpcError::Internal { .. }));
     }
 
     // apply_patch / revert_patch / save_backend / clear_backend / get_app_state

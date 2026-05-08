@@ -65,18 +65,30 @@ pub fn preview(
     home: &Path,
     opts: &ApplyOptions,
 ) -> Result<PatchPreview, IpcError> {
+    let region = (spec.build_region)(opts).map_err(|e| IpcError::Internal {
+        reason: format!("could not build managed region: {e}"),
+    })?;
+    preview_with_region(spec, home, &region)
+}
+
+/// Like [`preview`] but takes a pre-built [`ManagedRegion`]. Adapters
+/// whose region depends on runtime context the static `build_region`
+/// fn-pointer can't access (currently only the Cursor adapters, which
+/// need a resolved hook-script path) build the region themselves and
+/// call this directly.
+pub fn preview_with_region(
+    spec: &HarnessSpec,
+    home: &Path,
+    region: &ManagedRegion,
+) -> Result<PatchPreview, IpcError> {
     let path = config_path(spec, home);
     let (current, _existed) = read_or_empty(&path)?;
     let working = working_value(spec.format, &current);
 
-    let region = (spec.build_region)(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    let status = classify(spec.format, &working, &region, &path)?;
+    let status = classify(spec.format, &working, region, &path)?;
 
     let after =
-        upsert_region(spec.format, &working, &region).map_err(|e| map_sentinel_err(e, &path))?;
+        upsert_region(spec.format, &working, region).map_err(|e| map_sentinel_err(e, &path))?;
 
     Ok(PatchPreview {
         config_path: path,
@@ -96,15 +108,25 @@ pub fn apply(
     home: &Path,
     opts: &ApplyOptions,
 ) -> Result<TrovePatch, IpcError> {
+    let region = (spec.build_region)(opts).map_err(|e| IpcError::Internal {
+        reason: format!("could not build managed region: {e}"),
+    })?;
+    apply_with_region(spec, home, &region)
+}
+
+/// Like [`apply`] but takes a pre-built [`ManagedRegion`]. Same caveat
+/// as [`preview_with_region`] — used by adapters whose payload depends
+/// on runtime context.
+pub fn apply_with_region(
+    spec: &HarnessSpec,
+    home: &Path,
+    region: &ManagedRegion,
+) -> Result<TrovePatch, IpcError> {
     let path = config_path(spec, home);
     let (current, existed) = read_or_empty(&path)?;
     let working = working_value(spec.format, &current);
 
-    let region = (spec.build_region)(opts).map_err(|e| IpcError::Internal {
-        reason: format!("could not build managed region: {e}"),
-    })?;
-
-    match classify(spec.format, &working, &region, &path)? {
+    match classify(spec.format, &working, region, &path)? {
         PreviewStatus::Idempotent => {
             return Ok(TrovePatch {
                 managed_block_hash: region.hash.clone(),
@@ -135,7 +157,7 @@ pub fn apply(
     }
 
     let after =
-        upsert_region(spec.format, &working, &region).map_err(|e| map_sentinel_err(e, &path))?;
+        upsert_region(spec.format, &working, region).map_err(|e| map_sentinel_err(e, &path))?;
 
     write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
         path: path.display().to_string(),

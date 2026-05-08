@@ -13,6 +13,12 @@ export default tseslint.config(
       '**/*.d.ts',
       'packages/app/src-tauri/**',
       'packages/app/e2e/**',
+      // Vendored hook / plugin scripts shipped via Tauri's bundle.resources.
+      // Each runs under its own runtime model (Cursor invokes the .cjs hook
+      // directly via Node; the OpenCode plugin in Sprint 7 PR 2 will be
+      // bundled by OpenCode). Linting them with the app's TS config produces
+      // false positives (require(), CommonJS catch params, etc.).
+      'resources/**',
     ],
   },
   {

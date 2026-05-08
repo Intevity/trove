@@ -55,6 +55,14 @@ impl HarnessId {
             Self::QwenCode,
         ]
     }
+
+    /// Tier 2 harnesses — those that need a Trove-shipped hook or
+    /// plugin instead of a native OTEL toggle. Sprint 7 PR 1 lands the
+    /// two Cursor variants; Sprint 7 PR 2 adds `OpenCode`.
+    #[must_use]
+    pub fn tier_2() -> &'static [Self] {
+        &[Self::CursorIde, Self::CursorCli]
+    }
 }
 
 #[cfg(test)]
@@ -91,6 +99,25 @@ mod tests {
                 HarnessId::QwenCode,
             ]
         );
+    }
+
+    #[test]
+    fn tier_2_contains_the_cursor_harnesses_in_plan_order() {
+        // Sprint 7 PR 1: cursor only. PR 2 will append HarnessId::Opencode.
+        assert_eq!(
+            HarnessId::tier_2(),
+            &[HarnessId::CursorIde, HarnessId::CursorCli]
+        );
+    }
+
+    #[test]
+    fn tier_1_and_tier_2_do_not_overlap() {
+        for t1 in HarnessId::tier_1() {
+            assert!(
+                !HarnessId::tier_2().contains(t1),
+                "{t1:?} appears in both tier_1 and tier_2"
+            );
+        }
     }
 
     #[test]

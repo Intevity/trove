@@ -30,9 +30,23 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
             }
         }
         HarnessId::QwenCode => paths.push(home.join(".qwen").join("settings.json")),
-        // Tier 2 / Tier 3 land in later sprints. Returning an empty
-        // search path keeps the detector's "not detected" answer honest
-        // until those adapters arrive.
+        HarnessId::CursorIde | HarnessId::CursorCli => {
+            // Both Cursor harnesses share `~/.cursor/hooks.json`. The
+            // file may not exist before Trove runs (`~/.cursor/` itself
+            // is created by Cursor on first launch, but `hooks.json`
+            // only appears once hooks have been configured), so we also
+            // accept the `.cursor` directory as evidence of the harness
+            // being installed. The directory survives the read attempts
+            // in `read_telemetry` / `read_trove_region_present` by
+            // returning `Unknown` / `false` — which is the correct
+            // pre-apply state.
+            paths.push(home.join(".cursor").join("hooks.json"));
+            paths.push(home.join(".cursor"));
+        }
+        // Tier 2 (`opencode`) and Tier 3 (`cline`, `aider`, `copilot-cli`)
+        // land in later sprints. Returning an empty search path keeps
+        // the detector's "not detected" answer honest until those
+        // adapters arrive.
         _ => {}
     }
     paths
@@ -50,8 +64,10 @@ pub fn app_bundle_path(harness: HarnessId, app_root: &Path) -> Option<PathBuf> {
     match harness {
         // Claude Code ships /Applications/Claude.app on macOS.
         HarnessId::ClaudeCode => Some(app_root.join("Claude.app")),
-        // Cursor IDE ships /Applications/Cursor.app — Sprint 7 will
-        // start probing for it but Sprint 3 doesn't yet.
+        // Cursor IDE ships /Applications/Cursor.app on macOS. Cursor CLI
+        // (`cursor-agent`) doesn't get its own bundle — it's detected via
+        // the binary on PATH instead.
+        HarnessId::CursorIde => Some(app_root.join("Cursor.app")),
         _ => None,
     }
 }
@@ -112,12 +128,21 @@ mod tests {
     }
 
     #[test]
-    fn tier_two_returns_empty_search_paths() {
+    fn cursor_harnesses_resolve_to_dot_cursor_hooks_json_with_dir_fallback() {
+        let home = PathBuf::from("/home/dev");
+        for id in [HarnessId::CursorIde, HarnessId::CursorCli] {
+            let paths = config_search_paths(id, &home);
+            assert_eq!(paths.len(), 2, "expected hooks.json + dir for {id:?}");
+            assert_eq!(paths[0], PathBuf::from("/home/dev/.cursor/hooks.json"));
+            assert_eq!(paths[1], PathBuf::from("/home/dev/.cursor"));
+        }
+    }
+
+    #[test]
+    fn tier_two_opencode_and_tier_three_return_empty_search_paths() {
         let home = PathBuf::from("/home/dev");
         for id in [
             HarnessId::Opencode,
-            HarnessId::CursorIde,
-            HarnessId::CursorCli,
             HarnessId::Cline,
             HarnessId::Aider,
             HarnessId::CopilotCli,
@@ -137,6 +162,25 @@ mod tests {
             app_bundle_path(HarnessId::ClaudeCode, &root),
             Some(PathBuf::from("/tmp/Applications/Claude.app"))
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cursor_ide_app_bundle_under_apps_root() {
+        let root = PathBuf::from("/tmp/Applications");
+        assert_eq!(
+            app_bundle_path(HarnessId::CursorIde, &root),
+            Some(PathBuf::from("/tmp/Applications/Cursor.app"))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cursor_cli_has_no_app_bundle() {
+        // Cursor CLI is detected via the cursor-agent binary on PATH;
+        // it has no native macOS bundle of its own.
+        let root = PathBuf::from("/tmp/Applications");
+        assert!(app_bundle_path(HarnessId::CursorCli, &root).is_none());
     }
 
     #[cfg(target_os = "macos")]
