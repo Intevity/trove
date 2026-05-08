@@ -100,6 +100,7 @@ describe('App', () => {
             telemetry: 'off',
             detectionMethod: 'config-dir',
             troveRegionPresent: false,
+            adapterAvailable: true,
           },
         ],
       }),

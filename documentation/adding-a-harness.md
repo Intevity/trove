@@ -350,14 +350,92 @@ mod tests {
 }
 ```
 
+## Plugin / hook style adapters (Tier 2)
+
+Tier 1 harnesses each have a native OTLP-toggle: Trove flips a flag in
+their config file and they emit telemetry directly. Tier 2 harnesses
+(Cursor IDE, Cursor CLI, OpenCode) don't. Instead they expose a hook or
+plugin surface where Trove provides a small piece of code that
+listens to the harness's events and forwards OTLP HTTP/JSON to the
+local Collector. Two patterns are in tree as of Sprint 7:
+
+### Pattern A — bundled hook script (Cursor)
+
+The two cursor adapters share `adapters/cursor_common.rs`, which writes
+a managed region into `~/.cursor/hooks.json` referencing a vendored
+Node script (`resources/hooks/cursor-otel-hook.cjs`) shipped with the
+app. The bundled file is registered in `tauri.conf.json` under
+`bundle.resources` and resolved at runtime via
+`tauri::path::PathResolver::resource_dir()`.
+
+What's different from the Tier 1 archetype:
+
+- **Region payload depends on runtime context** (the absolute path of
+  the bundled script, which only the Tauri layer can resolve). Static
+  fn-pointers can't capture environment, so the SPEC's `build_region`
+  field is a panic-loud placeholder; the adapter owns its own
+  `apply` / `preview` that build the region with the runtime path and
+  call `common::apply_with_region` / `common::preview_with_region`
+  directly.
+- **Two HarnessIds, one host file**. Cursor IDE and Cursor CLI both
+  patch `~/.cursor/hooks.json`. They're two separate adapters so the
+  UI can offer per-harness Enable / Disable toggles (and surface a
+  "partial event coverage" advisory only on the CLI row), but they
+  share a single managed region. Re-applying via the second adapter
+  is a no-op because the canonical region hash is identical.
+- **IPC dispatch passes `app: tauri::AppHandle`** so the runtime path
+  can be resolved. `preview_patch_inner` is factored out as a free
+  function taking a hook-resolver closure so unit tests can exercise
+  the dispatch without synthesising an `AppHandle`.
+
+If you're adding another bundled-hook-style harness, the two cursor
+adapter files plus `cursor_common.rs` are the canonical reference.
+
+### Pattern B — npm-resolved plugin (OpenCode)
+
+The OpenCode adapter (`adapters/opencode.rs`) is a plain JSON-merge
+SPEC writing two leaves into `~/.config/opencode/opencode.json`:
+
+- `$schema` for editor autocomplete.
+- `plugin: ["@devtheops/opencode-plugin-otel"]` — OpenCode's Bun
+  runtime resolves and installs the package itself at next launch.
+
+Trove ships no vendored source for the plugin. The original Sprint 7
+plan called for vendoring, but the upstream package has 14
+OpenTelemetry / OpenCode SDK runtime dependencies that need ~100 MB of
+`node_modules` to actually run, and OpenCode's runtime doesn't bundle
+them. The npm-reference path lands a working integration with a much
+narrower surface and matches the upstream README's install instructions.
+
+What stays normal: the adapter is shape-identical to the Tier 1
+JSON-merge adapters (`claude_code.rs` / `gemini_cli.rs`). The seven
+golden cases apply unchanged.
+
+### When to use which pattern
+
+- **Bundled hook**: harness expects an executable / script path in its
+  config and invokes it as a subprocess for each event. Cursor's
+  hook surface is the canonical example.
+- **Npm-resolved plugin**: harness ships its own runtime that loads
+  plugins from npm by name. OpenCode is the canonical example.
+- **Vendored source + dependencies**: only consider this if the host
+  harness's runtime can directly load a vendored TS/JS file with no
+  external deps. Even then, weigh the bundle-size cost — Trove's
+  binary target is 30–50 MB, and a vendored plugin tree's
+  `node_modules` will dominate it.
+
 ## Where to look for inspiration
 
 - **JSON merge** — `adapters/claude_code.rs` (env block) or
   `adapters/gemini_cli.rs` (telemetry object).
 - **TOML fenced block** — `adapters/codex_cli.rs`.
+- **Bundled hook + shared writer (Tier 2)** —
+  `adapters/cursor_common.rs` + `cursor_ide.rs` + `cursor_cli.rs`.
+- **Npm-resolved plugin (Tier 2)** — `adapters/opencode.rs`.
 - **Shared scaffolding** — `adapters/common.rs` (read it once;
   understanding `HarnessSpec` and `working_value` makes everything
-  else obvious).
+  else obvious; for plugin-style adapters also read
+  `apply_with_region` / `preview_with_region`).
 - **Cross-harness end-to-end** — `tests/adapters_roundtrip.rs`.
 
 ## When the upstream schema changes

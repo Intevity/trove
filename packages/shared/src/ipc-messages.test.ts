@@ -71,6 +71,7 @@ describe('ListDetectedHarnessesResponse', () => {
       telemetry: 'off',
       detectionMethod: 'config-dir',
       troveRegionPresent: false,
+      adapterAvailable: true,
     };
     expect(ListDetectedHarnessesResponse.parse([row])).toEqual([row]);
   });
@@ -83,6 +84,7 @@ describe('ListDetectedHarnessesResponse', () => {
       telemetry: 'unknown',
       detectionMethod: null,
       troveRegionPresent: false,
+      adapterAvailable: true,
     };
     expect(ListDetectedHarnessesResponse.parse([row])).toEqual([row]);
   });
@@ -97,6 +99,7 @@ describe('ListDetectedHarnessesResponse', () => {
           telemetry: 'partially-on',
           detectionMethod: 'config-dir',
           troveRegionPresent: false,
+          adapterAvailable: true,
         },
       ]),
     ).toThrow();

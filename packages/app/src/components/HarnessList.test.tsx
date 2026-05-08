@@ -13,6 +13,7 @@ function row(overrides: Partial<DetectedHarness>): DetectedHarness {
     telemetry: 'off',
     detectionMethod: 'config-dir',
     troveRegionPresent: false,
+    adapterAvailable: true,
     ...overrides,
   };
 }
@@ -48,20 +49,23 @@ describe('HarnessList', () => {
   });
 
   it('disables the toggle for harnesses whose adapter is not yet implemented', () => {
+    // Sprint 7 PR 3: gating is now driven by the IPC-side adapterAvailable
+    // bool. Tier 3 harnesses (cline / aider / copilot-cli) report false
+    // until Sprint 9 wires their adapters.
     render(
       <HarnessList
         harnesses={[
           row({
-            id: 'codex-cli',
-            configPath: '/home/me/.codex/config.toml',
+            id: 'cline',
+            adapterAvailable: false,
           }),
         ]}
         loading={false}
       />,
     );
-    const toggle = screen.getByLabelText('toggle-codex-cli') as HTMLButtonElement;
+    const toggle = screen.getByLabelText('toggle-cline') as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
-    expect(toggle.textContent).toMatch(/Sprint 4/);
+    expect(toggle.textContent).toBe('Adapter not yet available');
   });
 
   it('disables the toggle when the harness was not detected', () => {
@@ -220,8 +224,13 @@ describe('HarnessList', () => {
     const toggle = screen.getByLabelText('toggle-cursor-cli') as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(toggle.textContent).toBe('Enable');
-    const advisory = screen.getByTestId('harness-coverage-note-cursor-cli');
+    const advisory = screen.getByTestId('harness-coverage-note-cursor-cli') as HTMLAnchorElement;
     expect(advisory.textContent).toBe('Partial event coverage');
+    // Sprint 7 PR 3: the advisory is a hyperlink to Cursor's hooks docs
+    // and carries a tooltip explaining the coverage gap.
+    expect(advisory.href).toBe('https://cursor.com/docs/hooks');
+    expect(advisory.title).toContain('beforeShellExecution');
+    expect(advisory.target).toBe('_blank');
   });
 
   it('enables the opencode toggle (Sprint 7 PR 2) and shows no advisory note', () => {

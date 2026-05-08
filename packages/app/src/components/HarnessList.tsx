@@ -13,31 +13,27 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   'copilot-cli': 'GitHub Copilot CLI',
 };
 
-/** Adapters whose Rust-side implementation is wired through the IPC
- *  layer today. Sprint 7 PR 3 replaces this static list with an
- *  IPC-driven availability check so future sprints don't have to
- *  remember to flip the gate. Until then we extend the list per PR. */
-const ADAPTERS_AVAILABLE_IN_SPRINT_3: HarnessId[] = [
-  'claude-code',
-  'gemini-cli',
-  // Sprint 7 PR 1 — Cursor IDE and Cursor CLI share a single managed
-  // region in ~/.cursor/hooks.json; either toggle covers the file but
-  // the IDE row uses the IDE label and the CLI row uses the CLI label.
-  'cursor-ide',
-  'cursor-cli',
-  // Sprint 7 PR 2 — OpenCode registers @devtheops/opencode-plugin-otel
-  // in opencode.json; OpenCode's runtime resolves the package itself.
-  'opencode',
-];
-
-/** Per-harness advisory string surfaced as a badge next to the
+/** Per-harness coverage advisory surfaced as a badge next to the
  *  telemetry status. Currently only cursor-cli carries one — Cursor's
  *  CLI fires a strict subset of the events the IDE does, so users
- *  enabling Cursor CLI alone capture less than they would with the IDE.
- *  The string is intentionally short (the row is tight) and is always
- *  visible (no tooltip) so it's hard to miss. */
-const COVERAGE_NOTES: Partial<Record<HarnessId, string>> = {
-  'cursor-cli': 'Partial event coverage',
+ *  enabling Cursor CLI alone capture less than they would with the
+ *  IDE. The badge text stays short (the row is tight); the optional
+ *  `tooltip` field renders as a `title` attribute so hovering surfaces
+ *  the longer explanation without taking row real-estate. The
+ *  `docsUrl` link points at the Cursor hooks documentation where the
+ *  coverage gap is described upstream. */
+interface CoverageNote {
+  text: string;
+  tooltip: string;
+  docsUrl: string;
+}
+const COVERAGE_NOTES: Partial<Record<HarnessId, CoverageNote>> = {
+  'cursor-cli': {
+    text: 'Partial event coverage',
+    tooltip:
+      "Cursor CLI (cursor-agent) fires only a subset of Cursor's hook events — primarily beforeShellExecution and afterShellExecution. Cursor IDE fires the full surface. See Cursor's hooks docs.",
+    docsUrl: 'https://cursor.com/docs/hooks',
+  },
 };
 
 export interface HarnessListProps {
@@ -103,7 +99,7 @@ interface HarnessRowProps {
 }
 
 function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JSX.Element {
-  const adapterAvailable = ADAPTERS_AVAILABLE_IN_SPRINT_3.includes(harness.id);
+  const adapterAvailable = harness.adapterAvailable;
   const detectionLabel = describeDetection(harness);
   const telemetryLabel = describeTelemetry(harness);
   const enabled = harness.troveRegionPresent;
@@ -113,7 +109,7 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
       ? 'Disabling…'
       : 'Enabling…'
     : !adapterAvailable
-      ? 'Adapter coming in Sprint 4'
+      ? 'Adapter not yet available'
       : enabled
         ? 'Disable'
         : 'Enable';
@@ -146,12 +142,16 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
           {telemetryLabel}
         </span>
         {COVERAGE_NOTES[harness.id] ? (
-          <span
-            className="text-xs italic text-amber-600 dark:text-amber-400"
+          <a
+            className="text-xs italic text-amber-600 underline-offset-2 hover:underline dark:text-amber-400"
             data-testid={`harness-coverage-note-${harness.id}`}
+            href={COVERAGE_NOTES[harness.id]!.docsUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            title={COVERAGE_NOTES[harness.id]!.tooltip}
           >
-            {COVERAGE_NOTES[harness.id]}
-          </span>
+            {COVERAGE_NOTES[harness.id]!.text}
+          </a>
         ) : null}
         <button
           type="button"

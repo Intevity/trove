@@ -63,6 +63,18 @@ impl HarnessId {
     pub fn tier_2() -> &'static [Self] {
         &[Self::CursorIde, Self::CursorCli, Self::Opencode]
     }
+
+    /// Whether Trove currently ships an adapter for this harness — i.e.
+    /// whether `apply` / `revert` will dispatch to a real implementation
+    /// rather than returning `IpcError::HarnessNotImplemented`. Tier 3
+    /// harnesses (`Cline`, `Aider`, `CopilotCli`) return `false` until
+    /// Sprint 9 wires them up. The dashboard surfaces this as part of
+    /// each `DetectedHarness` row so the UI doesn't have to maintain a
+    /// parallel hard-coded list.
+    #[must_use]
+    pub fn has_adapter(self) -> bool {
+        Self::tier_1().contains(&self) || Self::tier_2().contains(&self)
+    }
 }
 
 #[cfg(test)]
@@ -120,6 +132,23 @@ mod tests {
             assert!(
                 !HarnessId::tier_2().contains(t1),
                 "{t1:?} appears in both tier_1 and tier_2"
+            );
+        }
+    }
+
+    #[test]
+    fn has_adapter_is_true_for_every_tier_1_and_tier_2_harness() {
+        for id in HarnessId::tier_1().iter().chain(HarnessId::tier_2()) {
+            assert!(id.has_adapter(), "{id:?} should have an adapter");
+        }
+    }
+
+    #[test]
+    fn has_adapter_is_false_for_tier_3_until_sprint_9() {
+        for id in [HarnessId::Cline, HarnessId::Aider, HarnessId::CopilotCli] {
+            assert!(
+                !id.has_adapter(),
+                "{id:?} should not yet have an adapter (Tier 3 lands in Sprint 9)"
             );
         }
     }

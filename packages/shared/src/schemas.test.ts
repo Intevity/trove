@@ -294,6 +294,7 @@ describe('DetectedHarness', () => {
       telemetry: 'on',
       detectionMethod: 'config-dir',
       troveRegionPresent: false,
+      adapterAvailable: true,
     };
     expect(DetectedHarness.parse(row)).toEqual(row);
   });
@@ -306,6 +307,7 @@ describe('DetectedHarness', () => {
       telemetry: 'unknown',
       detectionMethod: null,
       troveRegionPresent: false,
+      adapterAvailable: true,
     };
     expect(DetectedHarness.parse(row)).toEqual(row);
   });
@@ -319,6 +321,20 @@ describe('DetectedHarness', () => {
         telemetry: 'on',
         detection_method: 'config-dir',
         trove_region_present: false,
+        adapter_available: true,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects rows missing the adapterAvailable field', () => {
+    expect(() =>
+      DetectedHarness.parse({
+        id: 'cline',
+        detected: false,
+        configPath: null,
+        telemetry: 'unknown',
+        detectionMethod: null,
+        troveRegionPresent: false,
       }),
     ).toThrow();
   });

@@ -175,6 +175,11 @@ export const DetectedHarness = z.object({
   /** Whether the host config currently contains a Trove-managed
    *  region. Drives the toggle's "Enable" vs "Disable" label. */
   troveRegionPresent: z.boolean(),
+  /** Whether Trove currently ships an adapter for this harness.
+   *  Drives whether the row's toggle is enabled. Populated by the
+   *  Rust side from `HarnessId::has_adapter()`; replaces the static
+   *  list previously maintained in `HarnessList.tsx`. */
+  adapterAvailable: z.boolean(),
 });
 export type DetectedHarness = z.infer<typeof DetectedHarness>;
 

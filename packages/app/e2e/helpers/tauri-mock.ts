@@ -44,6 +44,7 @@ export const DEFAULT_MOCK_STATE: TauriMockState = {
       telemetry: 'off',
       detectionMethod: 'config-dir',
       troveRegionPresent: false,
+      adapterAvailable: true,
     },
   ],
   collectorStatus: {

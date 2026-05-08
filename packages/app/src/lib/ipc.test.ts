@@ -36,6 +36,7 @@ describe('listDetectedHarnesses', () => {
         telemetry: 'off',
         detectionMethod: 'config-dir',
         troveRegionPresent: false,
+        adapterAvailable: true,
       },
     ]);
     const result = await listDetectedHarnesses();

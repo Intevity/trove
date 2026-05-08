@@ -52,6 +52,11 @@ pub struct DetectedHarness {
     /// (region present — revert will remove it). Distinct from
     /// `telemetry`, which can be `On` even when Trove didn't write it.
     pub trove_region_present: bool,
+    /// Whether Trove currently ships an adapter for this harness. The
+    /// dashboard uses this (combined with `detected`) to decide
+    /// whether the row's toggle is enabled. Replaces a prior static
+    /// list maintained on the TS side. See [`HarnessId::has_adapter`].
+    pub adapter_available: bool,
 }
 
 /// Scoping struct that controls where the detector looks. Production
@@ -127,6 +132,27 @@ mod tests {
     }
 
     #[test]
+    fn detect_all_reports_adapter_availability_for_each_row() {
+        let home = tempdir().unwrap();
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(Vec::new()),
+            app_root: home.path().to_path_buf(),
+        };
+        let results = detector.detect_all();
+        for row in &results {
+            // detect_all only iterates tier_1 + tier_2 today, so every
+            // row's adapter_available must be true. When Sprint 9 adds
+            // Tier 3 to detect_all, this test will need updating.
+            assert!(
+                row.adapter_available,
+                "{:?} should report adapter_available = true",
+                row.id
+            );
+        }
+    }
+
+    #[test]
     fn detect_all_marks_present_harnesses_as_detected() {
         let home = tempdir().unwrap();
         // Lay down a claude config and a gemini config; codex/qwen
@@ -160,6 +186,7 @@ mod tests {
             telemetry: TelemetryStatus::On,
             detection_method: Some(DetectionMethod::ConfigDir),
             trove_region_present: false,
+            adapter_available: true,
         };
         let json = serde_json::to_string(&h).unwrap();
         // The TS-side Zod schema expects camelCase keys; check the
@@ -167,8 +194,10 @@ mod tests {
         assert!(json.contains("\"configPath\""));
         assert!(json.contains("\"detectionMethod\""));
         assert!(json.contains("\"troveRegionPresent\""));
+        assert!(json.contains("\"adapterAvailable\""));
         assert!(!json.contains("\"config_path\""));
         assert!(!json.contains("\"trove_region_present\""));
+        assert!(!json.contains("\"adapter_available\""));
     }
 
     #[test]
