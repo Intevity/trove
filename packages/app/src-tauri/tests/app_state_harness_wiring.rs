@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 
 use trove_app::adapters::{
-    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, qwen_code,
+    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, opencode, qwen_code,
 };
 use trove_app::app_state::{
     AppState, harness_config_from_apply, load_from_dir, remove_harness_in, upsert_harness_in,
@@ -54,7 +54,13 @@ fn apply_then_persist(
             qwen_code::apply(home, &options).unwrap(),
             qwen_code::config_path(home),
         ),
-        other => panic!("Tier 2/3 harness {other:?} should not reach apply_then_persist"),
+        HarnessId::Opencode => (
+            opencode::apply(home, &options).unwrap(),
+            opencode::config_path(home),
+        ),
+        other => panic!(
+            "harness {other:?} should not reach apply_then_persist (cursor uses its own helper, Tier 3 isn't implemented yet)"
+        ),
     };
     let entry = harness_config_from_apply(id, &config_path, options, patch.clone());
     upsert_harness_in(config_dir, entry).unwrap();
@@ -67,7 +73,10 @@ fn revert_then_unpersist(id: HarnessId, home: &Path, config_dir: &Path) {
         HarnessId::CodexCli => codex_cli::revert(home).unwrap(),
         HarnessId::GeminiCli => gemini_cli::revert(home).unwrap(),
         HarnessId::QwenCode => qwen_code::revert(home).unwrap(),
-        other => panic!("Tier 2/3 harness {other:?} should not reach revert_then_unpersist"),
+        HarnessId::Opencode => opencode::revert(home).unwrap(),
+        other => panic!(
+            "harness {other:?} should not reach revert_then_unpersist (cursor uses its own helper, Tier 3 isn't implemented yet)"
+        ),
     }
     remove_harness_in(config_dir, id).unwrap();
 }
@@ -340,5 +349,50 @@ fn cursor_ide_revert_removes_state_json_entry() {
     cursor_ide::revert(home.path()).unwrap();
     remove_harness_in(cfg.path(), HarnessId::CursorIde).unwrap();
 
+    assert!(load_from_dir(cfg.path()).unwrap().harnesses.is_empty());
+}
+
+// --- Sprint 7 PR 2: opencode state.json wiring ----------------------------
+
+#[test]
+fn opencode_apply_lands_a_harness_config_in_state_json() {
+    let home = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+
+    let patch = apply_then_persist(
+        HarnessId::Opencode,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+    );
+
+    let state: AppState = load_from_dir(cfg.path()).unwrap();
+    assert_eq!(state.harnesses.len(), 1);
+    let entry = &state.harnesses[0];
+    assert_eq!(entry.id, HarnessId::Opencode);
+    assert!(entry.enabled);
+    assert!(
+        entry.config_path.ends_with(".config/opencode/opencode.json"),
+        "config_path was {}",
+        entry.config_path,
+    );
+    assert_eq!(entry.trove_patch, patch);
+    assert!(entry.last_patched_at.contains('T'));
+}
+
+#[test]
+fn opencode_revert_removes_state_json_entry() {
+    let home = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+
+    apply_then_persist(
+        HarnessId::Opencode,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+    );
+    assert_eq!(load_from_dir(cfg.path()).unwrap().harnesses.len(), 1);
+
+    revert_then_unpersist(HarnessId::Opencode, home.path(), cfg.path());
     assert!(load_from_dir(cfg.path()).unwrap().harnesses.is_empty());
 }

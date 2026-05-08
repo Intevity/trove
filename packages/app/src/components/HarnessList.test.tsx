@@ -224,7 +224,26 @@ describe('HarnessList', () => {
     expect(advisory.textContent).toBe('Partial event coverage');
   });
 
-  it('does not surface a coverage advisory on opencode (no advisory configured)', () => {
+  it('enables the opencode toggle (Sprint 7 PR 2) and shows no advisory note', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'opencode',
+            configPath: '/home/me/.config/opencode/opencode.json',
+            detectionMethod: 'config-dir',
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    const toggle = screen.getByLabelText('toggle-opencode') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.textContent).toBe('Enable');
+    expect(screen.queryByTestId('harness-coverage-note-opencode')).toBeNull();
+  });
+
+  it('does not surface a coverage advisory when opencode is undetected either', () => {
     render(
       <HarnessList
         harnesses={[

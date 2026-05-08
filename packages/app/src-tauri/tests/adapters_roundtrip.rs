@@ -13,7 +13,7 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 use trove_app::adapters::{
-    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, qwen_code,
+    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, opencode, qwen_code,
 };
 
 const CLAUDE_ORIGINAL: &str =
@@ -265,4 +265,105 @@ fn applying_cursor_does_not_disturb_tier_1_files() {
 
     assert_eq!(fs::read_to_string(&claude_path).unwrap(), CLAUDE_ORIGINAL);
     assert_eq!(fs::read_to_string(&codex_path).unwrap(), CODEX_ORIGINAL);
+}
+
+const OPENCODE_ORIGINAL: &str =
+    "{\n  \"theme\": \"midnight\",\n  \"mcp\": {\n    \"someServer\": \"keepme\"\n  }\n}\n";
+
+#[test]
+fn opencode_apply_then_revert_is_byte_identical() {
+    let home = tempdir().unwrap();
+    let path = opencode::config_path(home.path());
+    write(&path, OPENCODE_ORIGINAL);
+
+    let metadata = opencode::apply(home.path(), &ApplyOptions::default()).unwrap();
+    assert_eq!(metadata.managed_block_hash.len(), 64);
+
+    let after: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(after["theme"], "midnight");
+    assert_eq!(after["mcp"]["someServer"], "keepme");
+    assert_eq!(after["plugin"][0], "@devtheops/opencode-plugin-otel");
+    assert_eq!(after["$schema"], "https://opencode.ai/config.json");
+    assert!(after.get("_trove").is_some());
+
+    opencode::revert(home.path()).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), OPENCODE_ORIGINAL);
+}
+
+#[test]
+fn applying_opencode_does_not_disturb_tier_1_or_cursor_files() {
+    let home = tempdir().unwrap();
+
+    let claude_path = claude_code::config_path(home.path());
+    let cursor_path = cursor_ide::config_path(home.path());
+    write(&claude_path, CLAUDE_ORIGINAL);
+    cursor_ide::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
+    let cursor_after_cursor_apply = fs::read_to_string(&cursor_path).unwrap();
+
+    opencode::apply(home.path(), &ApplyOptions::default()).unwrap();
+
+    // Claude Code config still byte-identical; cursor file unchanged from
+    // its post-cursor-apply state.
+    assert_eq!(fs::read_to_string(&claude_path).unwrap(), CLAUDE_ORIGINAL);
+    assert_eq!(
+        fs::read_to_string(&cursor_path).unwrap(),
+        cursor_after_cursor_apply,
+    );
+}
+
+#[test]
+fn all_seven_supported_harnesses_apply_and_revert_byte_identical() {
+    let home = tempdir().unwrap();
+
+    let claude_path = claude_code::config_path(home.path());
+    let codex_path = codex_cli::config_path(home.path());
+    let gemini_path = gemini_cli::config_path(home.path());
+    let qwen_path = qwen_code::config_path(home.path());
+    let cursor_path = cursor_ide::config_path(home.path());
+    let opencode_path = opencode::config_path(home.path());
+
+    write(&claude_path, CLAUDE_ORIGINAL);
+    write(&codex_path, CODEX_ORIGINAL);
+    write(&gemini_path, GEMINI_ORIGINAL);
+    write(&qwen_path, QWEN_ORIGINAL);
+    // Cursor + OpenCode start from missing files so we cover the
+    // "fresh install" branch alongside the others.
+
+    claude_code::apply(home.path(), &ApplyOptions::default()).unwrap();
+    codex_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
+    gemini_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
+    qwen_code::apply(home.path(), &ApplyOptions::default()).unwrap();
+    cursor_ide::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
+    opencode::apply(home.path(), &ApplyOptions::default()).unwrap();
+
+    // All seven now exist and parse.
+    assert!(claude_path.exists());
+    assert!(codex_path.exists());
+    assert!(gemini_path.exists());
+    assert!(qwen_path.exists());
+    assert!(cursor_path.exists());
+    assert!(opencode_path.exists());
+
+    // Revert each. Tier 1 + opencode return to byte-identical originals;
+    // cursor + opencode start from missing so we just confirm the _trove
+    // block is gone.
+    claude_code::revert(home.path()).unwrap();
+    codex_cli::revert(home.path()).unwrap();
+    gemini_cli::revert(home.path()).unwrap();
+    qwen_code::revert(home.path()).unwrap();
+    cursor_ide::revert(home.path()).unwrap();
+    opencode::revert(home.path()).unwrap();
+
+    assert_eq!(fs::read_to_string(&claude_path).unwrap(), CLAUDE_ORIGINAL);
+    assert_eq!(fs::read_to_string(&codex_path).unwrap(), CODEX_ORIGINAL);
+    assert_eq!(fs::read_to_string(&gemini_path).unwrap(), GEMINI_ORIGINAL);
+    assert_eq!(fs::read_to_string(&qwen_path).unwrap(), QWEN_ORIGINAL);
+
+    let cursor_after: Value =
+        serde_json::from_str(&fs::read_to_string(&cursor_path).unwrap()).unwrap();
+    assert!(cursor_after.get("_trove").is_none());
+
+    let opencode_after: Value =
+        serde_json::from_str(&fs::read_to_string(&opencode_path).unwrap()).unwrap();
+    assert!(opencode_after.get("_trove").is_none());
 }
