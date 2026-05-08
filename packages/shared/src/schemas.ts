@@ -218,6 +218,87 @@ export const TestExportResult = z.object({
 });
 export type TestExportResult = z.infer<typeof TestExportResult>;
 
+/** Sprint 6 PR 1 — collector status surface. Mirrors the Rust
+ *  `ipc::collector_status::CollectorRunState` discriminated union.
+ *  Each variant carries the kebab-case `kind` discriminator. */
+export const CollectorRunState = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('idle') }),
+  z.object({ kind: z.literal('starting'), pid: z.number().int().nonnegative() }),
+  z.object({
+    kind: z.literal('running'),
+    pid: z.number().int().nonnegative(),
+    restarts: z.number().int().nonnegative(),
+  }),
+  z.object({
+    kind: z.literal('crashed'),
+    restarts: z.number().int().nonnegative(),
+  }),
+  z.object({ kind: z.literal('stopping') }),
+  z.object({ kind: z.literal('stopped') }),
+  z.object({ kind: z.literal('failed'), reason: z.string() }),
+]);
+export type CollectorRunState = z.infer<typeof CollectorRunState>;
+
+/** Status payload returned by `get_collector_status`. `logPath` is the
+ *  on-disk file the dashboard's logs panel pulls its initial tail from. */
+export const CollectorStatus = z.object({
+  state: CollectorRunState,
+  logPath: z.string(),
+});
+export type CollectorStatus = z.infer<typeof CollectorStatus>;
+
+/** Counts of one signal type (spans, metric points, log records) summed
+ *  across every receiver/exporter/transport label combination. */
+export const SignalCounts = z.object({
+  spans: z.number().int().nonnegative(),
+  metricPoints: z.number().int().nonnegative(),
+  logRecords: z.number().int().nonnegative(),
+});
+export type SignalCounts = z.infer<typeof SignalCounts>;
+
+/** Overall green/amber/red derivation. Both Rust (tray icon) and TS
+ *  (dashboard badge) compute this from the same inputs; they must
+ *  agree, and Sprint 6 PR 3 has Vitest tests asserting parity. */
+export const OverallHealth = z.enum(['green', 'amber', 'red']);
+export type OverallHealth = z.infer<typeof OverallHealth>;
+
+/** Wire-format metrics snapshot. Internal Rust state uses
+ *  `tokio::time::Instant` for monotonic staleness math; the IPC layer
+ *  converts to ms-ago scalars at handler time. `lastSignalMsAgo: null`
+ *  means no signal has been observed since the tap started. */
+export const MetricsSnapshotWire = z.object({
+  received: SignalCounts,
+  sent: SignalCounts,
+  lastSignalMsAgo: z.number().int().nonnegative().nullable(),
+  scrapedMsAgo: z.number().int().nonnegative(),
+  unreachable: z.boolean(),
+  overallHealth: OverallHealth,
+});
+export type MetricsSnapshotWire = z.infer<typeof MetricsSnapshotWire>;
+
+/** One log line returned by `get_collector_log_tail` or emitted on
+ *  the live `collector-log` event. */
+export const CollectorLogLineWire = z.object({
+  stream: z.string(),
+  line: z.string(),
+});
+export type CollectorLogLineWire = z.infer<typeof CollectorLogLineWire>;
+
+/** Initial tail returned by `get_collector_log_tail`. `byteOffset` is
+ *  the file position at the moment the read finished; the dashboard's
+ *  live-event hook discards `collector-log` events whose implicit
+ *  offset ≤ this baseline so the tail and stream don't double-display. */
+export const CollectorLogTailResponse = z.object({
+  lines: z.array(CollectorLogLineWire),
+  byteOffset: z.number().int().nonnegative(),
+});
+export type CollectorLogTailResponse = z.infer<typeof CollectorLogTailResponse>;
+
+/** Live event payload for `collector-log`. Identical shape to
+ *  `CollectorLogLineWire`. */
+export const CollectorLogEvent = CollectorLogLineWire;
+export type CollectorLogEvent = z.infer<typeof CollectorLogEvent>;
+
 /** Discriminated union mirroring the Rust `ipc::IpcError` enum.
  *  The TS side branches on `kind` to render specific UI affordances
  *  (e.g. surface the conflicting `path` for region-conflict). */

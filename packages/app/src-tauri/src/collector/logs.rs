@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+use tokio::sync::broadcast;
+
+use super::lifecycle::CollectorLogLine;
 
 /// Roll the log file when it exceeds 10 MiB. Tuned to keep ~one boot
 /// cycle of detailed output without risking unbounded disk usage.
@@ -17,12 +20,16 @@ pub const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Read lines from `reader` (typically a `ChildStdout` / `ChildStderr`)
 /// and append them to `log_path`, also re-emitting them via `tracing` at
-/// the supplied level. Exits when the reader returns EOF or errors.
+/// the supplied level. Each line is also forwarded onto `broadcast` (in
+/// front of the file write, so rotation cannot drop lines en route to
+/// the dashboard's logs panel). Exits when the reader returns EOF or
+/// errors.
 pub async fn tee_stream<R>(
     mut reader: BufReader<R>,
     log_path: PathBuf,
     level: tracing::Level,
     stream_label: &'static str,
+    broadcast: broadcast::Sender<CollectorLogLine>,
 ) where
     R: AsyncRead + Unpin,
 {
@@ -39,6 +46,14 @@ pub async fn tee_stream<R>(
             Ok(_) => {
                 let line = buf.trim_end_matches('\n').trim_end_matches('\r');
                 emit_traced(level, stream_label, line);
+                // Broadcast in front of the disk write so the dashboard
+                // sees lines even if rotation is in flight. send() errors
+                // when no receivers are attached — that's expected (the
+                // dashboard may not be mounted yet) and non-fatal.
+                let _ = broadcast.send(CollectorLogLine {
+                    stream: stream_label,
+                    line: line.to_string(),
+                });
                 if let Err(e) = append_with_rotation(&log_path, line).await {
                     tracing::warn!(?e, ?log_path, "could not append to collector log");
                 }

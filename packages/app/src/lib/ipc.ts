@@ -3,6 +3,9 @@ import {
   ApplyPatchResponse,
   ClearBackendResponse,
   GetAppStateResponse,
+  GetCollectorLogTailResponse,
+  GetCollectorStatusResponse,
+  GetMetricsSnapshotResponse,
   IpcCommandName,
   IpcError,
   ListDetectedHarnessesResponse,
@@ -14,8 +17,11 @@ import {
   type ApplyOptions,
   type Backend,
   type BackendDraft,
+  type CollectorLogTailResponse,
+  type CollectorStatus,
   type DetectedHarness,
   type HarnessId,
+  type MetricsSnapshotWire,
   type PatchPreview,
   type TestExportResult,
   type TrovePatch,
@@ -116,4 +122,26 @@ export async function clearBackend(): Promise<void> {
  *  surface the underlying detail and unlock a "Save anyway" affordance. */
 export async function testExport(): Promise<TestExportResult> {
   return invokeIpc(IpcCommandName.TestExport, undefined, TestExportResponse);
+}
+
+/** Snapshot the collector supervisor's current run state plus the
+ *  on-disk log path. Sprint 6 PR 3's dashboard subscribes to live
+ *  transitions via the `collector-state` Tauri event. */
+export async function getCollectorStatus(): Promise<CollectorStatus> {
+  return invokeIpc(IpcCommandName.GetCollectorStatus, undefined, GetCollectorStatusResponse);
+}
+
+/** Latest internal-Prometheus scrape from the bundled collector. `null`
+ *  before the first scrape returns; `unreachable: true` when `:8888`
+ *  refused (e.g. user-customised YAML drops the telemetry block). */
+export async function getMetricsSnapshot(): Promise<MetricsSnapshotWire | null> {
+  return invokeIpc(IpcCommandName.GetMetricsSnapshot, undefined, GetMetricsSnapshotResponse);
+}
+
+/** Read the most recent N lines from `collector.log` plus the byte
+ *  offset at the moment the read finished. The dashboard threads this
+ *  initial tail with the live `collector-log` event stream by
+ *  discarding events that arrive against the same offset. */
+export async function getCollectorLogTail(lines: number): Promise<CollectorLogTailResponse> {
+  return invokeIpc(IpcCommandName.GetCollectorLogTail, { lines }, GetCollectorLogTailResponse);
 }

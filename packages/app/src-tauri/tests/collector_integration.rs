@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 
 use tokio::time::sleep;
 use trove_app::collector::{
-    CollectorState, Supervisor, SupervisorHandle, SupervisorOptions,
+    CollectorState, MetricsTap, MetricsTapHandle, MetricsTapOptions, Supervisor,
+    SupervisorChannels, SupervisorHandle, SupervisorOptions,
 };
 
 const SMOKE_CONFIG: &str = include_str!("../../../../resources/otelcol/smoke-config.yaml");
@@ -47,7 +48,8 @@ async fn supervisor_spawns_restarts_and_shuts_down_cleanly() {
     opts.restart_max_backoff = Duration::from_secs(1);
     opts.shutdown_grace = Duration::from_secs(3);
 
-    let handle = Supervisor::start(opts).expect("supervisor starts");
+    let handle = Supervisor::start(opts, SupervisorChannels::new())
+        .expect("supervisor starts");
 
     let pid_first = wait_for_running(&handle, Duration::from_secs(8))
         .await
@@ -73,6 +75,93 @@ async fn supervisor_spawns_restarts_and_shuts_down_cleanly() {
         wait_until_pid_gone(pid_second, Duration::from_secs(3)),
         "child PID {pid_second} should exit within shutdown grace",
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn smoke_config_exposes_prometheus_metrics_endpoint() {
+    // Sprint 6 PR 1 acceptance: the smoke-config exposes
+    // :8888/metrics with otelcol_* counters that metrics_tap can
+    // scrape. Skips when no bundled binary is available, mirroring
+    // the existing test in this file.
+    let Some(binary_path) = locate_binary() else {
+        eprintln!(
+            "[collector_integration] skipping smoke metrics test: no trove-otelcol binary."
+        );
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config_path = tmp.path().join("collector.yaml");
+    std::fs::write(&config_path, SMOKE_CONFIG).expect("write smoke config");
+    let log_path = tmp.path().join("collector.log");
+
+    let mut opts = SupervisorOptions::new(binary_path, config_path, log_path);
+    opts.health_timeout = Duration::from_secs(5);
+    opts.health_poll_interval = Duration::from_millis(50);
+
+    let handle = Supervisor::start(opts, SupervisorChannels::new())
+        .expect("supervisor starts");
+    let pid = wait_for_running(&handle, Duration::from_secs(8))
+        .await
+        .expect("collector reaches Running");
+    assert!(pid > 0);
+
+    // Direct scrape: confirms the YAML edit landed the endpoint.
+    let body = scrape(":8888/metrics", "http://127.0.0.1:8888/metrics").await;
+    assert!(
+        body.contains("otelcol_"),
+        "expected otelcol_* counters in :8888/metrics body; got {} bytes",
+        body.len(),
+    );
+    // Even without traffic, the service emits its own process counters.
+    assert!(body.contains("otelcol_process_uptime_seconds_total"));
+
+    // metrics_tap consumes the same endpoint and produces a snapshot.
+    let tap: MetricsTapHandle = MetricsTap::start(MetricsTapOptions::default());
+    let snapshot = wait_for_snapshot(&tap, Duration::from_secs(10))
+        .await
+        .expect("metrics_tap publishes a snapshot within 10s");
+    assert!(!snapshot.unreachable, "endpoint must be reachable");
+    tap.shutdown().await;
+    handle.shutdown().await;
+}
+
+async fn scrape(label: &'static str, url: &str) -> String {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .no_proxy()
+        .build()
+        .expect("client");
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("{label}: GET failed: {e}"));
+    assert!(
+        resp.status().is_success(),
+        "{label}: non-200 status {}",
+        resp.status(),
+    );
+    resp.text()
+        .await
+        .unwrap_or_else(|e| panic!("{label}: body read failed: {e}"))
+}
+
+async fn wait_for_snapshot(
+    tap: &MetricsTapHandle,
+    timeout: Duration,
+) -> Option<trove_app::collector::MetricsSnapshot> {
+    let deadline = Instant::now() + timeout;
+    let mut rx = tap.subscribe();
+    loop {
+        if let Some(snap) = rx.borrow().clone() {
+            return Some(snap);
+        }
+        let remaining = deadline.checked_duration_since(Instant::now())?;
+        if tokio::time::timeout(remaining, rx.changed()).await.is_err() {
+            return None;
+        }
+    }
 }
 
 fn locate_binary() -> Option<PathBuf> {

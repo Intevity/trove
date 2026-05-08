@@ -56,5 +56,14 @@ service:
     logs:
       level: info
       encoding: console
+    # Sprint 6: Prometheus endpoint for trove's metrics_tap (loopback only).
+    # Use the `readers` schema; collector v0.151+ rejects the legacy
+    # `address` scalar via its migration helper.
     metrics:
-      level: none
+      level: basic
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: '127.0.0.1'
+                port: 8888

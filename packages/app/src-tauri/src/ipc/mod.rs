@@ -5,6 +5,7 @@
 //! a Zod twin in `packages/shared/src/schemas.ts` so `kind`-based
 //! branching stays type-safe across the wire.
 
+pub mod collector_status;
 pub mod commands;
 pub mod test_export;
 

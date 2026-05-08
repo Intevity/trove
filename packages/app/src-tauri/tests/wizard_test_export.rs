@@ -26,7 +26,9 @@ use tokio::sync::oneshot;
 
 use trove_app::app_state::{Backend, OtlpProtocol};
 use trove_app::collector::codegen::{render_with, RenderError, RenderedCollector};
-use trove_app::collector::{CollectorState, Supervisor, SupervisorHandle, SupervisorOptions};
+use trove_app::collector::{
+    CollectorState, Supervisor, SupervisorChannels, SupervisorHandle, SupervisorOptions,
+};
 use trove_app::ipc::test_export::{test_export_at, TestExportStatus};
 use zeroize::Zeroizing;
 
@@ -279,7 +281,8 @@ async fn test_export_succeeds_against_a_stub_otlp_receiver() {
     let (yaml_path, log_path, env, _dir) = write_yaml_and_env(&rendered.yaml, rendered.env);
 
     let opts = SupervisorOptions::new(binary, yaml_path, log_path.clone()).with_env(env);
-    let handle = Supervisor::start(opts).expect("supervisor starts");
+    let handle = Supervisor::start(opts, SupervisorChannels::new())
+        .expect("supervisor starts");
     wait_for_running(&handle, Duration::from_secs(15))
         .await
         .expect("collector running within 15s");
@@ -326,7 +329,8 @@ async fn test_export_reports_failure_when_backend_unreachable() {
     let (yaml_path, log_path, env, _dir) = write_yaml_and_env(&rendered.yaml, rendered.env);
 
     let opts = SupervisorOptions::new(binary, yaml_path, log_path.clone()).with_env(env);
-    let handle = Supervisor::start(opts).expect("supervisor starts");
+    let handle = Supervisor::start(opts, SupervisorChannels::new())
+        .expect("supervisor starts");
     wait_for_running(&handle, Duration::from_secs(15))
         .await
         .expect("collector running");
