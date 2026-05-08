@@ -191,6 +191,30 @@ pub fn get_metrics_snapshot(
     }))
 }
 
+/// Sprint 6 PR 2 dev hatch — bypass `derive_overall_health` and force
+/// the tray to a specific colour. Used by Playwright in PR 3 (parity
+/// vs the dashboard's `OverallHealthBadge`) and by manual macOS smoke
+/// verification (dev-tools
+/// `__TAURI_INTERNALS__.invoke('dev_set_tray_color', { color: 'green' })`).
+/// Compiled in every build so `tauri::generate_handler!` never sees a
+/// missing item, but the body is a no-op in release builds — the
+/// command is effectively unreachable from a packaged app because
+/// devtools is debug-only.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn dev_set_tray_color(app: tauri::AppHandle, color: OverallHealth) -> Result<(), IpcError> {
+    #[cfg(debug_assertions)]
+    {
+        crate::tray::force_color(&app, color);
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        let _ = color;
+    }
+    Ok(())
+}
+
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn get_collector_log_tail(
