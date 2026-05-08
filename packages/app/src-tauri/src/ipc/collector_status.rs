@@ -502,8 +502,11 @@ mod tests {
     async fn read_log_tail_keeps_only_the_last_n_lines_when_over_budget() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("collector.log");
-        let body: String = (0..10).map(|i| format!("line {i}\n")).collect();
-        tokio::fs::write(&path, &body).await.unwrap();
+        // Hardcoded fixture — clippy::format_collect (1.95+) flags
+        // map(format!).collect() and fold/write! is overkill for ten lines.
+        let body =
+            "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\n";
+        tokio::fs::write(&path, body).await.unwrap();
         let resp = read_log_tail(path, 3).await.unwrap();
         assert_eq!(resp.lines.len(), 3);
         // Last three lines retained; earlier ones dropped.
