@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ApplyPatchResponse,
+  GetCollectorLogTailResponse,
+  GetCollectorStatusResponse,
+  GetMetricsSnapshotResponse,
   IpcCommandName,
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
   RevertPatchResponse,
+  TauriEventName,
 } from './ipc-messages.js';
 
 describe('IpcCommandName', () => {
@@ -96,5 +100,51 @@ describe('ListDetectedHarnessesResponse', () => {
         },
       ]),
     ).toThrow();
+  });
+});
+
+describe('Sprint 6 PR 1 — collector status surface', () => {
+  it('exposes the three new command names', () => {
+    expect(IpcCommandName.GetCollectorStatus).toBe('get_collector_status');
+    expect(IpcCommandName.GetMetricsSnapshot).toBe('get_metrics_snapshot');
+    expect(IpcCommandName.GetCollectorLogTail).toBe('get_collector_log_tail');
+  });
+
+  it('exposes the Tauri event channel names', () => {
+    expect(TauriEventName.CollectorState).toBe('collector-state');
+    expect(TauriEventName.MetricsSnapshot).toBe('metrics-snapshot');
+    expect(TauriEventName.CollectorLog).toBe('collector-log');
+  });
+
+  it('parses GetCollectorStatusResponse', () => {
+    const status = {
+      state: { kind: 'idle' as const },
+      logPath: '/tmp/trove/collector.log',
+    };
+    expect(GetCollectorStatusResponse.parse(status)).toEqual(status);
+  });
+
+  it('parses GetMetricsSnapshotResponse with null', () => {
+    expect(GetMetricsSnapshotResponse.parse(null)).toBeNull();
+  });
+
+  it('parses GetMetricsSnapshotResponse with a populated snapshot', () => {
+    const snap = {
+      received: { spans: 3, metricPoints: 0, logRecords: 0 },
+      sent: { spans: 3, metricPoints: 0, logRecords: 0 },
+      lastSignalMsAgo: 1500,
+      scrapedMsAgo: 100,
+      unreachable: false,
+      overallHealth: 'green' as const,
+    };
+    expect(GetMetricsSnapshotResponse.parse(snap)).toEqual(snap);
+  });
+
+  it('parses GetCollectorLogTailResponse', () => {
+    const payload = {
+      lines: [{ stream: 'stdout', line: 'startup' }],
+      byteOffset: 8,
+    };
+    expect(GetCollectorLogTailResponse.parse(payload)).toEqual(payload);
   });
 });

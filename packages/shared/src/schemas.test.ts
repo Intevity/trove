@@ -5,16 +5,23 @@ import {
   AppState,
   Backend,
   BackendDraft,
+  CollectorLogLineWire,
+  CollectorLogTailResponse,
+  CollectorRunState,
+  CollectorStatus,
   ConflictState,
   DetectedHarness,
   DetectionMethod,
   HarnessConfig,
   HarnessId,
   IpcError,
+  MetricsSnapshotWire,
+  OverallHealth,
   PatchFormat,
   PatchPreview,
   PreviewStatus,
   SecretRef,
+  SignalCounts,
   TelemetryStatus,
   TestExportResult,
   TrovePatch,
@@ -433,5 +440,129 @@ describe('IpcError', () => {
 
   it('rejects an unknown kind', () => {
     expect(() => IpcError.parse({ kind: 'misc', reason: 'huh' })).toThrow();
+  });
+});
+
+describe('CollectorRunState', () => {
+  it('parses each kebab-case kind', () => {
+    expect(CollectorRunState.parse({ kind: 'idle' })).toEqual({ kind: 'idle' });
+    expect(CollectorRunState.parse({ kind: 'starting', pid: 1234 })).toEqual({
+      kind: 'starting',
+      pid: 1234,
+    });
+    expect(CollectorRunState.parse({ kind: 'running', pid: 1, restarts: 0 })).toEqual({
+      kind: 'running',
+      pid: 1,
+      restarts: 0,
+    });
+    expect(CollectorRunState.parse({ kind: 'crashed', restarts: 2 })).toEqual({
+      kind: 'crashed',
+      restarts: 2,
+    });
+    expect(CollectorRunState.parse({ kind: 'stopping' })).toEqual({ kind: 'stopping' });
+    expect(CollectorRunState.parse({ kind: 'stopped' })).toEqual({ kind: 'stopped' });
+    expect(CollectorRunState.parse({ kind: 'failed', reason: 'spawn failed' })).toEqual({
+      kind: 'failed',
+      reason: 'spawn failed',
+    });
+  });
+
+  it('rejects starting without pid', () => {
+    expect(() => CollectorRunState.parse({ kind: 'starting' })).toThrow();
+  });
+
+  it('rejects an unknown kind', () => {
+    expect(() => CollectorRunState.parse({ kind: 'paused' })).toThrow();
+  });
+});
+
+describe('CollectorStatus', () => {
+  it('round-trips a running state with logPath', () => {
+    const status = {
+      state: { kind: 'running', pid: 42, restarts: 0 } as const,
+      logPath: '/tmp/trove/collector.log',
+    };
+    expect(CollectorStatus.parse(status)).toEqual(status);
+  });
+
+  it('rejects when logPath is missing', () => {
+    expect(() => CollectorStatus.parse({ state: { kind: 'idle' } })).toThrow();
+  });
+});
+
+describe('SignalCounts', () => {
+  it('accepts non-negative integer counts', () => {
+    expect(SignalCounts.parse({ spans: 1, metricPoints: 2, logRecords: 3 })).toEqual({
+      spans: 1,
+      metricPoints: 2,
+      logRecords: 3,
+    });
+  });
+
+  it('rejects negatives', () => {
+    expect(() => SignalCounts.parse({ spans: -1, metricPoints: 0, logRecords: 0 })).toThrow();
+  });
+});
+
+describe('OverallHealth', () => {
+  it('accepts the three lowercase variants', () => {
+    expect(OverallHealth.parse('green')).toBe('green');
+    expect(OverallHealth.parse('amber')).toBe('amber');
+    expect(OverallHealth.parse('red')).toBe('red');
+  });
+
+  it('rejects mixed case', () => {
+    expect(() => OverallHealth.parse('Green')).toThrow();
+  });
+});
+
+describe('MetricsSnapshotWire', () => {
+  const empty = {
+    received: { spans: 0, metricPoints: 0, logRecords: 0 },
+    sent: { spans: 0, metricPoints: 0, logRecords: 0 },
+    lastSignalMsAgo: null,
+    scrapedMsAgo: 0,
+    unreachable: false,
+    overallHealth: 'green' as const,
+  };
+
+  it('round-trips a fresh snapshot', () => {
+    expect(MetricsSnapshotWire.parse(empty)).toEqual(empty);
+  });
+
+  it('round-trips a snapshot with last-signal delta', () => {
+    const snap = { ...empty, lastSignalMsAgo: 4_500, scrapedMsAgo: 250 };
+    expect(MetricsSnapshotWire.parse(snap)).toEqual(snap);
+  });
+
+  it('marks unreachable + amber', () => {
+    const snap = { ...empty, unreachable: true, overallHealth: 'amber' as const };
+    expect(MetricsSnapshotWire.parse(snap)).toEqual(snap);
+  });
+
+  it('rejects negative scrapedMsAgo', () => {
+    expect(() => MetricsSnapshotWire.parse({ ...empty, scrapedMsAgo: -1 })).toThrow();
+  });
+});
+
+describe('CollectorLogTailResponse', () => {
+  it('accepts a fresh-launch empty response', () => {
+    expect(CollectorLogTailResponse.parse({ lines: [], byteOffset: 0 })).toEqual({
+      lines: [],
+      byteOffset: 0,
+    });
+  });
+
+  it('accepts a response with multiple lines and a non-zero offset', () => {
+    const payload = {
+      lines: [
+        { stream: 'stdout', line: 'starting OTLP receiver' },
+        { stream: 'stderr', line: 'health endpoint up' },
+      ],
+      byteOffset: 1234,
+    };
+    expect(CollectorLogTailResponse.parse(payload)).toEqual(payload);
+    // Same shape as the live event payload.
+    expect(CollectorLogLineWire.parse(payload.lines[0])).toEqual(payload.lines[0]);
   });
 });

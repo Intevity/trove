@@ -49,5 +49,16 @@ service:
     logs:
       level: info
       encoding: console
+    # Sprint 6: expose the Collector's own counters on a loopback-only
+    # Prometheus endpoint so trove's metrics_tap can scrape received /
+    # sent totals for the dashboard. The `readers` schema replaced the
+    # legacy `address` scalar in OTel Collector v0.151; the older form
+    # is rejected by the migration helper.
     metrics:
-      level: none
+      level: basic
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: '127.0.0.1'
+                port: 8888

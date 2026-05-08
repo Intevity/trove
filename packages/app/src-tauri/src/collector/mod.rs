@@ -8,20 +8,29 @@
 //! [`tokio::sync::watch`] channel that Sprint 6 will surface to the UI.
 
 pub mod codegen;
+pub mod derive;
 pub mod health;
 pub mod lifecycle;
 pub mod logs;
+pub mod metrics_tap;
 
-// Re-export the supervisor surface. `CollectorState` is unused inside the
-// lib in Sprint 1 — it's surfaced to the integration test and to Sprint 6's
-// dashboard via `SupervisorHandle::state` / `subscribe`.
+// Re-export the supervisor surface.
 #[allow(unused_imports)]
 pub use lifecycle::{
-    CollectorState, StartError, Supervisor, SupervisorHandle, SupervisorOptions,
+    CollectorLogLine, CollectorState, StartError, Supervisor, SupervisorChannels,
+    SupervisorHandle, SupervisorOptions,
+};
+#[allow(unused_imports)]
+pub use derive::{OverallHealth, derive_overall_health};
+#[allow(unused_imports)]
+pub use metrics_tap::{
+    MetricsSnapshot, MetricsTap, MetricsTapHandle, MetricsTapOptions, SignalCounts,
 };
 
 /// Tauri-managed state slot for the live supervisor. Sprint 5 PR 2
 /// wraps the handle so `save_backend` / `clear_backend` can swap it
 /// during a collector reload: take → await `shutdown` outside the
-/// lock → start a fresh supervisor → put it back.
+/// lock → start a fresh supervisor → put it back. The watch sender
+/// inside [`SupervisorChannels`] is held separately (registered as
+/// its own Tauri-managed slot) so subscribers survive the swap.
 pub type SupervisorState = std::sync::Mutex<Option<SupervisorHandle>>;

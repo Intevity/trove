@@ -22,7 +22,10 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
 use std::sync::Mutex;
 
-use crate::collector::{Supervisor, SupervisorHandle, SupervisorOptions, SupervisorState};
+use crate::collector::{
+    MetricsTap, MetricsTapHandle, MetricsTapOptions, Supervisor, SupervisorChannels,
+    SupervisorHandle, SupervisorOptions, SupervisorState,
+};
 
 /// The smoke-test Collector configuration. Sprint 1 ships this baked into
 /// the binary; Sprint 5's wizard codegens a backend-specific YAML over the
@@ -50,15 +53,28 @@ pub fn run() {
             ipc::commands::save_backend,
             ipc::commands::clear_backend,
             ipc::commands::test_export,
+            ipc::collector_status::get_collector_status,
+            ipc::collector_status::get_metrics_snapshot,
+            ipc::collector_status::get_collector_log_tail,
         ])
         .setup(|app| {
-            tray::setup(app.handle())?;
+            // SupervisorChannels lives outside the SupervisorHandle so
+            // dashboard subscribers (tray, IPC) survive reload_collector:
+            // every reload constructs a fresh handle but keeps publishing
+            // into the same watch::Sender / broadcast::Sender. The
+            // metrics tap follows the same pattern — its watch sender is
+            // owned by the long-lived MetricsTapHandle, never recycled.
+            let channels = SupervisorChannels::new();
+            app.manage::<SupervisorChannels>(channels.clone());
+
+            let metrics = MetricsTap::start(MetricsTapOptions::default());
+            app.manage::<MetricsTapHandle>(metrics);
 
             // Always register a SupervisorState slot — even when the
             // initial spawn fails (missing sidecar binary in dev, etc.).
             // save_backend can spawn a fresh supervisor into the empty
             // slot once the user finishes the wizard.
-            let initial = match start_collector(app.handle()) {
+            let initial = match start_collector(app.handle(), channels.clone()) {
                 Ok(handle) => Some(handle),
                 Err(e) => {
                     tracing::error!(error = %e, "could not start collector supervisor");
@@ -66,6 +82,17 @@ pub fn run() {
                 }
             };
             app.manage::<SupervisorState>(Mutex::new(initial));
+
+            // Background tasks that forward state/metrics/log updates
+            // from the long-lived channels onto Tauri's emit channel.
+            // Must run after all managed-state slots are registered
+            // because the pumps look them up via app.state::<...>().
+            ipc::collector_status::spawn_event_pumps(app.handle());
+
+            // Tray setup runs after the Supervisor* slots are registered
+            // so PR 2 can subscribe to the watch / broadcast channels
+            // from inside `tray::setup` without a deferred lookup.
+            tray::setup(app.handle())?;
 
             Ok(())
         })
@@ -131,7 +158,10 @@ fn init_tracing() {
         .try_init();
 }
 
-fn start_collector(app: &AppHandle) -> Result<SupervisorHandle, CollectorBootError> {
+fn start_collector(
+    app: &AppHandle,
+    channels: SupervisorChannels,
+) -> Result<SupervisorHandle, CollectorBootError> {
     let binary_path = sidecar_binary_path()?;
     let config_path = ensure_collector_config(app)?;
     let log_path = ensure_log_path(app)?;
@@ -144,7 +174,7 @@ fn start_collector(app: &AppHandle) -> Result<SupervisorHandle, CollectorBootErr
     );
 
     let opts = SupervisorOptions::new(binary_path, config_path, log_path);
-    let handle = Supervisor::start(opts)?;
+    let handle = Supervisor::start(opts, channels)?;
     Ok(handle)
 }
 
@@ -196,7 +226,10 @@ pub fn reload_collector<S: std::hash::BuildHasher>(
     // map and doesn't propagate the generic.
     let env: std::collections::HashMap<String, String> = env.into_iter().collect();
     let opts = SupervisorOptions::new(binary_path, config_path, log_path).with_env(env);
-    let new_handle = Supervisor::start(opts)?;
+    // Reuse the long-lived channels so existing subscribers (tray,
+    // dashboard hooks) keep observing transitions across the reload.
+    let channels = app.state::<SupervisorChannels>().inner().clone();
+    let new_handle = Supervisor::start(opts, channels)?;
     {
         let state = app.state::<SupervisorState>();
         let mut guard = state.lock().expect("supervisor state poisoned");

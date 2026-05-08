@@ -8,14 +8,14 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::async_runtime::JoinHandle;
 use thiserror::Error;
 use tokio::io::BufReader;
 use tokio::process::{Child, Command};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 use tokio::time::{Instant, sleep};
 
 use super::{health, logs};
@@ -112,12 +112,83 @@ pub enum StartError {
     ConfigNotFound(PathBuf),
 }
 
+/// One line captured from the supervised Collector child's stdout or
+/// stderr, with the originating stream tagged. Sprint 6 PR 1 broadcasts
+/// these so the dashboard's logs panel can render the live tail without
+/// re-reading the rotated log file from disk.
+#[derive(Clone, Debug)]
+pub struct CollectorLogLine {
+    pub stream: &'static str,
+    pub line: String,
+}
+
+/// External channels the supervisor publishes into. Hoisted out of
+/// [`SupervisorHandle`] so they survive across [`reload_collector`]:
+/// every reload constructs a fresh handle but reuses the same channels,
+/// so subscribers (tray, dashboard) keep observing transitions instead
+/// of receiving a single `Stopped` and going silent.
+///
+/// `state` is a `watch` because consumers only care about the latest
+/// state — coalescing intermediate transitions is fine. `logs` is a
+/// `broadcast` because every line matters; lagging consumers get a
+/// per-receiver `Lagged` error rather than dropping the channel.
+#[derive(Clone)]
+pub struct SupervisorChannels {
+    pub state: Arc<watch::Sender<CollectorState>>,
+    pub logs: broadcast::Sender<CollectorLogLine>,
+}
+
+impl SupervisorChannels {
+    /// Construct a fresh channel set seeded at [`CollectorState::Idle`]
+    /// with a 1024-line broadcast buffer.
+    #[must_use]
+    pub fn new() -> Self {
+        let (state_tx, _) = watch::channel(CollectorState::Idle);
+        let (logs_tx, _) = broadcast::channel(1024);
+        Self {
+            state: Arc::new(state_tx),
+            logs: logs_tx,
+        }
+    }
+
+    /// Borrow a fresh state receiver. Always usable — `watch` channels
+    /// are seeded with the current value, so `borrow()` and `changed()`
+    /// behave correctly even before the supervisor has spawned a child.
+    #[must_use]
+    pub fn subscribe_state(&self) -> watch::Receiver<CollectorState> {
+        self.state.subscribe()
+    }
+
+    /// Borrow a fresh log broadcast receiver. The receiver only sees
+    /// lines emitted *after* this call; pre-existing log content lives
+    /// in `collector.log` and is fetched via the
+    /// `get_collector_log_tail` IPC at mount time.
+    #[must_use]
+    pub fn subscribe_logs(&self) -> broadcast::Receiver<CollectorLogLine> {
+        self.logs.subscribe()
+    }
+}
+
+impl Default for SupervisorChannels {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Entry point. Spawns the supervisor task and returns a handle for state
 /// inspection and shutdown.
 pub struct Supervisor;
 
 impl Supervisor {
-    pub fn start(opts: SupervisorOptions) -> Result<SupervisorHandle, StartError> {
+    /// Spawn a fresh supervisor task that publishes into the supplied
+    /// `channels`. Callers (typically [`crate::lib::start_collector`]
+    /// and [`crate::reload_collector`]) hold a long-lived
+    /// [`SupervisorChannels`] and pass the same instance into every
+    /// invocation, so subscribers persist across reloads.
+    pub fn start(
+        opts: SupervisorOptions,
+        channels: SupervisorChannels,
+    ) -> Result<SupervisorHandle, StartError> {
         if !opts.binary_path.exists() {
             return Err(StartError::BinaryNotFound(opts.binary_path));
         }
@@ -126,7 +197,12 @@ impl Supervisor {
         }
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let (state_tx, state_rx) = watch::channel(CollectorState::Idle);
+
+        // Reset the shared watch to Idle so a previous `Stopped` /
+        // `Failed` reading doesn't linger after a reload. `send_replace`
+        // notifies subscribers without requiring at least one Receiver,
+        // which is correct here even before the dashboard is mounted.
+        channels.state.send_replace(CollectorState::Idle);
 
         // Spawn on Tauri's runtime so this works from `setup` (the main
         // thread, which has no current tokio runtime). Also works from
@@ -135,13 +211,14 @@ impl Supervisor {
         // supervise loop can use `tokio::spawn` because they run from
         // within an async context where a runtime is current.
         let task_opts = opts;
+        let task_channels = channels.clone();
         let join = tauri::async_runtime::spawn(async move {
-            supervise_loop(task_opts, shutdown_rx, state_tx).await;
+            supervise_loop(task_opts, shutdown_rx, task_channels).await;
         });
 
         Ok(SupervisorHandle {
             shutdown_tx: Mutex::new(Some(shutdown_tx)),
-            state_rx,
+            channels,
             join: Mutex::new(Some(join)),
         })
     }
@@ -151,14 +228,13 @@ impl Supervisor {
 /// terminates the child via `kill_on_drop`, but state transitions may
 /// not be observed.
 ///
-/// The `state` and `subscribe` methods are part of the supervisor's
-/// public API — Sprint 6 wires them into the dashboard and tray icon.
-/// They are exercised by the integration test in
-/// `tests/collector_integration.rs` rather than by lib-internal code.
+/// `channels` is the shared [`SupervisorChannels`] held by the caller —
+/// the same instance is passed to every [`Supervisor::start`] call, so
+/// subscribers survive across [`crate::reload_collector`].
 #[allow(dead_code)]
 pub struct SupervisorHandle {
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
-    state_rx: watch::Receiver<CollectorState>,
+    channels: SupervisorChannels,
     join: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -166,14 +242,29 @@ pub struct SupervisorHandle {
 impl SupervisorHandle {
     /// Snapshot the current state.
     pub fn state(&self) -> CollectorState {
-        self.state_rx.borrow().clone()
+        self.channels.state.borrow().clone()
     }
 
     /// Subscribe to state transitions. The returned receiver always has
     /// the current state available via `borrow`.
     #[must_use]
     pub fn subscribe(&self) -> watch::Receiver<CollectorState> {
-        self.state_rx.clone()
+        self.channels.subscribe_state()
+    }
+
+    /// Subscribe to per-line collector log output emitted while this
+    /// handle is alive. Returns a fresh broadcast receiver — pre-existing
+    /// lines live on disk and are fetched via `get_collector_log_tail`.
+    #[must_use]
+    pub fn subscribe_logs(&self) -> broadcast::Receiver<CollectorLogLine> {
+        self.channels.subscribe_logs()
+    }
+
+    /// Borrow the shared channel set so the caller can hand a clone to
+    /// a future [`Supervisor::start`] without going through this handle.
+    #[must_use]
+    pub fn channels(&self) -> SupervisorChannels {
+        self.channels.clone()
     }
 
     /// Request a graceful shutdown and wait for the supervisor task to
@@ -199,8 +290,10 @@ impl SupervisorHandle {
 async fn supervise_loop(
     opts: SupervisorOptions,
     mut shutdown_rx: oneshot::Receiver<()>,
-    state_tx: watch::Sender<CollectorState>,
+    channels: SupervisorChannels,
 ) {
+    let state_tx = channels.state.clone();
+    let log_tx = channels.logs.clone();
     let mut backoff = opts.restart_initial_backoff;
     let mut restarts: u32 = 0;
 
@@ -234,6 +327,7 @@ async fn supervise_loop(
             opts.log_path.clone(),
             tracing::Level::INFO,
             "stdout",
+            log_tx.clone(),
         );
         spawn_log_tee(
             child.stderr.take(),
@@ -244,9 +338,10 @@ async fn supervise_loop(
             // structured output if it wants finer granularity.
             tracing::Level::INFO,
             "stderr",
+            log_tx.clone(),
         );
 
-        let health_join = spawn_health_probe(&opts, pid, restarts, state_tx.clone());
+        let health_join = spawn_health_probe(&opts, pid, restarts, (*state_tx).clone());
 
         let started_at = Instant::now();
 
@@ -301,12 +396,13 @@ fn spawn_log_tee<R>(
     log_path: PathBuf,
     level: tracing::Level,
     label: &'static str,
+    broadcast: broadcast::Sender<CollectorLogLine>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     if let Some(s) = stream {
         tauri::async_runtime::spawn(async move {
-            logs::tee_stream(BufReader::new(s), log_path, level, label).await;
+            logs::tee_stream(BufReader::new(s), log_path, level, label, broadcast).await;
         });
     }
 }
@@ -349,5 +445,78 @@ async fn terminate_child(child: &mut Child, grace: Duration) {
         tracing::warn!("collector did not exit within grace period; force killing");
         let _ = child.kill().await;
         let _ = child.wait().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn channels_seed_subscribers_with_idle() {
+        let channels = SupervisorChannels::new();
+        let rx = channels.subscribe_state();
+        assert_eq!(*rx.borrow(), CollectorState::Idle);
+    }
+
+    #[tokio::test]
+    async fn cloned_channels_publish_into_the_same_watch() {
+        // Sprint 6 PR 1 contract: reload_collector takes the existing
+        // SupervisorChannels and hands a clone to the new Supervisor.
+        // Cloning the channels must not orphan pre-existing receivers.
+        let channels = SupervisorChannels::new();
+        let mut rx = channels.subscribe_state();
+
+        let cloned = channels.clone();
+        cloned
+            .state
+            .send_replace(CollectorState::Running { pid: 7, restarts: 0 });
+
+        rx.changed().await.expect("receiver still observes the publish");
+        assert_eq!(
+            *rx.borrow(),
+            CollectorState::Running { pid: 7, restarts: 0 },
+        );
+
+        // A second cloned set (analogous to a second reload) must also
+        // route to the original receiver.
+        let cloned_again = channels.clone();
+        cloned_again
+            .state
+            .send_replace(CollectorState::Crashed { restarts: 1 });
+        rx.changed().await.expect("receiver still observes after another reload");
+        assert_eq!(*rx.borrow(), CollectorState::Crashed { restarts: 1 });
+    }
+
+    #[tokio::test]
+    async fn log_broadcast_fans_out_to_late_subscribers_only_after_subscribe() {
+        // Broadcast does not buffer history for late subscribers; that's
+        // the documented behaviour we rely on (initial tail comes from
+        // the on-disk log file via `get_collector_log_tail`).
+        let channels = SupervisorChannels::new();
+        let _ = channels.logs.send(CollectorLogLine {
+            stream: "stdout",
+            line: "early line, never observed".into(),
+        });
+
+        let mut rx = channels.subscribe_logs();
+        let _ = channels.logs.send(CollectorLogLine {
+            stream: "stdout",
+            line: "post-subscribe".into(),
+        });
+
+        let line = tokio::time::timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .expect("recv resolves quickly")
+            .expect("broadcast not closed");
+        assert_eq!(line.line, "post-subscribe");
+    }
+
+    #[test]
+    fn channels_default_matches_new() {
+        // Default::default() and ::new() should be observationally
+        // identical: both seed Idle.
+        let a = SupervisorChannels::default();
+        assert_eq!(*a.subscribe_state().borrow(), CollectorState::Idle);
     }
 }
