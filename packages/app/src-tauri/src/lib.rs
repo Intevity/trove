@@ -15,6 +15,7 @@ pub mod ipc;
 pub mod safety;
 pub mod secrets;
 mod tray;
+mod tray_icon_render;
 
 use std::path::PathBuf;
 
@@ -56,6 +57,7 @@ pub fn run() {
             ipc::collector_status::get_collector_status,
             ipc::collector_status::get_metrics_snapshot,
             ipc::collector_status::get_collector_log_tail,
+            ipc::collector_status::dev_set_tray_color,
         ])
         .setup(|app| {
             // SupervisorChannels lives outside the SupervisorHandle so

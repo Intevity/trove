@@ -47,6 +47,15 @@ jobs:
         with:
           workspaces: packages/app/src-tauri -> target
           shared-key: trove-rust-${{ runner.os }}
+          # Only save the cache from main. The post-job save step
+          # invokes `cargo metadata --all-features`, which resolves
+          # Windows-target crates (e.g. windows_aarch64_gnullvm) and
+          # has been failing intermittently on the hosted Linux
+          # runner — usually with "No space left on device" — on PRs
+          # that change Cargo.lock. Skipping save on PRs keeps the
+          # restore behaviour (so PRs still get fast builds) without
+          # the flaky save path.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Go is needed by `pnpm build:collector` (ocb is invoked via
       # `go install go.opentelemetry.io/collector/cmd/builder@<pin>`).
@@ -207,6 +216,15 @@ jobs:
         with:
           workspaces: packages/app/src-tauri -> target
           shared-key: trove-rust-${{ runner.os }}
+          # Only save the cache from main. The post-job save step
+          # invokes `cargo metadata --all-features`, which resolves
+          # Windows-target crates (e.g. windows_aarch64_gnullvm) and
+          # has been failing intermittently on the hosted Linux
+          # runner — usually with "No space left on device" — on PRs
+          # that change Cargo.lock. Skipping save on PRs keeps the
+          # restore behaviour (so PRs still get fast builds) without
+          # the flaky save path.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-go@v5
         with:

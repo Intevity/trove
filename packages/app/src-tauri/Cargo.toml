@@ -73,6 +73,11 @@ keyring = { version = "3", features = [
     "sync-secret-service",
 ] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
+# Sprint 6 PR 2: tray icon retinting. The bundled tray-icon.png is
+# decoded once per TintColor (cached in OnceLock), then RGB is
+# replaced per pixel preserving alpha. `default-features = false`
+# strips the unrelated codec set; we only need PNG.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 proptest = "1"
