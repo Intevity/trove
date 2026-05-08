@@ -511,7 +511,7 @@ Sprints are sequential and assume the prior sprint is merged. Total elapsed time
 **Scope**:
 - React dashboard: per-harness rows (enabled? last signal seen? error?), sidecar panel (state / uptime / log tail), and a "Test pipeline" button that re-runs the synthetic export.
 - Tray icon dynamic colors: green (all good) / amber (running but no recent telemetry) / red (crashed or misconfigured) — adapt the claude-sentinel retinting pattern.
-- `packages/app/src-tauri/src/collector/metrics_tap.rs`: scrape Collector's pprof/health endpoints to derive recent counts; expose via IPC.
+- `packages/app/src-tauri/src/collector/metrics_tap.rs`: scrape Collector's internal Prometheus metrics endpoint (`127.0.0.1:8888/metrics`, enabled via `service.telemetry.metrics.readers` in every YAML) to derive recent counts; expose via IPC.
 - Logs tab streams the tail of `collector.log`.
 - One Playwright e2e: launch app → run wizard → enable Claude Code → trigger synthetic export → assert dashboard turns green.
 
