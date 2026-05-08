@@ -49,6 +49,7 @@ pub fn detect(id: HarnessId, detector: &Detector) -> DetectedHarness {
         telemetry,
         detection_method,
         trove_region_present,
+        adapter_available: id.has_adapter(),
     }
 }
 
