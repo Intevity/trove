@@ -30,6 +30,15 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
             }
         }
         HarnessId::QwenCode => paths.push(home.join(".qwen").join("settings.json")),
+        HarnessId::Opencode => {
+            paths.push(home.join(".config").join("opencode").join("opencode.json"));
+            // Honour $XDG_CONFIG_HOME on Linux; OpenCode follows the
+            // standard XDG path resolution for its config dir.
+            #[cfg(target_os = "linux")]
+            if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+                paths.push(PathBuf::from(xdg).join("opencode").join("opencode.json"));
+            }
+        }
         HarnessId::CursorIde | HarnessId::CursorCli => {
             // Both Cursor harnesses share `~/.cursor/hooks.json`. The
             // file may not exist before Trove runs (`~/.cursor/` itself
@@ -139,14 +148,19 @@ mod tests {
     }
 
     #[test]
-    fn tier_two_opencode_and_tier_three_return_empty_search_paths() {
+    fn opencode_resolves_to_dot_config_opencode_opencode_json() {
         let home = PathBuf::from("/home/dev");
-        for id in [
-            HarnessId::Opencode,
-            HarnessId::Cline,
-            HarnessId::Aider,
-            HarnessId::CopilotCli,
-        ] {
+        let paths = config_search_paths(HarnessId::Opencode, &home);
+        assert_eq!(
+            paths[0],
+            PathBuf::from("/home/dev/.config/opencode/opencode.json"),
+        );
+    }
+
+    #[test]
+    fn tier_three_returns_empty_search_paths() {
+        let home = PathBuf::from("/home/dev");
+        for id in [HarnessId::Cline, HarnessId::Aider, HarnessId::CopilotCli] {
             assert!(
                 config_search_paths(id, &home).is_empty(),
                 "unexpected paths returned for {id:?}"

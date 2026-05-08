@@ -57,11 +57,11 @@ impl HarnessId {
     }
 
     /// Tier 2 harnesses — those that need a Trove-shipped hook or
-    /// plugin instead of a native OTEL toggle. Sprint 7 PR 1 lands the
-    /// two Cursor variants; Sprint 7 PR 2 adds `OpenCode`.
+    /// plugin instead of a native OTEL toggle. Sprint 7 PR 1 landed the
+    /// two Cursor variants; PR 2 appended `OpenCode`.
     #[must_use]
     pub fn tier_2() -> &'static [Self] {
-        &[Self::CursorIde, Self::CursorCli]
+        &[Self::CursorIde, Self::CursorCli, Self::Opencode]
     }
 }
 
@@ -102,11 +102,15 @@ mod tests {
     }
 
     #[test]
-    fn tier_2_contains_the_cursor_harnesses_in_plan_order() {
-        // Sprint 7 PR 1: cursor only. PR 2 will append HarnessId::Opencode.
+    fn tier_2_contains_cursor_pair_then_opencode() {
+        // Sprint 7 PR 1 landed the cursor pair; PR 2 appended Opencode.
         assert_eq!(
             HarnessId::tier_2(),
-            &[HarnessId::CursorIde, HarnessId::CursorCli]
+            &[
+                HarnessId::CursorIde,
+                HarnessId::CursorCli,
+                HarnessId::Opencode,
+            ]
         );
     }
 

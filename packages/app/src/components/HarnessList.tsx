@@ -25,6 +25,9 @@ const ADAPTERS_AVAILABLE_IN_SPRINT_3: HarnessId[] = [
   // the IDE row uses the IDE label and the CLI row uses the CLI label.
   'cursor-ide',
   'cursor-cli',
+  // Sprint 7 PR 2 — OpenCode registers @devtheops/opencode-plugin-otel
+  // in opencode.json; OpenCode's runtime resolves the package itself.
+  'opencode',
 ];
 
 /** Per-harness advisory string surfaced as a badge next to the

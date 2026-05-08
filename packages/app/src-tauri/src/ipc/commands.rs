@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::adapters::{
     ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, cursor_cli, cursor_ide,
-    gemini_cli, qwen_code,
+    gemini_cli, opencode, qwen_code,
 };
 use crate::app_state::{
     self, AppState, Backend, BackendDraft, backend_secret_accounts, drain_secrets_from_draft,
@@ -76,7 +76,8 @@ where
         HarnessId::QwenCode => qwen_code::preview(home, options),
         HarnessId::CursorIde => cursor_ide::preview(home, options, &hook_resolver()?),
         HarnessId::CursorCli => cursor_cli::preview(home, options, &hook_resolver()?),
-        // OpenCode (Sprint 7 PR 2) and Tier 3 (Sprint 9) land later.
+        HarnessId::Opencode => opencode::preview(home, options),
+        // Tier 3 (Sprint 9) lands later.
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -106,6 +107,7 @@ pub fn apply_patch(
             let hook = cursor_hook_script_path(&app)?;
             cursor_cli::apply(&home, &options, &hook)
         }
+        HarnessId::Opencode => opencode::apply(&home, &options),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }?;
 
@@ -142,6 +144,7 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         // still receives the correct id.
         HarnessId::CursorIde => cursor_ide::revert(&home),
         HarnessId::CursorCli => cursor_cli::revert(&home),
+        HarnessId::Opencode => opencode::revert(&home),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }?;
 
@@ -268,8 +271,9 @@ fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         // shared underlying file is the source of truth.
         HarnessId::CursorIde => cursor_ide::config_path(home),
         HarnessId::CursorCli => cursor_cli::config_path(home),
-        // Tier 3 + Opencode don't reach this code path because their
-        // adapters error out before we try to record state.
+        HarnessId::Opencode => opencode::config_path(home),
+        // Tier 3 doesn't reach this code path because their adapters
+        // error out before we try to record state.
         _ => PathBuf::new(),
     }
 }
@@ -327,23 +331,21 @@ mod tests {
     }
 
     #[test]
-    fn preview_patch_inner_for_opencode_still_returns_not_implemented() {
-        // OpenCode lands in Sprint 7 PR 2; PR 1 must still surface the
-        // not-implemented error rather than a panic.
-        let home = std::path::PathBuf::from("/tmp/should-not-be-touched");
-        let err = preview_patch_inner(
+    fn preview_patch_inner_routes_opencode_through_adapter_without_resolver() {
+        // OpenCode is now wired in Sprint 7 PR 2 with a standard SPEC; the
+        // hook resolver must not be invoked for it.
+        let home = tempfile::tempdir().unwrap();
+        let result = preview_patch_inner(
             HarnessId::Opencode,
             &ApplyOptions::default(),
-            &home,
-            || panic!("hook resolver must not be invoked for non-cursor harnesses"),
+            home.path(),
+            || panic!("hook resolver must not be invoked for opencode"),
         )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            IpcError::HarnessNotImplemented {
-                id: HarnessId::Opencode
-            }
-        ));
+        .unwrap();
+        assert!(
+            result.after.contains("@devtheops/opencode-plugin-otel"),
+            "preview should embed the OTel plugin package name"
+        );
     }
 
     #[test]

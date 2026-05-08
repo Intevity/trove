@@ -62,6 +62,7 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
         // PATH binary on macOS / Linux (the user launches it via the app
         // bundle), so detection there relies on config-dir + app-bundle.
         HarnessId::CursorCli => Some("cursor-agent"),
+        HarnessId::Opencode => Some("opencode"),
         _ => None,
     }
 }
@@ -76,7 +77,8 @@ fn read_trove_region_present(id: HarnessId, path: &Path) -> bool {
         | HarnessId::GeminiCli
         | HarnessId::QwenCode
         | HarnessId::CursorIde
-        | HarnessId::CursorCli => Format::Json,
+        | HarnessId::CursorCli
+        | HarnessId::Opencode => Format::Json,
         HarnessId::CodexCli => Format::Toml,
         _ => return false,
     };
@@ -95,6 +97,7 @@ fn read_telemetry(id: HarnessId, path: &Path) -> TelemetryStatus {
         HarnessId::GeminiCli | HarnessId::QwenCode => check_gemini_like_telemetry(&text),
         HarnessId::CodexCli => check_codex_telemetry(&text),
         HarnessId::CursorIde | HarnessId::CursorCli => check_cursor_telemetry(&text),
+        HarnessId::Opencode => check_opencode_telemetry(&text),
         _ => TelemetryStatus::Unknown,
     }
 }
@@ -164,6 +167,32 @@ fn check_cursor_telemetry(text: &str) -> TelemetryStatus {
         Ok(Some(_)) => TelemetryStatus::On,
         Ok(None) => TelemetryStatus::Off,
         Err(_) => TelemetryStatus::Unknown,
+    }
+}
+
+/// `OpenCode`'s telemetry signal is whether the `OTel` plugin is
+/// registered in the top-level `plugin` array (or, equivalently,
+/// whether Trove's own block is present — Trove only writes the block
+/// when it's registering the plugin). Returns `On` for either; `Off`
+/// otherwise. JSON parse failures bubble up as `Unknown`.
+fn check_opencode_telemetry(text: &str) -> TelemetryStatus {
+    if matches!(extract_region(Format::Json, text), Ok(Some(_))) {
+        return TelemetryStatus::On;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return TelemetryStatus::Unknown;
+    };
+    let plugins = value.get("plugin").and_then(serde_json::Value::as_array);
+    let has_otel = plugins.is_some_and(|arr| {
+        arr.iter().any(|v| {
+            v.as_str()
+                .is_some_and(|s| s == crate::adapters::opencode::OTEL_PLUGIN_PACKAGE)
+        })
+    });
+    if has_otel {
+        TelemetryStatus::On
+    } else {
+        TelemetryStatus::Off
     }
 }
 
@@ -405,24 +434,126 @@ mod tests {
     }
 
     #[test]
-    fn opencode_and_tier_three_harnesses_remain_undetected_until_their_sprints() {
-        // Cursor IDE / CLI ship in Sprint 7 PR 1 — they're now detected.
-        // Opencode lands in Sprint 7 PR 2, and the Tier 3 trio waits for
-        // Sprint 9. Until then, an empty home should report them as
-        // undetected.
+    fn tier_three_harnesses_remain_undetected_until_their_sprint() {
+        // Sprint 9 lands the Tier 3 trio (cline, aider, copilot-cli);
+        // until then, an empty home should report them as undetected.
         let home = tempdir().unwrap();
-        for id in [
-            HarnessId::Opencode,
-            HarnessId::Cline,
-            HarnessId::Aider,
-            HarnessId::CopilotCli,
-        ] {
+        for id in [HarnessId::Cline, HarnessId::Aider, HarnessId::CopilotCli] {
             let result = detect(id, &detector_for(home.path()));
             assert!(
                 !result.detected,
                 "should not detect {id:?} on a clean home dir",
             );
         }
+    }
+
+    // --- OpenCode detection ------------------------------------------------
+
+    #[test]
+    fn opencode_detected_via_opencode_json() {
+        let home = tempdir().unwrap();
+        let cfg = home
+            .path()
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json");
+        write_settings(&cfg, "{}");
+
+        let result = detect(HarnessId::Opencode, &detector_for(home.path()));
+        assert!(result.detected);
+        assert_eq!(result.config_path.as_deref(), Some(cfg.as_path()));
+        assert_eq!(result.detection_method, Some(DetectionMethod::ConfigDir));
+        assert_eq!(result.telemetry, TelemetryStatus::Off);
+    }
+
+    #[test]
+    fn opencode_telemetry_on_when_otel_plugin_registered() {
+        let home = tempdir().unwrap();
+        let cfg = home
+            .path()
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json");
+        write_settings(
+            &cfg,
+            r#"{"plugin":["@devtheops/opencode-plugin-otel","@some/other"]}"#,
+        );
+
+        let result = detect(HarnessId::Opencode, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::On);
+    }
+
+    #[test]
+    fn opencode_telemetry_on_when_trove_region_present() {
+        let home = tempdir().unwrap();
+        let cfg = home
+            .path()
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json");
+        write_settings(
+            &cfg,
+            r#"{
+              "_trove": { "managed_keys": ["plugin"], "hash": "deadbeef" },
+              "plugin": ["@devtheops/opencode-plugin-otel"]
+            }"#,
+        );
+
+        let result = detect(HarnessId::Opencode, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::On);
+        assert!(result.trove_region_present);
+    }
+
+    #[test]
+    fn opencode_telemetry_off_when_unrelated_plugins_only() {
+        let home = tempdir().unwrap();
+        let cfg = home
+            .path()
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json");
+        write_settings(&cfg, r#"{"plugin":["@some/other"]}"#);
+
+        let result = detect(HarnessId::Opencode, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::Off);
+    }
+
+    #[test]
+    fn opencode_telemetry_unknown_when_config_malformed() {
+        let home = tempdir().unwrap();
+        let cfg = home
+            .path()
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json");
+        write_settings(&cfg, "{not valid json");
+
+        let result = detect(HarnessId::Opencode, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::Unknown);
+    }
+
+    #[test]
+    fn opencode_detected_via_path_when_no_config() {
+        let home = tempdir().unwrap();
+        let bin_dir = tempdir().unwrap();
+        let exe_name = if cfg!(windows) { "opencode.exe" } else { "opencode" };
+        let exe = bin_dir.path().join(exe_name);
+        fs::write(&exe, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(vec![bin_dir.path().to_path_buf()]),
+            app_root: home.path().to_path_buf(),
+        };
+
+        let result = detect(HarnessId::Opencode, &detector);
+        assert!(result.detected);
+        assert_eq!(result.detection_method, Some(DetectionMethod::PathBinary));
     }
 
     // --- Cursor IDE / Cursor CLI detection ---------------------------------
