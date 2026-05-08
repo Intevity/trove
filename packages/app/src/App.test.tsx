@@ -9,6 +9,15 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
+// Sprint 6 PR 3 added Tauri-event-driven hooks (collector status,
+// metrics snapshot, log tail). The dashboard mounts them on every
+// render, so the test environment needs a no-op `listen` so the
+// hooks don't crash on import. The hooks ignore parse failures, so
+// returning a never-firing listener is the simplest contract.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
 /** Default state.json shape: schemaVersion 2, no backend yet. App
  *  swaps in the wizard for this case. The detection-related tests
  *  override `backend` to a SigNoz stub so the dashboard view renders. */
