@@ -58,6 +58,10 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
         HarnessId::GeminiCli => Some("gemini"),
         HarnessId::CodexCli => Some("codex"),
         HarnessId::QwenCode => Some("qwen"),
+        // Cursor CLI binary is `cursor-agent`. Cursor IDE has no canonical
+        // PATH binary on macOS / Linux (the user launches it via the app
+        // bundle), so detection there relies on config-dir + app-bundle.
+        HarnessId::CursorCli => Some("cursor-agent"),
         _ => None,
     }
 }
@@ -68,7 +72,11 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
 /// preview/apply error path).
 fn read_trove_region_present(id: HarnessId, path: &Path) -> bool {
     let format = match id {
-        HarnessId::ClaudeCode | HarnessId::GeminiCli | HarnessId::QwenCode => Format::Json,
+        HarnessId::ClaudeCode
+        | HarnessId::GeminiCli
+        | HarnessId::QwenCode
+        | HarnessId::CursorIde
+        | HarnessId::CursorCli => Format::Json,
         HarnessId::CodexCli => Format::Toml,
         _ => return false,
     };
@@ -86,6 +94,7 @@ fn read_telemetry(id: HarnessId, path: &Path) -> TelemetryStatus {
         HarnessId::ClaudeCode => check_claude_telemetry(&text),
         HarnessId::GeminiCli | HarnessId::QwenCode => check_gemini_like_telemetry(&text),
         HarnessId::CodexCli => check_codex_telemetry(&text),
+        HarnessId::CursorIde | HarnessId::CursorCli => check_cursor_telemetry(&text),
         _ => TelemetryStatus::Unknown,
     }
 }
@@ -144,6 +153,18 @@ fn check_codex_telemetry(text: &str) -> TelemetryStatus {
         }
     }
     TelemetryStatus::Off
+}
+
+/// Cursor has no native telemetry toggle — Trove's only signal is
+/// whether our own hook block is installed in `hooks.json`. Returns
+/// `On` if a `_trove` block is present, `Off` otherwise. JSON parse
+/// failures bubble up as `Unknown`.
+fn check_cursor_telemetry(text: &str) -> TelemetryStatus {
+    match extract_region(Format::Json, text) {
+        Ok(Some(_)) => TelemetryStatus::On,
+        Ok(None) => TelemetryStatus::Off,
+        Err(_) => TelemetryStatus::Unknown,
+    }
 }
 
 #[cfg(test)]
@@ -384,12 +405,14 @@ mod tests {
     }
 
     #[test]
-    fn tier_two_harnesses_never_detected_in_sprint_3() {
+    fn opencode_and_tier_three_harnesses_remain_undetected_until_their_sprints() {
+        // Cursor IDE / CLI ship in Sprint 7 PR 1 — they're now detected.
+        // Opencode lands in Sprint 7 PR 2, and the Tier 3 trio waits for
+        // Sprint 9. Until then, an empty home should report them as
+        // undetected.
         let home = tempdir().unwrap();
         for id in [
             HarnessId::Opencode,
-            HarnessId::CursorIde,
-            HarnessId::CursorCli,
             HarnessId::Cline,
             HarnessId::Aider,
             HarnessId::CopilotCli,
@@ -397,9 +420,133 @@ mod tests {
             let result = detect(id, &detector_for(home.path()));
             assert!(
                 !result.detected,
-                "Tier 2/3 should not detect in Sprint 3: {id:?}"
+                "should not detect {id:?} on a clean home dir",
             );
         }
+    }
+
+    // --- Cursor IDE / Cursor CLI detection ---------------------------------
+
+    #[test]
+    fn cursor_ide_detected_via_hooks_json() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".cursor").join("hooks.json");
+        write_settings(&cfg, r#"{"version":1}"#);
+
+        let result = detect(HarnessId::CursorIde, &detector_for(home.path()));
+        assert!(result.detected);
+        assert_eq!(result.config_path.as_deref(), Some(cfg.as_path()));
+        assert_eq!(result.detection_method, Some(DetectionMethod::ConfigDir));
+        assert_eq!(result.telemetry, TelemetryStatus::Off);
+        assert!(!result.trove_region_present);
+    }
+
+    #[test]
+    fn cursor_ide_detected_via_dot_cursor_directory_when_hooks_json_missing() {
+        let home = tempdir().unwrap();
+        // Create the .cursor dir but no hooks.json.
+        fs::create_dir_all(home.path().join(".cursor")).unwrap();
+
+        let result = detect(HarnessId::CursorIde, &detector_for(home.path()));
+        assert!(result.detected);
+        assert_eq!(
+            result.config_path.as_deref(),
+            Some(home.path().join(".cursor").as_path())
+        );
+        assert_eq!(result.detection_method, Some(DetectionMethod::ConfigDir));
+        // Telemetry status read against a directory falls back to Unknown.
+        assert_eq!(result.telemetry, TelemetryStatus::Unknown);
+    }
+
+    #[test]
+    fn cursor_telemetry_on_when_trove_hook_block_present() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".cursor").join("hooks.json");
+        write_settings(
+            &cfg,
+            r#"{
+              "_trove": { "managed_keys": ["version", "hooks.beforeShellExecution"], "hash": "abc" },
+              "version": 1,
+              "hooks": { "beforeShellExecution": [] }
+            }"#,
+        );
+
+        let result = detect(HarnessId::CursorIde, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::On);
+        assert!(result.trove_region_present);
+    }
+
+    #[test]
+    fn cursor_cli_detected_via_path_when_no_config() {
+        let home = tempdir().unwrap();
+        let bin_dir = tempdir().unwrap();
+        let exe_name = if cfg!(windows) {
+            "cursor-agent.exe"
+        } else {
+            "cursor-agent"
+        };
+        let exe = bin_dir.path().join(exe_name);
+        fs::write(&exe, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(vec![bin_dir.path().to_path_buf()]),
+            app_root: home.path().to_path_buf(),
+        };
+
+        let result = detect(HarnessId::CursorCli, &detector);
+        assert!(result.detected);
+        assert_eq!(result.detection_method, Some(DetectionMethod::PathBinary));
+    }
+
+    #[test]
+    fn cursor_ide_not_detected_via_cursor_agent_path_binary() {
+        // Sanity: only Cursor CLI probes for `cursor-agent` on PATH.
+        // The IDE has no canonical PATH binary.
+        let home = tempdir().unwrap();
+        let bin_dir = tempdir().unwrap();
+        let exe = bin_dir.path().join("cursor-agent");
+        fs::write(&exe, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(vec![bin_dir.path().to_path_buf()]),
+            app_root: home.path().to_path_buf(),
+        };
+
+        let result = detect(HarnessId::CursorIde, &detector);
+        assert!(
+            !result.detected,
+            "cursor-agent on PATH must not falsely detect Cursor IDE"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cursor_ide_detected_via_app_bundle() {
+        let home = tempdir().unwrap();
+        let app_root = tempdir().unwrap();
+        fs::create_dir_all(app_root.path().join("Cursor.app")).unwrap();
+
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(Vec::new()),
+            app_root: app_root.path().to_path_buf(),
+        };
+
+        let result = detect(HarnessId::CursorIde, &detector);
+        assert!(result.detected);
+        assert_eq!(result.detection_method, Some(DetectionMethod::AppBundle));
     }
 
     #[cfg(target_os = "macos")]

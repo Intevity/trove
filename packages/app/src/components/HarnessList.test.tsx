@@ -184,4 +184,60 @@ describe('HarnessList', () => {
     );
     expect(screen.getByText('Detected on PATH')).toBeDefined();
   });
+
+  it('enables the cursor-ide toggle (Sprint 7 PR 1) without an advisory note', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'cursor-ide',
+            configPath: '/home/me/.cursor/hooks.json',
+            detectionMethod: 'config-dir',
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    const toggle = screen.getByLabelText('toggle-cursor-ide') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.textContent).toBe('Enable');
+    expect(screen.queryByTestId('harness-coverage-note-cursor-ide')).toBeNull();
+  });
+
+  it('enables the cursor-cli toggle (Sprint 7 PR 1) and shows the partial-coverage advisory', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'cursor-cli',
+            configPath: '/home/me/.cursor/hooks.json',
+            detectionMethod: 'path-binary',
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    const toggle = screen.getByLabelText('toggle-cursor-cli') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.textContent).toBe('Enable');
+    const advisory = screen.getByTestId('harness-coverage-note-cursor-cli');
+    expect(advisory.textContent).toBe('Partial event coverage');
+  });
+
+  it('does not surface a coverage advisory on opencode (no advisory configured)', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'opencode',
+            detected: false,
+            detectionMethod: null,
+            configPath: null,
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    expect(screen.queryByTestId('harness-coverage-note-opencode')).toBeNull();
+  });
 });

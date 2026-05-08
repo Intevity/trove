@@ -13,11 +13,29 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   'copilot-cli': 'GitHub Copilot CLI',
 };
 
-/** Adapters available in Sprint 3 — only Claude Code (PR 2) and
- *  Gemini CLI (PR 3) ship within this sprint. The remaining Tier 1
- *  rows are detected and listed but their toggles stay disabled until
- *  Sprint 4 adds the codex-cli + qwen-code adapters. */
-const ADAPTERS_AVAILABLE_IN_SPRINT_3: HarnessId[] = ['claude-code', 'gemini-cli'];
+/** Adapters whose Rust-side implementation is wired through the IPC
+ *  layer today. Sprint 7 PR 3 replaces this static list with an
+ *  IPC-driven availability check so future sprints don't have to
+ *  remember to flip the gate. Until then we extend the list per PR. */
+const ADAPTERS_AVAILABLE_IN_SPRINT_3: HarnessId[] = [
+  'claude-code',
+  'gemini-cli',
+  // Sprint 7 PR 1 — Cursor IDE and Cursor CLI share a single managed
+  // region in ~/.cursor/hooks.json; either toggle covers the file but
+  // the IDE row uses the IDE label and the CLI row uses the CLI label.
+  'cursor-ide',
+  'cursor-cli',
+];
+
+/** Per-harness advisory string surfaced as a badge next to the
+ *  telemetry status. Currently only cursor-cli carries one — Cursor's
+ *  CLI fires a strict subset of the events the IDE does, so users
+ *  enabling Cursor CLI alone capture less than they would with the IDE.
+ *  The string is intentionally short (the row is tight) and is always
+ *  visible (no tooltip) so it's hard to miss. */
+const COVERAGE_NOTES: Partial<Record<HarnessId, string>> = {
+  'cursor-cli': 'Partial event coverage',
+};
 
 export interface HarnessListProps {
   harnesses: DetectedHarness[];
@@ -124,6 +142,14 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
         >
           {telemetryLabel}
         </span>
+        {COVERAGE_NOTES[harness.id] ? (
+          <span
+            className="text-xs italic text-amber-600 dark:text-amber-400"
+            data-testid={`harness-coverage-note-${harness.id}`}
+          >
+            {COVERAGE_NOTES[harness.id]}
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={handleClick}

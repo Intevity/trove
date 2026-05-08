@@ -79,14 +79,14 @@ impl Detector {
         }
     }
 
-    /// Detect every Tier 1 harness Trove knows about. Sprint 7 / Sprint 9
-    /// will extend the iteration to Tier 2 and Tier 3 by adding entries
-    /// to [`HarnessId::tier_1`] (or sister helpers) and to the
-    /// per-harness path/probe tables.
+    /// Detect every harness Trove currently knows how to probe. As of
+    /// Sprint 7 PR 1 that's Tier 1 + the two Cursor variants of Tier 2;
+    /// Sprint 7 PR 2 adds `OpenCode` and Sprint 9 adds the Tier 3 trio.
     #[must_use]
     pub fn detect_all(&self) -> Vec<DetectedHarness> {
         HarnessId::tier_1()
             .iter()
+            .chain(HarnessId::tier_2().iter())
             .map(|id| harnesses::detect(*id, self))
             .collect()
     }
@@ -106,7 +106,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn detect_all_returns_one_row_per_tier_1_harness() {
+    fn detect_all_returns_one_row_per_supported_harness() {
         let home = tempdir().unwrap();
         let detector = Detector {
             home: home.path().to_path_buf(),
@@ -114,10 +114,16 @@ mod tests {
             app_root: home.path().to_path_buf(),
         };
         let results = detector.detect_all();
-        assert_eq!(results.len(), HarnessId::tier_1().len());
+        let expected_len = HarnessId::tier_1().len() + HarnessId::tier_2().len();
+        assert_eq!(results.len(), expected_len);
 
         let returned_ids: Vec<HarnessId> = results.iter().map(|r| r.id).collect();
-        assert_eq!(returned_ids, HarnessId::tier_1().to_vec());
+        let expected_ids: Vec<HarnessId> = HarnessId::tier_1()
+            .iter()
+            .chain(HarnessId::tier_2().iter())
+            .copied()
+            .collect();
+        assert_eq!(returned_ids, expected_ids);
     }
 
     #[test]
