@@ -13,6 +13,8 @@
 mod common;
 
 pub mod claude_code;
+pub mod cline;
+pub mod cline_watcher;
 pub mod codex_cli;
 pub mod cursor_cli;
 pub mod cursor_common;

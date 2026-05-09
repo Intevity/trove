@@ -581,7 +581,7 @@ Sprints are sequential and assume the prior sprint is merged. Total elapsed time
 **Goal**: three best-effort adapters that don't have native OTEL but extract what they can via wrappers and log parsing. UI labels them clearly as "best-effort".
 
 **Scope**:
-- `packages/app/src-tauri/src/adapters/cline.rs`: VSCode `settings.json` patch + log file watcher under `~/.config/Code/User/globalStorage/<cline-ext-id>/`.
+- `packages/app/src-tauri/src/adapters/cline.rs`: log-watch-only adapter (no host-config patch). Cline's upstream `package.json` declares an empty `contributes.configuration` object — no VSCode setting we could flip changes its output. The adapter polls `<vscode-user-data>/User/globalStorage/saoudrizwan.claude-dev/tasks/<task>/ui_messages.json` and emits one OTLP `LogRecord` per modified task (token counts and turn metadata; prompt body gated by `log_user_prompts`).
 - `packages/app/src-tauri/src/adapters/aider.rs`: ship a small wrapper script (`trove-aider`) on PATH or via shell rc env; parse its log for token counts and command durations; emit OTLP from a small in-Rust emitter.
 - `packages/app/src-tauri/src/adapters/copilot_cli.rs`: wrapper script around `gh copilot`; parse its output for invocation counts.
 - Each adapter has a "best-effort" badge in the UI with a tooltip explaining what it does and doesn't capture.

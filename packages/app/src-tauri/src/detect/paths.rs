@@ -52,13 +52,52 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
             paths.push(home.join(".cursor").join("hooks.json"));
             paths.push(home.join(".cursor"));
         }
-        // Tier 2 (`opencode`) and Tier 3 (`cline`, `aider`, `copilot-cli`)
-        // land in later sprints. Returning an empty search path keeps
-        // the detector's "not detected" answer honest until those
-        // adapters arrive.
+        HarnessId::Cline => {
+            // Sprint 9 PR 2 — Cline is the VSCode extension at
+            // `saoudrizwan.claude-dev`. Detection signals (in order):
+            // 1. globalStorage/<id>/tasks (strongest — implies usage)
+            // 2. globalStorage/<id> (extension has run at least once)
+            // 3. .vscode/extensions/<id>-* (extension installed but not
+            //    yet run; the suffix is a semver added by VSCode)
+            // The watcher follows config_path() → globalStorage root.
+            paths.push(crate::adapters::cline::tasks_dir(home));
+            paths.push(crate::adapters::cline::cline_global_storage_root(home));
+            paths.extend(cline_extension_dir_candidates(home));
+        }
+        // Tier 3 `aider` and `copilot-cli` land in PR 3.
         _ => {}
     }
     paths
+}
+
+/// Cline ships under `~/.vscode/extensions/saoudrizwan.claude-dev-<semver>/`
+/// where `<semver>` matches whichever version `VSCode` installed. Returns
+/// every directory entry that matches the prefix; the detector accepts
+/// the first one that exists.
+#[must_use]
+pub fn cline_extension_dir_candidates(home: &Path) -> Vec<PathBuf> {
+    let parents = [
+        home.join(".vscode").join("extensions"),
+        home.join(".vscode-insiders").join("extensions"),
+        // Cursor reuses the VSCode extensions layout; check there too
+        // since Cline runs under Cursor as well as vanilla VSCode.
+        home.join(".cursor").join("extensions"),
+    ];
+    let prefix = format!("{}-", crate::adapters::cline::EXTENSION_ID);
+    let mut out = Vec::new();
+    for parent in parents {
+        let Ok(rd) = std::fs::read_dir(&parent) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            let Some(s) = name.to_str() else { continue };
+            if s.starts_with(&prefix) {
+                out.push(entry.path());
+            }
+        }
+    }
+    out
 }
 
 /// Returns the standard macOS application-bundle path for `harness`
@@ -158,13 +197,57 @@ mod tests {
     }
 
     #[test]
-    fn tier_three_returns_empty_search_paths() {
+    fn aider_and_copilot_return_empty_search_paths_until_pr_3() {
+        // Sprint 9 PR 2 wires Cline; PR 3 wires the other two.
         let home = PathBuf::from("/home/dev");
-        for id in [HarnessId::Cline, HarnessId::Aider, HarnessId::CopilotCli] {
+        for id in [HarnessId::Aider, HarnessId::CopilotCli] {
             assert!(
                 config_search_paths(id, &home).is_empty(),
                 "unexpected paths returned for {id:?}"
             );
+        }
+    }
+
+    #[test]
+    fn cline_search_paths_include_global_storage_and_tasks_dir() {
+        let home = PathBuf::from("/home/dev");
+        let paths = config_search_paths(HarnessId::Cline, &home);
+        assert!(
+            !paths.is_empty(),
+            "expected at least one cline search path"
+        );
+        let joined: String = paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(",");
+        assert!(joined.contains("globalStorage"), "{joined}");
+        assert!(joined.contains("saoudrizwan.claude-dev"), "{joined}");
+        // First entry is the strongest (tasks) — implies usage.
+        assert!(paths[0].file_name().unwrap() == "tasks");
+    }
+
+    #[test]
+    fn cline_extension_dir_candidates_include_vscode_and_cursor_extension_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+
+        let make_ext = |parent_segments: &[&str]| {
+            let mut p = home.to_path_buf();
+            for seg in parent_segments {
+                p.push(seg);
+            }
+            std::fs::create_dir_all(&p).unwrap();
+            // Plant a directory shaped like VSCode's install path:
+            // <id>-<semver>
+            let ext = p.join("saoudrizwan.claude-dev-3.4.5");
+            std::fs::create_dir_all(&ext).unwrap();
+            ext
+        };
+        make_ext(&[".vscode", "extensions"]);
+        make_ext(&[".cursor", "extensions"]);
+
+        let candidates = cline_extension_dir_candidates(home);
+        assert_eq!(candidates.len(), 2, "{candidates:?}");
+        for c in &candidates {
+            let s = c.to_string_lossy();
+            assert!(s.contains("saoudrizwan.claude-dev"), "{s}");
         }
     }
 

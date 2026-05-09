@@ -76,15 +76,16 @@ impl HarnessId {
 
     /// Whether Trove currently ships an adapter for this harness — i.e.
     /// whether `apply` / `revert` will dispatch to a real implementation
-    /// rather than returning `IpcError::HarnessNotImplemented`. Tier 3
-    /// harnesses (`Cline`, `Aider`, `CopilotCli`) return `false` from
-    /// PR 1 onwards and flip to `true` as each individual adapter lands
-    /// in PR 2 (Cline) and PR 3 (Aider + Copilot). The dashboard
-    /// surfaces this as part of each `DetectedHarness` row so the UI
-    /// doesn't have to maintain a parallel hard-coded list.
+    /// rather than returning `IpcError::HarnessNotImplemented`. Sprint 9
+    /// PR 2 flips this on for `Cline`; PR 3 will flip the remaining
+    /// `Aider` and `CopilotCli` bits. The dashboard surfaces this as
+    /// part of each `DetectedHarness` row so the UI doesn't have to
+    /// maintain a parallel hard-coded list.
     #[must_use]
     pub fn has_adapter(self) -> bool {
-        Self::tier_1().contains(&self) || Self::tier_2().contains(&self)
+        Self::tier_1().contains(&self)
+            || Self::tier_2().contains(&self)
+            || matches!(self, Self::Cline)
     }
 }
 
@@ -173,14 +174,16 @@ mod tests {
     }
 
     #[test]
-    fn has_adapter_is_false_for_tier_3_in_pr_1() {
-        // Sprint 9 PR 1 only surfaces Tier 3 in detection. Each
-        // adapter (PR 2 = Cline, PR 3 = Aider + Copilot) flips its
-        // own bit when it lands; this test pins the PR-1 baseline.
-        for id in HarnessId::tier_3() {
+    fn has_adapter_is_true_for_cline_after_pr_2() {
+        assert!(HarnessId::Cline.has_adapter());
+    }
+
+    #[test]
+    fn has_adapter_is_false_for_aider_and_copilot_until_pr_3() {
+        for id in [HarnessId::Aider, HarnessId::CopilotCli] {
             assert!(
                 !id.has_adapter(),
-                "{id:?} should not yet have an adapter at PR 1 (Tier 3 adapters land in PR 2 and PR 3)"
+                "{id:?} should not yet have an adapter at PR 2 (lands in PR 3)"
             );
         }
     }
