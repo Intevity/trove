@@ -16,16 +16,17 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 use crate::adapters::{
-    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, claude_code, codex_cli, cursor_cli,
-    cursor_ide, gemini_cli, opencode, qwen_code,
+    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, claude_code, cline, cline_watcher,
+    codex_cli, cursor_cli, cursor_ide, gemini_cli, opencode, qwen_code,
 };
 use crate::app_state::{
     self, AppState, Backend, BackendDraft, HarnessConfig, backend_secret_accounts,
     drain_secrets_from_draft, harness_config_from_apply,
 };
 use crate::collector::codegen;
-use crate::detect::{DetectedHarness, detect_all};
+use crate::detect::{DetectedHarness, TelemetryStatus, detect_all};
 use crate::harness::HarnessId;
+use crate::tier3_watchers::TierThreeWatchers;
 use crate::safety::atomic::write_atomic;
 use crate::safety::backup::{backup_file, prune_backups};
 use crate::safety::sentinels::extract_region;
@@ -36,13 +37,55 @@ use super::{
     ConflictAction, ConflictPayload, ConflictResolutionOutcome, IpcError, SiblingPaths,
 };
 
-/// Detect every Tier 1 harness on the user's machine. Always succeeds —
-/// missing harnesses come back with `detected: false` rather than as
-/// errors. Future expansion (Tier 2 / Tier 3) only changes the row
-/// count, not the error shape.
+/// Detect every supported harness on the user's machine. Always
+/// succeeds — missing harnesses come back with `detected: false`
+/// rather than as errors. Sprint 9 PR 2 layers an overlay over Tier 3
+/// rows that reads `state.json` so the dashboard can decide whether
+/// the per-row toggle should read "Enable" or "Disable" — the
+/// detector itself doesn't see Trove's persisted state.
+#[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
-pub fn list_detected_harnesses() -> Result<Vec<DetectedHarness>, IpcError> {
-    Ok(detect_all())
+pub fn list_detected_harnesses(app: tauri::AppHandle) -> Result<Vec<DetectedHarness>, IpcError> {
+    use tauri::Manager as _;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| IpcError::Internal {
+            reason: format!("could not resolve app_config_dir: {e}"),
+        })?;
+    list_detected_harnesses_inner(&config_dir)
+}
+
+/// Test-friendly variant of [`list_detected_harnesses`]. Operates on
+/// an explicit config directory so unit tests can lay down a synthetic
+/// `state.json` and assert the Tier 3 overlay.
+pub fn list_detected_harnesses_inner(
+    config_dir: &Path,
+) -> Result<Vec<DetectedHarness>, IpcError> {
+    let mut rows = detect_all();
+    let state = app_state::load_from_dir(config_dir)?;
+    overlay_tier3_state(&mut rows, &state);
+    Ok(rows)
+}
+
+/// For each Tier 3 row, override `trove_region_present` (and `telemetry`)
+/// from the corresponding `state.json` entry. Tier 1 / Tier 2 rows
+/// already have authoritative answers from the host-file inspection in
+/// `detect/harnesses.rs` and are left unchanged.
+fn overlay_tier3_state(rows: &mut [DetectedHarness], state: &AppState) {
+    for row in rows.iter_mut() {
+        if !HarnessId::tier_3().contains(&row.id) {
+            continue;
+        }
+        let enabled = state
+            .harnesses
+            .iter()
+            .any(|h| h.id == row.id && h.enabled);
+        if enabled {
+            row.trove_region_present = true;
+            row.telemetry = TelemetryStatus::On;
+        }
+    }
 }
 
 /// Compute the diff Trove would write for `harness_id` with `options`.
@@ -82,7 +125,8 @@ where
         HarnessId::CursorIde => cursor_ide::preview(home, options, &hook_resolver()?),
         HarnessId::CursorCli => cursor_cli::preview(home, options, &hook_resolver()?),
         HarnessId::Opencode => opencode::preview(home, options),
-        // Tier 3 (Sprint 9) lands later.
+        HarnessId::Cline => cline::preview(home, options),
+        // Tier 3 `Aider` and `CopilotCli` land in Sprint 9 PR 3.
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
@@ -134,8 +178,33 @@ pub fn apply_patch(
             cursor_cli::apply(&home, &options, &hook)
         }
         HarnessId::Opencode => opencode::apply(&home, &options),
+        HarnessId::Cline => cline::apply(&home, &options),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }?;
+
+    // Sprint 9 PR 2 — Tier 3 watchers. Cline reads its globalStorage
+    // tasks dir; spawn one tokio task per enable, register the handle
+    // in `TierThreeWatchers` so revert can abort it. Idempotent:
+    // `tier3_watchers::insert` replaces any prior handle for the same
+    // id.
+    if matches!(harness_id, HarnessId::Cline) {
+        use tauri::Manager as _;
+        let tasks = cline::tasks_dir(&home);
+        let handle = cline_watcher::spawn(
+            tasks,
+            options.clone(),
+            cline_watcher::DEFAULT_POLL_INTERVAL,
+        );
+        if let Some(registry) = app.try_state::<TierThreeWatchers>() {
+            registry.insert(harness_id, handle);
+        } else {
+            // The slot is registered in `lib.rs::run`; a missing slot
+            // means the IPC layer was reached from a unit test that
+            // didn't go through the Tauri builder. The watcher's
+            // `JoinHandle` drops here, which aborts it on drop.
+            tracing::warn!(?harness_id, "TierThreeWatchers slot missing; watcher aborted");
+        }
+    }
 
     let harness_config = harness_config_from_apply(
         harness_id,
@@ -478,8 +547,18 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         HarnessId::CursorIde => cursor_ide::revert(&home),
         HarnessId::CursorCli => cursor_cli::revert(&home),
         HarnessId::Opencode => opencode::revert(&home),
+        HarnessId::Cline => cline::revert(&home),
         _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }?;
+
+    // Sprint 9 PR 2 — abort the Tier 3 watcher (if any) for this id.
+    // No-op for Tier 1 / Tier 2 since they never insert.
+    {
+        use tauri::Manager as _;
+        if let Some(registry) = app.try_state::<TierThreeWatchers>() {
+            let _aborted = registry.abort(harness_id);
+        }
+    }
 
     app_state::remove_harness(&app, harness_id)?;
 
@@ -606,8 +685,8 @@ pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         HarnessId::CursorIde => cursor_ide::config_path(home),
         HarnessId::CursorCli => cursor_cli::config_path(home),
         HarnessId::Opencode => opencode::config_path(home),
-        // Tier 3 doesn't reach this code path because their adapters
-        // error out before we try to record state.
+        HarnessId::Cline => cline::config_path(home),
+        // Tier 3 `Aider` and `CopilotCli` land in PR 3.
         _ => PathBuf::new(),
     }
 }
@@ -638,20 +717,62 @@ mod tests {
         // returns a row even when nothing is installed (`detected:
         // false`). The detect module's hermetic tests already cover
         // scoping; this test asserts the IPC entry point doesn't drop
-        // or reorder rows. Sprint 9 PR 1 adds the Tier 3 trio.
-        let result = list_detected_harnesses().unwrap();
+        // or reorder rows. Sprint 9 PR 1 adds the Tier 3 trio. Uses
+        // the `_inner` variant so we can exercise the AppHandle-less
+        // path with a tempdir-scoped state.
+        let dir = tempfile::tempdir().unwrap();
+        let result = list_detected_harnesses_inner(dir.path()).unwrap();
         let expected =
             HarnessId::tier_1().len() + HarnessId::tier_2().len() + HarnessId::tier_3().len();
         assert_eq!(result.len(), expected);
     }
 
     #[test]
+    fn list_detected_harnesses_inner_overlays_tier3_state_for_enabled_cline() {
+        // PR 2 — when state.json records cline as enabled, the
+        // dashboard row reports trove_region_present = true and
+        // telemetry = On, even though the detector itself can't see
+        // those signals (cline has no host file region).
+        use crate::adapters::TrovePatch;
+        use crate::app_state::{AppState, HarnessConfig, upsert_harness_in};
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = HarnessConfig {
+            id: HarnessId::Cline,
+            enabled: true,
+            config_path: "/home/dev/.config/Code/User/globalStorage/saoudrizwan.claude-dev"
+                .to_string(),
+            last_patched_at: "2026-05-09T00:00:00Z".to_string(),
+            trove_patch: TrovePatch {
+                managed_block_hash: "a".repeat(64),
+                file_hash_at_last_write: String::new(),
+                format: crate::safety::sentinels::Format::Json,
+                last_written_region_payload: r#"{"harness":"cline"}"#.to_string(),
+            },
+            options: ApplyOptions::default(),
+        };
+        upsert_harness_in(dir.path(), entry).unwrap();
+
+        let rows = list_detected_harnesses_inner(dir.path()).unwrap();
+        let cline_row = rows.iter().find(|r| r.id == HarnessId::Cline).unwrap();
+        assert!(cline_row.trove_region_present, "cline should overlay enabled");
+        assert_eq!(cline_row.telemetry, TelemetryStatus::On);
+
+        // Other Tier 3 rows are unaffected (state.json has no entry).
+        let aider_row = rows.iter().find(|r| r.id == HarnessId::Aider).unwrap();
+        assert!(!aider_row.trove_region_present);
+
+        let _ = AppState::default(); // keep import live
+    }
+
+    #[test]
     fn preview_patch_inner_for_unimplemented_harness_returns_not_implemented() {
-        // Cline is Tier 3 (Sprint 9), still unimplemented at this point.
-        // The hook resolver should never be called for non-cursor harnesses.
+        // Aider is the still-unimplemented Tier 3 harness in PR 2; it
+        // lands in PR 3. The hook resolver should never be called for
+        // non-cursor harnesses.
         let home = std::path::PathBuf::from("/tmp/should-not-be-touched");
         let err = preview_patch_inner(
-            HarnessId::Cline,
+            HarnessId::Aider,
             &ApplyOptions::default(),
             &home,
             || panic!("hook resolver must not be invoked for Tier 3 harnesses"),
@@ -660,9 +781,25 @@ mod tests {
         assert!(matches!(
             err,
             IpcError::HarnessNotImplemented {
-                id: HarnessId::Cline
+                id: HarnessId::Aider
             }
         ));
+    }
+
+    #[test]
+    fn preview_patch_inner_routes_cline_through_adapter_without_resolver() {
+        // PR 2 wires Cline: preview returns Fresh with no host file
+        // patch. The hook resolver must not be invoked.
+        let home = tempfile::tempdir().unwrap();
+        let preview = preview_patch_inner(
+            HarnessId::Cline,
+            &ApplyOptions::default(),
+            home.path(),
+            || panic!("hook resolver must not be invoked for cline"),
+        )
+        .unwrap();
+        assert!(matches!(preview.status, PreviewStatus::Fresh));
+        assert!(preview.after.contains("Cline"));
     }
 
     #[test]

@@ -137,8 +137,10 @@ mod tests {
     #[test]
     fn detect_all_reports_adapter_availability_per_row() {
         // Sprint 9 PR 1: detect_all now iterates tier_1 + tier_2 + tier_3.
-        // Tier 1 + Tier 2 rows must all report adapter_available = true;
-        // Tier 3 rows report false until each adapter lands in PR 2 / PR 3.
+        // Each row's adapter_available must mirror HarnessId::has_adapter(),
+        // which flips on per-adapter as Tier 3 lands (PR 2 = Cline,
+        // PR 3 = Aider + Copilot). Using `has_adapter()` directly lets
+        // this test stay correct across PRs without churn.
         let home = tempdir().unwrap();
         let detector = Detector {
             home: home.path().to_path_buf(),
@@ -147,11 +149,10 @@ mod tests {
         };
         let results = detector.detect_all();
         for row in &results {
-            let expected = HarnessId::tier_1().contains(&row.id)
-                || HarnessId::tier_2().contains(&row.id);
             assert_eq!(
-                row.adapter_available, expected,
-                "{:?} adapter_available mismatch (expected {expected})",
+                row.adapter_available,
+                row.id.has_adapter(),
+                "{:?} adapter_available mismatch with has_adapter()",
                 row.id
             );
         }

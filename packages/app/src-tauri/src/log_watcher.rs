@@ -38,6 +38,16 @@ pub struct WatcherHandle {
 }
 
 impl WatcherHandle {
+    /// Wrap an externally-spawned tokio task in a `WatcherHandle` so it
+    /// can be stored alongside the line-tail handles in
+    /// `tier3_watchers`. Used by adapter-specific watchers (e.g. the
+    /// Cline tasks-dir poller) that don't fit the generic line-tail
+    /// shape but still need the same lifetime.
+    #[must_use]
+    pub fn from_join(join: JoinHandle<()>) -> Self {
+        Self { join }
+    }
+
     /// Cancel the watcher. Idempotent.
     pub fn abort(&self) {
         self.join.abort();
