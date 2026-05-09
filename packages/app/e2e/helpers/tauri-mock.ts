@@ -35,7 +35,7 @@ export interface TauriMockState {
 }
 
 export const DEFAULT_MOCK_STATE: TauriMockState = {
-  appState: { schemaVersion: 2, backend: null, harnesses: [] },
+  appState: { schemaVersion: 3, backend: null, harnesses: [] },
   detectedHarnesses: [
     {
       id: 'claude-code',
@@ -120,6 +120,8 @@ export async function installTauriMock(
                 managedBlockHash: 'a'.repeat(64),
                 fileHashAtLastWrite: 'b'.repeat(64),
                 format: 'json',
+                lastWrittenRegionPayload:
+                  '{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:4318"}}',
               },
               options: { logUserPrompts: false, customAttributes: {} },
             },
@@ -129,6 +131,8 @@ export async function installTauriMock(
           managedBlockHash: 'a'.repeat(64),
           fileHashAtLastWrite: 'b'.repeat(64),
           format: 'json',
+          lastWrittenRegionPayload:
+            '{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:4318"}}',
         };
       },
       revert_patch: () => null,
