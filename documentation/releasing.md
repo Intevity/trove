@@ -6,9 +6,10 @@ bundles in parallel on macOS arm64, macOS x64, Ubuntu x64, and Windows
 x64 runners and uploads them to a draft release. A final job promotes
 the draft to published once every matrix entry succeeds.
 
-This document is the release runbook for Sprint 8 (public beta, v0.5.0).
-Sprint 10 will layer in full Apple notarization + Windows code signing
-on top of the same workflow.
+This document is the release runbook from Sprint 8 (public beta) onward.
+Sprint 10 layered Apple Developer ID signing + notarization and Windows
+Authenticode signing on top of the same workflow, plus the in-app
+auto-updater. Sections below cover the operator steps for both.
 
 ---
 
@@ -38,31 +39,86 @@ Before pushing a tag, run through the following on `main`:
 
 ## Required secrets
 
-The workflow expects two secrets to be set in repo settings →
-**Secrets and variables → Actions**:
+The workflow consults the following secrets in repo settings →
+**Secrets and variables → Actions**. Updater-manifest signing was
+already wired in Sprint 8; the macOS / Windows entries land with
+Sprint 10 and only run when fully populated.
 
-| Secret                               | Purpose                                                                                                                       | When to set                                                                                                                                                          |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TAURI_SIGNING_PRIVATE_KEY`          | Signs the auto-updater's `latest.json` manifest. The matching public key is embedded in `tauri.conf.json` (Sprint 10 wiring). | Once, before the first tag push. Generate with `pnpm --filter @trove/app exec tauri signer generate -- -w ~/.tauri/trove.key` and paste the contents of `trove.key`. |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Decrypts the private key at signing time.                                                                                     | The password supplied to `tauri signer generate`.                                                                                                                    |
+### Updater (always required)
 
-`GITHUB_TOKEN` is provisioned automatically by Actions; tauri-action
+| Secret                               | Purpose                                                                                                                                                                                                                                | How to set                                                                                                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Signs the auto-updater's `latest.json` manifest. The matching public key lives in `packages/app/src-tauri/tauri.conf.json` `plugins.updater.pubkey` (replace the `REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY` placeholder before tag push). | Once. Generate with `pnpm --filter @trove/app exec tauri signer generate -- -w ~/.tauri/trove.key`. Paste the contents of `trove.key` into the secret. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Decrypts the private key at signing time.                                                                                                                                                                                              | The password supplied to `tauri signer generate`.                                                                                                      |
+
+The matching public key is printed alongside the private key during
+generation; that string goes into `tauri.conf.json`. The in-app
+updater (Sprint 10 PR 1) verifies every fetched `latest.json` against
+this pubkey, so a mismatch surfaces as `IpcError::UpdaterCheckFailed`
+in the UI and refuses the install.
+
+### macOS code-signing + notarization (Sprint 10)
+
+| Secret                       | Purpose                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `APPLE_CERTIFICATE`          | Base64-encoded `.p12` of the Developer ID Application identity exported from Keychain Access (full chain).       |
+| `APPLE_CERTIFICATE_PASSWORD` | Password supplied when exporting the `.p12`.                                                                     |
+| `APPLE_SIGNING_IDENTITY`     | Common name of the cert, e.g. `Developer ID Application: Intevity (TEAMID1234)`.                                 |
+| `APPLE_ID`                   | Apple ID logged into the Apple Developer account.                                                                |
+| `APPLE_PASSWORD`             | App-specific password (not the Apple ID password). Generate at https://appleid.apple.com → Sign-In and Security. |
+| `APPLE_TEAM_ID`              | 10-character Team ID from https://developer.apple.com/account → Membership.                                      |
+
+### Windows Authenticode (Sprint 10)
+
+| Secret                         | Purpose                                                 |
+| ------------------------------ | ------------------------------------------------------- |
+| `WINDOWS_CERTIFICATE`          | Base64-encoded `.pfx` Authenticode signing certificate. |
+| `WINDOWS_CERTIFICATE_PASSWORD` | Password for the `.pfx`.                                |
+
+`GITHUB_TOKEN` is provisioned automatically by Actions; `tauri-action`
 uses it to create the draft release.
 
-Sprint 10 adds:
+> **All-or-nothing rule.** If the macOS chain is incomplete, leave
+> every Apple secret unset rather than setting some to empty strings.
+> An empty `APPLE_CERTIFICATE` value triggers a keychain-import failure
+> in `tauri-action` that aborts the entire matrix entry instead of
+> falling back to unsigned. The same applies to the Windows pair.
 
-| Secret                                                | Purpose                                                       |
-| ----------------------------------------------------- | ------------------------------------------------------------- |
-| `APPLE_CERTIFICATE`                                   | base64-encoded `.p12` Developer ID Application cert.          |
-| `APPLE_CERTIFICATE_PASSWORD`                          | Password for the `.p12`.                                      |
-| `APPLE_SIGNING_IDENTITY`                              | Common name of the cert (e.g. `Developer ID Application: …`). |
-| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`         | Apple notary submission credentials.                          |
-| `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Authenticode signing cert + password.                         |
+### Generating the secrets
 
-> **Do not** set any signing-related secret to an empty string while the
-> rest of the chain is incomplete — tauri-action's keychain import step
-> fails on an empty `APPLE_CERTIFICATE` and won't fall back to unsigned.
-> Either set every Apple secret with valid values or none of them.
+**Updater key pair**:
+
+```bash
+pnpm --filter @trove/app exec tauri signer generate -- -w ~/.tauri/trove.key
+# Records the private key to ~/.tauri/trove.key; prints the matching
+# public-key string to stdout. Paste the public key into
+# packages/app/src-tauri/tauri.conf.json `plugins.updater.pubkey`.
+```
+
+**Apple `.p12` export and base64 encoding**:
+
+```bash
+# After enrolling in Apple Developer + creating a Developer ID
+# Application cert in Keychain Access, right-click the identity → Export
+# → File Format: Personal Information Exchange (.p12). Choose a strong
+# password — that is APPLE_CERTIFICATE_PASSWORD.
+base64 -i ~/Downloads/trove-developer-id.p12 | pbcopy
+# Paste the clipboard contents into the APPLE_CERTIFICATE secret.
+```
+
+**Apple `Team ID`**: see https://developer.apple.com/account → Membership.
+
+**Apple app-specific password**: https://appleid.apple.com → Sign-In and
+Security → App-Specific Passwords → Generate. Label it `Trove
+notarization`. Store the resulting 16-character password in
+`APPLE_PASSWORD`.
+
+**Windows `.pfx`**: produced by your code-signing certificate vendor
+(SSL.com, DigiCert, etc.). Same base64 trick:
+
+```bash
+base64 -i ~/Downloads/trove-authenticode.pfx | pbcopy
+```
 
 ---
 
@@ -110,15 +166,53 @@ is required.
 
 ---
 
-## What Sprint 10 changes
+## Sprint 10 verification playbook
 
-Sprint 10 keeps the matrix and tauri-action invocation but layers on:
+Sprint 10 ships the wiring; the operator confirms it after the first
+signed tag is cut. Run through these checks once per release:
 
-1. Apple Developer ID signing + notarization for macOS bundles.
-2. Authenticode signing for Windows bundles.
-3. Updater toggle in the in-app Settings (off by default).
-4. Verification of `latest.json` against the embedded public key.
+### macOS — signed + notarized bundle
 
-Until that lands, the v0.5.0 release ships unsigned macOS and Windows
-binaries; the README should call out the right-click → Open / bypass
-SmartScreen workaround.
+```bash
+# Download and mount the .dmg from the published GitHub Release.
+hdiutil attach Trove_<version>_aarch64.dmg
+cp -R "/Volumes/Trove/Trove.app" /Applications/
+hdiutil detach "/Volumes/Trove"
+
+# Expects: 'accepted' + 'source=Notarized Developer ID'.
+spctl --assess --verbose=4 /Applications/Trove.app
+```
+
+If `spctl` reports `source=Unnotarized Developer ID`, notarization
+silently failed — check the `tauri-action` step logs for the
+`notarytool submit` invocation and submit a `notarytool log <id>`
+follow-up against the staged credentials.
+
+### Windows — Authenticode
+
+Right-click the downloaded `.exe` → **Properties** → **Digital
+Signatures** tab → confirm cert chain validates without warnings.
+SmartScreen reputation builds over downloads; the _signature_ check is
+the immediate one.
+
+### In-app auto-updater loop
+
+1. Install the previous release (e.g. `v0.5.x`) from the signed
+   bundle.
+2. Open Trove → **Updates** section in the dashboard → tick "Automatically check for updates".
+3. Confirm the toggle persists by quitting + relaunching:
+   `~/Library/Application Support/com.intevity.trove/state.json`
+   should show `"autoUpdateEnabled": true` and `"schemaVersion": 4`.
+4. Cut the next tag (`v0.5.y`).
+5. Click "Check for updates now…" — the panel should report the new
+   version is available. Tauri's updater downloads + installs the new
+   bundle and triggers `app.restart()`. Verify the upgrade landed by
+   checking the about dialog / `state.json` `schemaVersion`.
+
+### Updater pubkey mismatch (negative test)
+
+If the user receives an "update check failed" with a signature error,
+the most common cause is that `tauri.conf.json` `plugins.updater.pubkey`
+no longer matches `TAURI_SIGNING_PRIVATE_KEY`. Regenerate the key pair
+(`tauri signer generate`), update both the secret and the config, and
+re-tag.
