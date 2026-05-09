@@ -268,4 +268,65 @@ describe('HarnessList', () => {
     );
     expect(screen.queryByTestId('harness-coverage-note-opencode')).toBeNull();
   });
+
+  it('shows a best-effort advisory on the cline row (Sprint 9 PR 1)', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'cline',
+            adapterAvailable: false,
+            detected: true,
+            detectionMethod: 'config-dir',
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    const advisory = screen.getByTestId('harness-coverage-note-cline') as HTMLAnchorElement;
+    expect(advisory.textContent).toBe('Best-effort coverage');
+    expect(advisory.title).toContain('OpenTelemetry');
+    expect(advisory.href.startsWith('https://')).toBe(true);
+    expect(advisory.target).toBe('_blank');
+  });
+
+  it('shows a best-effort advisory on the aider row (Sprint 9 PR 1)', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'aider',
+            adapterAvailable: false,
+            detected: true,
+            detectionMethod: 'path-binary',
+            configPath: null,
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    const advisory = screen.getByTestId('harness-coverage-note-aider') as HTMLAnchorElement;
+    expect(advisory.textContent).toBe('Best-effort coverage');
+    expect(advisory.title).toContain('shell-rc');
+  });
+
+  it('shows a best-effort advisory on the copilot-cli row that mentions the gh-copilot rename', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'copilot-cli',
+            adapterAvailable: false,
+            detected: true,
+            detectionMethod: 'path-binary',
+            configPath: null,
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    const advisory = screen.getByTestId('harness-coverage-note-copilot-cli') as HTMLAnchorElement;
+    expect(advisory.textContent).toBe('Best-effort coverage');
+    expect(advisory.title).toContain('gh-copilot');
+  });
 });

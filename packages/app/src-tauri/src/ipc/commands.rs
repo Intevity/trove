@@ -638,9 +638,10 @@ mod tests {
         // returns a row even when nothing is installed (`detected:
         // false`). The detect module's hermetic tests already cover
         // scoping; this test asserts the IPC entry point doesn't drop
-        // or reorder rows.
+        // or reorder rows. Sprint 9 PR 1 adds the Tier 3 trio.
         let result = list_detected_harnesses().unwrap();
-        let expected = HarnessId::tier_1().len() + HarnessId::tier_2().len();
+        let expected =
+            HarnessId::tier_1().len() + HarnessId::tier_2().len() + HarnessId::tier_3().len();
         assert_eq!(result.len(), expected);
     }
 

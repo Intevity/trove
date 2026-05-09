@@ -14,14 +14,15 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
 };
 
 /** Per-harness coverage advisory surfaced as a badge next to the
- *  telemetry status. Currently only cursor-cli carries one — Cursor's
- *  CLI fires a strict subset of the events the IDE does, so users
- *  enabling Cursor CLI alone capture less than they would with the
- *  IDE. The badge text stays short (the row is tight); the optional
+ *  telemetry status. Cursor CLI carries one because its hook surface
+ *  is a strict subset of the IDE's; the Tier 3 trio (Cline, Aider,
+ *  Copilot CLI) carry one because none of those tools emit native
+ *  OTEL — Trove approximates their telemetry via log watching or
+ *  shell-rc wrappers, with the trade-offs called out in the tooltip.
+ *  The badge text stays short (the row is tight); the optional
  *  `tooltip` field renders as a `title` attribute so hovering surfaces
  *  the longer explanation without taking row real-estate. The
- *  `docsUrl` link points at the Cursor hooks documentation where the
- *  coverage gap is described upstream. */
+ *  `docsUrl` link points at the upstream tool's docs. */
 interface CoverageNote {
   text: string;
   tooltip: string;
@@ -33,6 +34,24 @@ const COVERAGE_NOTES: Partial<Record<HarnessId, CoverageNote>> = {
     tooltip:
       "Cursor CLI (cursor-agent) fires only a subset of Cursor's hook events — primarily beforeShellExecution and afterShellExecution. Cursor IDE fires the full surface. See Cursor's hooks docs.",
     docsUrl: 'https://cursor.com/docs/hooks',
+  },
+  cline: {
+    text: 'Best-effort coverage',
+    tooltip:
+      "Cline doesn't emit OpenTelemetry natively. Trove watches Cline's per-task globalStorage records and emits OTLP logs derived from them. Token counts and durations are captured; raw conversation content stays on disk unless prompt logging is explicitly enabled.",
+    docsUrl: 'https://github.com/cline/cline',
+  },
+  aider: {
+    text: 'Best-effort coverage',
+    tooltip:
+      "Aider doesn't emit OpenTelemetry natively. Trove installs a shell-rc wrapper that runs the real aider and tees its session log; a watcher parses the log into OTLP records. Open a fresh terminal after enabling so the new shell function takes effect.",
+    docsUrl: 'https://aider.chat/docs/',
+  },
+  'copilot-cli': {
+    text: 'Best-effort coverage',
+    tooltip:
+      "GitHub Copilot CLI doesn't emit OpenTelemetry natively. Trove installs a shell-rc wrapper exposed as `gh-copilot` that runs `gh copilot` and logs invocation counts + durations. While Trove is enabled, invoke as `gh-copilot` (with a hyphen) instead of `gh copilot` so the wrapper observes the call.",
+    docsUrl: 'https://docs.github.com/en/copilot/github-copilot-in-the-cli',
   },
 };
 

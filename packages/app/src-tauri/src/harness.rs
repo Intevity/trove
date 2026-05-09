@@ -64,13 +64,24 @@ impl HarnessId {
         &[Self::CursorIde, Self::CursorCli, Self::Opencode]
     }
 
+    /// Tier 3 harnesses — best-effort adapters that have no native OTEL
+    /// surface. Sprint 9 lands them: PR 1 (this) makes the trio visible
+    /// in detection so the UI shows 10 rows; PR 2 wires Cline; PR 3
+    /// wires Aider + Copilot CLI. Each adapter flips its own
+    /// `has_adapter()` bit when it lands.
+    #[must_use]
+    pub fn tier_3() -> &'static [Self] {
+        &[Self::Cline, Self::Aider, Self::CopilotCli]
+    }
+
     /// Whether Trove currently ships an adapter for this harness — i.e.
     /// whether `apply` / `revert` will dispatch to a real implementation
     /// rather than returning `IpcError::HarnessNotImplemented`. Tier 3
-    /// harnesses (`Cline`, `Aider`, `CopilotCli`) return `false` until
-    /// Sprint 9 wires them up. The dashboard surfaces this as part of
-    /// each `DetectedHarness` row so the UI doesn't have to maintain a
-    /// parallel hard-coded list.
+    /// harnesses (`Cline`, `Aider`, `CopilotCli`) return `false` from
+    /// PR 1 onwards and flip to `true` as each individual adapter lands
+    /// in PR 2 (Cline) and PR 3 (Aider + Copilot). The dashboard
+    /// surfaces this as part of each `DetectedHarness` row so the UI
+    /// doesn't have to maintain a parallel hard-coded list.
     #[must_use]
     pub fn has_adapter(self) -> bool {
         Self::tier_1().contains(&self) || Self::tier_2().contains(&self)
@@ -127,13 +138,31 @@ mod tests {
     }
 
     #[test]
-    fn tier_1_and_tier_2_do_not_overlap() {
+    fn tiers_do_not_overlap() {
         for t1 in HarnessId::tier_1() {
             assert!(
                 !HarnessId::tier_2().contains(t1),
                 "{t1:?} appears in both tier_1 and tier_2"
             );
+            assert!(
+                !HarnessId::tier_3().contains(t1),
+                "{t1:?} appears in both tier_1 and tier_3"
+            );
         }
+        for t2 in HarnessId::tier_2() {
+            assert!(
+                !HarnessId::tier_3().contains(t2),
+                "{t2:?} appears in both tier_2 and tier_3"
+            );
+        }
+    }
+
+    #[test]
+    fn tier_3_contains_cline_aider_copilot_in_plan_order() {
+        assert_eq!(
+            HarnessId::tier_3(),
+            &[HarnessId::Cline, HarnessId::Aider, HarnessId::CopilotCli]
+        );
     }
 
     #[test]
@@ -144,11 +173,14 @@ mod tests {
     }
 
     #[test]
-    fn has_adapter_is_false_for_tier_3_until_sprint_9() {
-        for id in [HarnessId::Cline, HarnessId::Aider, HarnessId::CopilotCli] {
+    fn has_adapter_is_false_for_tier_3_in_pr_1() {
+        // Sprint 9 PR 1 only surfaces Tier 3 in detection. Each
+        // adapter (PR 2 = Cline, PR 3 = Aider + Copilot) flips its
+        // own bit when it lands; this test pins the PR-1 baseline.
+        for id in HarnessId::tier_3() {
             assert!(
                 !id.has_adapter(),
-                "{id:?} should not yet have an adapter (Tier 3 lands in Sprint 9)"
+                "{id:?} should not yet have an adapter at PR 1 (Tier 3 adapters land in PR 2 and PR 3)"
             );
         }
     }

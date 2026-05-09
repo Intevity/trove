@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::otlp_emit::{self, OtlpEmitError};
+
 /// Return type — mirrors the Zod `TestExportResult` schema.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,39 +122,26 @@ pub async fn test_export_at(
     let log_offset = current_log_size(log_path);
 
     let body = synthetic_payload();
-    let client = match reqwest::Client::builder()
-        .timeout(budget)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return TestExportResult {
+    if let Err(emit_err) = otlp_emit::post_at_url(endpoint, &body, budget).await {
+        return match emit_err {
+            OtlpEmitError::Client(e) => TestExportResult {
                 status: TestExportStatus::Timeout,
                 detail: format!("could not build HTTP client: {e}"),
-            };
-        }
-    };
-
-    let response = match client.post(endpoint).json(&body).send().await {
-        Ok(r) => r,
-        Err(e) if e.is_timeout() => {
-            return TestExportResult {
-                status: TestExportStatus::Timeout,
-                detail: format!("HTTP request to {endpoint} timed out: {e}"),
-            };
-        }
-        Err(e) => {
-            return TestExportResult {
+            },
+            OtlpEmitError::Transport { endpoint, source } if source.is_timeout() => {
+                TestExportResult {
+                    status: TestExportStatus::Timeout,
+                    detail: format!("HTTP request to {endpoint} timed out: {source}"),
+                }
+            }
+            OtlpEmitError::Transport { endpoint, source } => TestExportResult {
                 status: TestExportStatus::Failed,
-                detail: format!("HTTP request to {endpoint} failed: {e}"),
-            };
-        }
-    };
-
-    if !response.status().is_success() {
-        return TestExportResult {
-            status: TestExportStatus::Failed,
-            detail: format!("collector receiver returned HTTP {}", response.status()),
+                detail: format!("HTTP request to {endpoint} failed: {source}"),
+            },
+            OtlpEmitError::NonOk { status, .. } => TestExportResult {
+                status: TestExportStatus::Failed,
+                detail: format!("collector receiver returned HTTP {status}"),
+            },
         };
     }
 
