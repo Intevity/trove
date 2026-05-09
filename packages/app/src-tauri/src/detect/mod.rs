@@ -92,6 +92,7 @@ impl Detector {
         HarnessId::tier_1()
             .iter()
             .chain(HarnessId::tier_2().iter())
+            .chain(HarnessId::tier_3().iter())
             .map(|id| harnesses::detect(*id, self))
             .collect()
     }
@@ -119,20 +120,25 @@ mod tests {
             app_root: home.path().to_path_buf(),
         };
         let results = detector.detect_all();
-        let expected_len = HarnessId::tier_1().len() + HarnessId::tier_2().len();
+        let expected_len =
+            HarnessId::tier_1().len() + HarnessId::tier_2().len() + HarnessId::tier_3().len();
         assert_eq!(results.len(), expected_len);
 
         let returned_ids: Vec<HarnessId> = results.iter().map(|r| r.id).collect();
         let expected_ids: Vec<HarnessId> = HarnessId::tier_1()
             .iter()
             .chain(HarnessId::tier_2().iter())
+            .chain(HarnessId::tier_3().iter())
             .copied()
             .collect();
         assert_eq!(returned_ids, expected_ids);
     }
 
     #[test]
-    fn detect_all_reports_adapter_availability_for_each_row() {
+    fn detect_all_reports_adapter_availability_per_row() {
+        // Sprint 9 PR 1: detect_all now iterates tier_1 + tier_2 + tier_3.
+        // Tier 1 + Tier 2 rows must all report adapter_available = true;
+        // Tier 3 rows report false until each adapter lands in PR 2 / PR 3.
         let home = tempdir().unwrap();
         let detector = Detector {
             home: home.path().to_path_buf(),
@@ -141,12 +147,11 @@ mod tests {
         };
         let results = detector.detect_all();
         for row in &results {
-            // detect_all only iterates tier_1 + tier_2 today, so every
-            // row's adapter_available must be true. When Sprint 9 adds
-            // Tier 3 to detect_all, this test will need updating.
-            assert!(
-                row.adapter_available,
-                "{:?} should report adapter_available = true",
+            let expected = HarnessId::tier_1().contains(&row.id)
+                || HarnessId::tier_2().contains(&row.id);
+            assert_eq!(
+                row.adapter_available, expected,
+                "{:?} adapter_available mismatch (expected {expected})",
                 row.id
             );
         }

@@ -12,8 +12,11 @@ pub mod collector;
 pub mod detect;
 pub mod harness;
 pub mod ipc;
+pub mod log_watcher;
+pub mod otlp_emit;
 pub mod safety;
 pub mod secrets;
+pub mod tier3_watchers;
 mod tray;
 mod tray_icon_render;
 
@@ -27,6 +30,7 @@ use crate::collector::{
     MetricsTap, MetricsTapHandle, MetricsTapOptions, Supervisor, SupervisorChannels,
     SupervisorHandle, SupervisorOptions, SupervisorState,
 };
+use crate::tier3_watchers::TierThreeWatchers;
 
 /// The smoke-test Collector configuration. Sprint 1 ships this baked into
 /// the binary; Sprint 5's wizard codegens a backend-specific YAML over the
@@ -73,6 +77,13 @@ pub fn run() {
 
             let metrics = MetricsTap::start(MetricsTapOptions::default());
             app.manage::<MetricsTapHandle>(metrics);
+
+            // Sprint 9 PR 1: registry slot for Tier 3 watchers. Empty
+            // until Sprint 9 PR 2/3 wire `apply_patch` to spawn
+            // adapter-specific watchers; pre-registered so the IPC
+            // commands can `app.state::<TierThreeWatchers>()` without
+            // a presence check.
+            app.manage::<TierThreeWatchers>(TierThreeWatchers::new());
 
             // Always register a SupervisorState slot — even when the
             // initial spawn fails (missing sidecar binary in dev, etc.).
