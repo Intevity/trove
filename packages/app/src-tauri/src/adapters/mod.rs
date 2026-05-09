@@ -12,16 +12,19 @@
 
 mod common;
 
+pub mod aider;
 pub mod claude_code;
 pub mod cline;
 pub mod cline_watcher;
 pub mod codex_cli;
+pub mod copilot_cli;
 pub mod cursor_cli;
 pub mod cursor_common;
 pub mod cursor_ide;
 pub mod gemini_cli;
 pub mod opencode;
 pub mod qwen_code;
+pub mod wrapper_common;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

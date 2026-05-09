@@ -74,18 +74,17 @@ impl HarnessId {
         &[Self::Cline, Self::Aider, Self::CopilotCli]
     }
 
-    /// Whether Trove currently ships an adapter for this harness — i.e.
-    /// whether `apply` / `revert` will dispatch to a real implementation
-    /// rather than returning `IpcError::HarnessNotImplemented`. Sprint 9
-    /// PR 2 flips this on for `Cline`; PR 3 will flip the remaining
-    /// `Aider` and `CopilotCli` bits. The dashboard surfaces this as
-    /// part of each `DetectedHarness` row so the UI doesn't have to
-    /// maintain a parallel hard-coded list.
+    /// Whether Trove currently ships an adapter for this harness. As of
+    /// Sprint 9 PR 3, every supported harness (all of Tier 1 / 2 / 3)
+    /// has an adapter — this returns `true` unconditionally for now
+    /// but the per-tier slice membership stays in case a future
+    /// adapter is removed or temporarily disabled. The dashboard
+    /// surfaces this as part of each `DetectedHarness` row.
     #[must_use]
     pub fn has_adapter(self) -> bool {
         Self::tier_1().contains(&self)
             || Self::tier_2().contains(&self)
-            || matches!(self, Self::Cline)
+            || Self::tier_3().contains(&self)
     }
 }
 
@@ -174,17 +173,9 @@ mod tests {
     }
 
     #[test]
-    fn has_adapter_is_true_for_cline_after_pr_2() {
-        assert!(HarnessId::Cline.has_adapter());
-    }
-
-    #[test]
-    fn has_adapter_is_false_for_aider_and_copilot_until_pr_3() {
-        for id in [HarnessId::Aider, HarnessId::CopilotCli] {
-            assert!(
-                !id.has_adapter(),
-                "{id:?} should not yet have an adapter at PR 2 (lands in PR 3)"
-            );
+    fn has_adapter_is_true_for_every_tier_3_harness_after_pr_3() {
+        for id in HarnessId::tier_3() {
+            assert!(id.has_adapter(), "{id:?} should have an adapter at PR 3");
         }
     }
 

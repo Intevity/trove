@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# trove-copilot — Sprint 9 Tier 3 wrapper around `gh copilot`.
+#
+# Invoked from the user's shell rc (Trove appends a function named
+# `gh-copilot` that execs this script with the user's args). Runs
+# `gh copilot <args>` and writes a single JSON-line per invocation to
+# ~/.local/state/trove/copilot.log. Never blocks the user — write
+# failures fall through to stderr and `gh copilot` runs unchanged.
+#
+# Why a separate `gh-copilot` function and not a `gh` shadow: shadowing
+# `gh` itself would route every gh subcommand through Trove's wrapper,
+# which is invasive (and a UX/permissions hazard). The `gh-copilot`
+# rename is the trade-off — users invoke `gh-copilot suggest "..."`
+# instead of `gh copilot suggest "..."` while observing.
+#
+# Each emitted log line:
+#   {"ts":"<ISO-8601>","tool":"copilot-cli","argc":N,"exit_code":<int>,"duration_ms":<int>}
+
+set -uo pipefail
+
+LOG_DIR="${TROVE_STATE_DIR:-$HOME/.local/state/trove}"
+LOG_FILE="$LOG_DIR/copilot.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+
+# Resolve `gh` on PATH — `gh` itself is never shadowed by us, so we
+# don't need the self-skip dance the aider wrapper does.
+GH=""
+if command -v gh >/dev/null 2>&1; then
+  GH="$(command -v gh)"
+fi
+
+if [ -z "$GH" ]; then
+  echo "trove-copilot: \`gh\` not found on PATH" >&2
+  exit 127
+fi
+
+START_NS="$(date +%s%N 2>/dev/null || echo 0)"
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
+
+"$GH" copilot "$@"
+EXIT=$?
+
+END_NS="$(date +%s%N 2>/dev/null || echo 0)"
+if [ "$END_NS" -ge "$START_NS" ] 2>/dev/null; then
+  DURATION_MS=$(( (END_NS - START_NS) / 1000000 ))
+else
+  DURATION_MS=0
+fi
+
+LINE=$(printf '{"ts":"%s","tool":"copilot-cli","argc":%d,"exit_code":%d,"duration_ms":%d}\n' \
+  "$TS" "$#" "$EXIT" "$DURATION_MS")
+
+printf '%s' "$LINE" >>"$LOG_FILE" 2>/dev/null || true
+
+exit "$EXIT"

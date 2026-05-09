@@ -64,8 +64,12 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
             paths.push(crate::adapters::cline::cline_global_storage_root(home));
             paths.extend(cline_extension_dir_candidates(home));
         }
-        // Tier 3 `aider` and `copilot-cli` land in PR 3.
-        _ => {}
+        // Sprint 9 PR 3 — Aider / Copilot CLI detect via PATH binary
+        // only (`aider`, `gh`); no config dir to probe. The detector's
+        // `read_telemetry` / `read_trove_region_present` hooks use the
+        // shell-rc patch state (overlayed by the IPC layer from
+        // state.json).
+        HarnessId::Aider | HarnessId::CopilotCli => {}
     }
     paths
 }
