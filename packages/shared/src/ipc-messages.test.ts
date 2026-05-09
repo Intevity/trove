@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ApplyPatchResponse,
+  CheckForUpdatesResponse,
   GetCollectorLogTailResponse,
   GetCollectorStatusResponse,
   GetMetricsSnapshotResponse,
@@ -9,6 +10,7 @@ import {
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
   RevertPatchResponse,
+  SetAutoUpdateEnabledResponse,
   TauriEventName,
 } from './ipc-messages.js';
 
@@ -150,5 +152,30 @@ describe('Sprint 6 PR 1 — collector status surface', () => {
       byteOffset: 8,
     };
     expect(GetCollectorLogTailResponse.parse(payload)).toEqual(payload);
+  });
+});
+
+describe('Sprint 10 — auto-update surface', () => {
+  it('exposes the two new command names', () => {
+    expect(IpcCommandName.SetAutoUpdateEnabled).toBe('set_auto_update_enabled');
+    expect(IpcCommandName.CheckForUpdates).toBe('check_for_updates');
+  });
+
+  it('SetAutoUpdateEnabledResponse parses null', () => {
+    expect(SetAutoUpdateEnabledResponse.parse(null)).toBeNull();
+  });
+
+  it('SetAutoUpdateEnabledResponse rejects a non-null payload', () => {
+    expect(() => SetAutoUpdateEnabledResponse.parse({})).toThrow();
+  });
+
+  it('CheckForUpdatesResponse parses an "update available" shape', () => {
+    const meta = { available: true, version: '0.6.1', current: '0.6.0' };
+    expect(CheckForUpdatesResponse.parse(meta)).toEqual(meta);
+  });
+
+  it('CheckForUpdatesResponse parses an "up to date" shape with null version', () => {
+    const meta = { available: false, version: null, current: '0.6.0' };
+    expect(CheckForUpdatesResponse.parse(meta)).toEqual(meta);
   });
 });
