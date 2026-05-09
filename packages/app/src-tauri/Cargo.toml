@@ -17,6 +17,12 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "devtools"] }
+# Sprint 8 — `MergeManually` resolution opens the host config in the OS
+# default editor (via `open`/`xdg-open`/`start`). The shell plugin's
+# `open()` API abstracts the per-platform call. We deliberately do not
+# grant `shell:allow-execute` — only `shell:allow-open` scoped to the
+# user's home directory in `capabilities/default.json`.
+tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = [
     "macros",

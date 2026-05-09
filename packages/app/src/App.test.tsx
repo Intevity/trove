@@ -18,13 +18,13 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 
-/** Default state.json shape: schemaVersion 2, no backend yet. App
+/** Default state.json shape: schemaVersion 3, no backend yet. App
  *  swaps in the wizard for this case. The detection-related tests
  *  override `backend` to a SigNoz stub so the dashboard view renders. */
-const FRESH_APP_STATE = { schemaVersion: 2, backend: null, harnesses: [] };
+const FRESH_APP_STATE = { schemaVersion: 3, backend: null, harnesses: [] };
 
 const SIGNOZ_STATE = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   backend: {
     kind: 'signoz' as const,
     region: 'us-east',

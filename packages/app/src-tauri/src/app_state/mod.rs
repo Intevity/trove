@@ -16,11 +16,13 @@
 //! ## Migration scaffold
 //!
 //! [`load_from_dir`] reads only `schemaVersion` from the file before
-//! parsing the rest. The current schema is version `2`. Older versions
-//! were never persisted in the wild (Sprint 4 introduced `trovePatch`
-//! mid-sprint, bumping `1 -> 2` before any user state.json existed),
-//! so v1 maps to an explicit error rather than silent migration. Future
-//! schema bumps slot a real migration in beside it.
+//! parsing the rest. The current schema is version `3`. v2 files are
+//! migrated in-place: the loader deserializes them into the v3 shape
+//! (the new `TrovePatch.lastWrittenRegionPayload` field uses
+//! `#[serde(default)]` so missing keys become `""`), then re-stamps
+//! `schema_version = CURRENT_SCHEMA_VERSION` on the in-memory value so
+//! the next save persists v3 to disk. v1 was never written in the wild
+//! and remains an explicit error.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,7 +40,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Opaque keychain handle. The actual secret never leaves the OS
 /// keychain. Mirrors `SecretRef` in `packages/shared/src/schemas.ts`.
@@ -230,9 +232,19 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        2 => serde_json::from_slice::<AppState>(&bytes).map_err(|e| AppStateError::Parse {
-            reason: e.to_string(),
-        }),
+        // v2 -> v3 migration. Sprint 8 added TrovePatch.lastWrittenRegionPayload
+        // with serde(default = ""), so a v2 document deserializes cleanly
+        // into the v3 in-memory shape. We re-stamp schema_version on the
+        // returned struct so the next save persists v3 to disk and the
+        // matching loader hits the v3 branch from then on.
+        2 | 3 => {
+            let mut state: AppState =
+                serde_json::from_slice(&bytes).map_err(|e| AppStateError::Parse {
+                    reason: e.to_string(),
+                })?;
+            state.schema_version = CURRENT_SCHEMA_VERSION;
+            Ok(state)
+        }
         // v1 was never persisted in the wild — Sprint 4 bumped the shape
         // mid-development, before state.json was ever written by Trove.
         // Hitting this branch means the user hand-crafted a v1 file, which
@@ -479,16 +491,17 @@ mod tests {
                 managed_block_hash: "a".repeat(64),
                 file_hash_at_last_write: "b".repeat(64),
                 format: Format::Json,
+                last_written_region_payload: r#"{"env":{"OTEL_FOO":"bar"}}"#.into(),
             },
             options: ApplyOptions::default(),
         }
     }
 
     #[test]
-    fn default_is_v2_with_null_backend_and_no_harnesses() {
+    fn default_is_v3_with_null_backend_and_no_harnesses() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 2);
+        assert_eq!(s.schema_version, 3);
         assert!(s.backend.is_none());
         assert!(s.harnesses.is_empty());
     }
@@ -532,7 +545,7 @@ mod tests {
     #[test]
     fn app_state_round_trips_through_serde() {
         let state = AppState {
-            schema_version: 2,
+            schema_version: 3,
             backend: Some(sample_signoz()),
             harnesses: vec![sample_harness(HarnessId::ClaudeCode)],
         };
@@ -552,7 +565,7 @@ mod tests {
     fn save_then_load_is_identity() {
         let dir = tempfile::tempdir().unwrap();
         let original = AppState {
-            schema_version: 2,
+            schema_version: 3,
             backend: Some(sample_signoz()),
             harnesses: vec![sample_harness(HarnessId::GeminiCli)],
         };
@@ -575,6 +588,59 @@ mod tests {
             AppStateError::UnknownSchemaVersion(v) => assert_eq!(v, 99),
             other => panic!("expected UnknownSchemaVersion, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn v2_state_is_loaded_and_migrated_to_v3() {
+        // Sprint 8 introduced TrovePatch.lastWrittenRegionPayload. v2
+        // documents predate it and must load cleanly: serde defaults
+        // backfill the missing field as "", and the loader re-stamps
+        // schema_version to 3 so the next save persists v3 to disk.
+        let dir = tempfile::tempdir().unwrap();
+        let v2_doc = br#"{
+            "schemaVersion": 2,
+            "backend": null,
+            "harnesses": [
+                {
+                    "id": "claude-code",
+                    "enabled": true,
+                    "configPath": "/home/u/.claude/settings.json",
+                    "lastPatchedAt": "2026-05-01T00:00:00Z",
+                    "trovePatch": {
+                        "managedBlockHash": "aaaa",
+                        "fileHashAtLastWrite": "bbbb",
+                        "format": "json"
+                    },
+                    "options": {
+                        "logUserPrompts": false,
+                        "customAttributes": {}
+                    }
+                }
+            ]
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v2_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, 3);
+        assert_eq!(state.harnesses.len(), 1);
+        assert_eq!(state.harnesses[0].trove_patch.last_written_region_payload, "");
+    }
+
+    #[test]
+    fn v2_state_round_trips_to_v3_on_disk_after_save() {
+        // Re-saving a migrated state must persist schemaVersion: 3 with
+        // the new field present. Confirms the in-memory migration is
+        // reflected back to disk on the next save.
+        let dir = tempfile::tempdir().unwrap();
+        let v2_doc = br#"{
+            "schemaVersion": 2,
+            "backend": null,
+            "harnesses": []
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v2_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+        assert!(on_disk.contains("\"schemaVersion\": 3"));
     }
 
     #[test]

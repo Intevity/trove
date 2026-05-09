@@ -16,20 +16,25 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 use crate::adapters::{
-    ApplyOptions, PatchPreview, TrovePatch, claude_code, codex_cli, cursor_cli, cursor_ide,
-    gemini_cli, opencode, qwen_code,
+    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, claude_code, codex_cli, cursor_cli,
+    cursor_ide, gemini_cli, opencode, qwen_code,
 };
 use crate::app_state::{
-    self, AppState, Backend, BackendDraft, backend_secret_accounts, drain_secrets_from_draft,
-    harness_config_from_apply,
+    self, AppState, Backend, BackendDraft, HarnessConfig, backend_secret_accounts,
+    drain_secrets_from_draft, harness_config_from_apply,
 };
 use crate::collector::codegen;
 use crate::detect::{DetectedHarness, detect_all};
 use crate::harness::HarnessId;
+use crate::safety::atomic::write_atomic;
+use crate::safety::backup::{backup_file, prune_backups};
+use crate::safety::sentinels::extract_region;
 use crate::secrets;
 
-use super::IpcError;
 use super::test_export::{DEFAULT_TEST_BUDGET, TestExportResult, test_export_at};
+use super::{
+    ConflictAction, ConflictPayload, ConflictResolutionOutcome, IpcError, SiblingPaths,
+};
 
 /// Detect every Tier 1 harness on the user's machine. Always succeeds —
 /// missing harnesses come back with `detected: false` rather than as
@@ -60,7 +65,7 @@ pub fn preview_patch(
 /// the dispatch without synthesising a Tauri `AppHandle`. `hook_resolver`
 /// is invoked only on the Cursor arms; Tier 1 / fallback arms never call
 /// it (tests can pass a closure that panics).
-fn preview_patch_inner<F>(
+pub fn preview_patch_inner<F>(
     harness_id: HarnessId,
     options: &ApplyOptions,
     home: &Path,
@@ -83,9 +88,18 @@ where
 }
 
 /// Apply Trove's patch to `harness_id`'s host config. On success, upsert
-/// a [`HarnessConfig`] entry into `state.json` so Sprint 8's three-way
-/// conflict UI has the metadata it needs (managed-block hash, post-write
-/// file hash, options snapshot, last-patched timestamp).
+/// a [`HarnessConfig`] entry into `state.json` so the three-way conflict
+/// UI has the metadata it needs (managed-block hash, post-write file
+/// hash, payload snapshot, options snapshot, last-patched timestamp).
+///
+/// Sprint 8 routes through a preview-first flow: a conflict no longer
+/// short-circuits with [`IpcError::RegionConflict`] but with
+/// [`IpcError::RegionConflictDetected { conflict }`], where `conflict`
+/// carries everything the React resolver needs to render its 3-way (or
+/// 2-way orphan-block) merge UI. The 2-way fallback fires when no prior
+/// `HarnessConfig` is on record (`state.json` was never written or got
+/// wiped). `RegionConflict` (the Sprint 3 variant) stays in the error
+/// enum but is no longer returned by this command.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn apply_patch(
@@ -94,6 +108,18 @@ pub fn apply_patch(
     options: ApplyOptions,
 ) -> Result<TrovePatch, IpcError> {
     let home = home_dir()?;
+    let preview = preview_patch_inner(harness_id, &options, &home, || {
+        cursor_hook_script_path(&app)
+    })?;
+
+    if matches!(preview.status, PreviewStatus::Conflict) {
+        let prior = load_prior_harness_config(&app, harness_id)?;
+        let conflict = build_conflict_payload(&preview, prior.as_ref())?;
+        return Err(IpcError::RegionConflictDetected {
+            conflict: Box::new(conflict),
+        });
+    }
+
     let patch = match harness_id {
         HarnessId::ClaudeCode => claude_code::apply(&home, &options),
         HarnessId::CodexCli => codex_cli::apply(&home, &options),
@@ -121,6 +147,313 @@ pub fn apply_patch(
     app_state::upsert_harness(&app, harness_config)?;
 
     Ok(patch)
+}
+
+/// Sprint 8 — resolve a 3-way conflict. Called by the React resolver
+/// after the user picks one of the three actions on the modal:
+///
+/// - `KeepMine`: re-baselines `state.json` against the user's current
+///   region (no host-file write). Future re-applies with the same
+///   options will be `Idempotent` rather than re-conflicting.
+/// - `TakeTheirs`: backs the host file up, atomically overwrites it
+///   with what the preview says Trove would write, and stores a fresh
+///   `TrovePatch` in `state.json`.
+/// - `MergeManually`: writes `<host>.trove.original` (the prior payload,
+///   empty for orphan-block paths) and `<host>.trove.theirs` (what
+///   Trove wants to write) next to the host file. The renderer opens
+///   the host config in the OS default editor via `tauri-plugin-shell`
+///   using the returned `host` path. State.json is not touched until
+///   the user re-applies.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn resolve_conflict(
+    app: tauri::AppHandle,
+    harness_id: HarnessId,
+    action: ConflictAction,
+) -> Result<ConflictResolutionOutcome, IpcError> {
+    let home = home_dir()?;
+    match action {
+        ConflictAction::KeepMine => keep_mine(&app, harness_id, &home),
+        ConflictAction::TakeTheirs { options } => take_theirs(&app, harness_id, &home, options),
+        ConflictAction::MergeManually { options } => {
+            merge_manually(&app, harness_id, &home, &options)
+        }
+    }
+}
+
+/// Look up the existing [`HarnessConfig`] for `harness_id`, if any. The
+/// presence of this record discriminates the 3-way (Some) vs 2-way
+/// orphan-block (None) conflict-resolver UI mode.
+fn load_prior_harness_config(
+    app: &tauri::AppHandle,
+    harness_id: HarnessId,
+) -> Result<Option<HarnessConfig>, IpcError> {
+    let state = app_state::load(app)?;
+    Ok(state.harnesses.into_iter().find(|h| h.id == harness_id))
+}
+
+/// Test-friendly variant of [`load_prior_harness_config`] that operates
+/// on an explicit config directory instead of going through the running
+/// Tauri instance. Used by the integration tests in
+/// `tests/conflict_flow.rs`.
+pub fn load_prior_harness_config_in(
+    config_dir: &Path,
+    harness_id: HarnessId,
+) -> Result<Option<HarnessConfig>, IpcError> {
+    let state = app_state::load_from_dir(config_dir)?;
+    Ok(state.harnesses.into_iter().find(|h| h.id == harness_id))
+}
+
+/// Build a [`ConflictPayload`] from a `Conflict`-status preview plus any
+/// prior `HarnessConfig`. The current and theirs region payloads come
+/// out of `preview.before` / `preview.after` via [`extract_region`] —
+/// both are guaranteed `Some` because the conflict status implies a
+/// managed region exists in the file (current) and the preview's after
+/// content is the result of upsert (theirs). If either extraction
+/// returns `None`, the host file's managed-region semantics are
+/// inconsistent in a way the safety contract should never produce; we
+/// surface that as `Internal` rather than misrepresent the state to
+/// the resolver UI.
+pub fn build_conflict_payload(
+    preview: &PatchPreview,
+    prior: Option<&HarnessConfig>,
+) -> Result<ConflictPayload, IpcError> {
+    let current_region = extract_region(preview.format, &preview.before)
+        .map_err(|e| IpcError::ConfigUnparseable {
+            path: preview.config_path.display().to_string(),
+            reason: e.to_string(),
+        })?
+        .ok_or_else(|| IpcError::Internal {
+            reason: "expected managed region in preview.before but found none".into(),
+        })?;
+    let theirs_region = extract_region(preview.format, &preview.after)
+        .map_err(|e| IpcError::Internal {
+            reason: format!("could not extract region from preview.after: {e}"),
+        })?
+        .ok_or_else(|| IpcError::Internal {
+            reason: "expected managed region in preview.after but found none".into(),
+        })?;
+
+    let original_region_payload = prior.map(|h| h.trove_patch.last_written_region_payload.clone());
+    Ok(ConflictPayload {
+        config_path: preview.config_path.display().to_string(),
+        format: preview.format,
+        original_region_payload,
+        current_region_payload: current_region.payload,
+        theirs_region_payload: theirs_region.payload,
+        file_before: preview.before.clone(),
+        file_after_if_taking_theirs: preview.after.clone(),
+    })
+}
+
+/// `KeepMine` resolution (Tauri-bound wrapper). Resolves the platform
+/// config directory from the running app, then delegates to
+/// [`keep_mine_inner`]. See [`keep_mine_inner`] for the contract.
+fn keep_mine(
+    app: &tauri::AppHandle,
+    harness_id: HarnessId,
+    home: &Path,
+) -> Result<ConflictResolutionOutcome, IpcError> {
+    use tauri::Manager as _;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| IpcError::Internal {
+            reason: format!("could not resolve app_config_dir: {e}"),
+        })?;
+    keep_mine_inner(harness_id, home, &config_dir)
+}
+
+/// Test-friendly variant of [`keep_mine`]. Reads the host file, hashes
+/// its current managed region as the new baseline, and persists a
+/// fresh `TrovePatch` to `state.json` under `config_dir` so future
+/// re-applies don't re-trigger the resolver.
+pub fn keep_mine_inner(
+    harness_id: HarnessId,
+    home: &Path,
+    config_dir: &Path,
+) -> Result<ConflictResolutionOutcome, IpcError> {
+    let prior = load_prior_harness_config_in(config_dir, harness_id)?
+        .ok_or_else(|| IpcError::Internal {
+            reason: "keep-mine requires a prior HarnessConfig in state.json".into(),
+        })?;
+    let format = prior.trove_patch.format;
+    let host_path = harness_config_path(harness_id, home);
+    let current = std::fs::read_to_string(&host_path).map_err(|e| IpcError::Io {
+        path: host_path.display().to_string(),
+        reason: e.to_string(),
+    })?;
+    let region = extract_region(format, &current)
+        .map_err(|e| IpcError::ConfigUnparseable {
+            path: host_path.display().to_string(),
+            reason: e.to_string(),
+        })?
+        .ok_or_else(|| IpcError::Internal {
+            reason: "keep-mine requires an existing managed region in the host file".into(),
+        })?;
+
+    let new_patch = TrovePatch {
+        managed_block_hash: region.hash.clone(),
+        file_hash_at_last_write: sha256_hex(current.as_bytes()),
+        format,
+        last_written_region_payload: region.payload,
+    };
+    let entry =
+        harness_config_from_apply(harness_id, &host_path, prior.options.clone(), new_patch.clone());
+    app_state::upsert_harness_in(config_dir, entry)?;
+    Ok(ConflictResolutionOutcome::MarkedMine { patch: new_patch })
+}
+
+/// `TakeTheirs` resolution (Tauri-bound wrapper). Resolves the cursor
+/// hook script path and the platform config directory from the running
+/// app, then delegates to [`take_theirs_inner`].
+fn take_theirs(
+    app: &tauri::AppHandle,
+    harness_id: HarnessId,
+    home: &Path,
+    options: ApplyOptions,
+) -> Result<ConflictResolutionOutcome, IpcError> {
+    use tauri::Manager as _;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| IpcError::Internal {
+            reason: format!("could not resolve app_config_dir: {e}"),
+        })?;
+    take_theirs_inner(harness_id, home, &config_dir, options, || {
+        cursor_hook_script_path(app)
+    })
+}
+
+/// Test-friendly variant of [`take_theirs`]. Backs the host file up,
+/// overwrites it with what the preview says Trove would write, prunes
+/// old backups, and stamps `state.json` with the new patch.
+pub fn take_theirs_inner<F>(
+    harness_id: HarnessId,
+    home: &Path,
+    config_dir: &Path,
+    options: ApplyOptions,
+    hook_resolver: F,
+) -> Result<ConflictResolutionOutcome, IpcError>
+where
+    F: FnOnce() -> Result<PathBuf, IpcError>,
+{
+    let preview = preview_patch_inner(harness_id, &options, home, hook_resolver)?;
+    let host_path = preview.config_path.clone();
+    backup_file(&host_path).map_err(|e| IpcError::Io {
+        path: host_path.display().to_string(),
+        reason: format!("backup failed: {e}"),
+    })?;
+    write_atomic(&host_path, preview.after.as_bytes()).map_err(|e| IpcError::Io {
+        path: host_path.display().to_string(),
+        reason: e.to_string(),
+    })?;
+    let _ = prune_backups(&host_path, crate::adapters::BACKUPS_TO_KEEP);
+
+    let theirs_region = extract_region(preview.format, &preview.after)
+        .map_err(|e| IpcError::Internal {
+            reason: format!("post-write region extraction failed: {e}"),
+        })?
+        .ok_or_else(|| IpcError::Internal {
+            reason: "post-write file is missing the managed region".into(),
+        })?;
+    let new_patch = TrovePatch {
+        managed_block_hash: theirs_region.hash.clone(),
+        file_hash_at_last_write: sha256_hex(preview.after.as_bytes()),
+        format: preview.format,
+        last_written_region_payload: theirs_region.payload,
+    };
+    let entry = harness_config_from_apply(harness_id, &host_path, options, new_patch.clone());
+    app_state::upsert_harness_in(config_dir, entry)?;
+    Ok(ConflictResolutionOutcome::Applied { patch: new_patch })
+}
+
+/// `MergeManually` resolution (Tauri-bound wrapper).
+fn merge_manually(
+    app: &tauri::AppHandle,
+    harness_id: HarnessId,
+    home: &Path,
+    options: &ApplyOptions,
+) -> Result<ConflictResolutionOutcome, IpcError> {
+    use tauri::Manager as _;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| IpcError::Internal {
+            reason: format!("could not resolve app_config_dir: {e}"),
+        })?;
+    merge_manually_inner(harness_id, home, &config_dir, options, || {
+        cursor_hook_script_path(app)
+    })
+}
+
+/// Test-friendly variant of [`merge_manually`]. Writes sibling files
+/// next to the host config (the prior payload as `.trove.original`;
+/// what Trove would write as `.trove.theirs`) and returns the paths so
+/// the renderer can open the host file in the OS default editor.
+pub fn merge_manually_inner<F>(
+    harness_id: HarnessId,
+    home: &Path,
+    config_dir: &Path,
+    options: &ApplyOptions,
+    hook_resolver: F,
+) -> Result<ConflictResolutionOutcome, IpcError>
+where
+    F: FnOnce() -> Result<PathBuf, IpcError>,
+{
+    let preview = preview_patch_inner(harness_id, options, home, hook_resolver)?;
+    let path = preview.config_path.clone();
+    let original_payload = load_prior_harness_config_in(config_dir, harness_id)?
+        .map(|h| h.trove_patch.last_written_region_payload)
+        .unwrap_or_default();
+    let theirs_region = extract_region(preview.format, &preview.after)
+        .map_err(|e| IpcError::Internal {
+            reason: format!("could not extract region from preview.after: {e}"),
+        })?
+        .ok_or_else(|| IpcError::Internal {
+            reason: "preview.after has no managed region".into(),
+        })?;
+
+    let original_path = sibling_path(&path, "trove.original");
+    let theirs_path = sibling_path(&path, "trove.theirs");
+    write_atomic(&original_path, original_payload.as_bytes()).map_err(|e| IpcError::Io {
+        path: original_path.display().to_string(),
+        reason: e.to_string(),
+    })?;
+    write_atomic(&theirs_path, theirs_region.payload.as_bytes()).map_err(|e| IpcError::Io {
+        path: theirs_path.display().to_string(),
+        reason: e.to_string(),
+    })?;
+
+    Ok(ConflictResolutionOutcome::MergeDeferred {
+        sibling_paths: SiblingPaths {
+            original: original_path.display().to_string(),
+            theirs: theirs_path.display().to_string(),
+            host: path.display().to_string(),
+        },
+    })
+}
+
+/// Compute `<host>.<suffix>` next to `host`. Falls back to appending
+/// the suffix when the host path has no parent (e.g. relative paths in
+/// tests).
+fn sibling_path(host: &Path, suffix: &str) -> PathBuf {
+    let mut name = host
+        .file_name()
+        .map_or_else(|| std::ffi::OsString::from("file"), ToOwned::to_owned);
+    name.push(".");
+    name.push(suffix);
+    host.parent().map_or_else(|| PathBuf::from(&name), |p| p.join(&name))
+}
+
+/// Hex-encoded SHA-256 of `bytes`. Local copy of the helper from
+/// `adapters::common`; pulling it out into a shared module would be
+/// over-abstraction for two call sites.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
 }
 
 /// Remove Trove's patch from `harness_id`'s host config and drop the
@@ -260,7 +593,8 @@ fn home_dir() -> Result<PathBuf, IpcError> {
 /// Resolve the absolute path of the harness's host config file under
 /// `home`. Used to populate [`HarnessConfig.config_path`] after a
 /// successful apply.
-fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
+#[must_use]
+pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
     match id {
         HarnessId::ClaudeCode => claude_code::config_path(home),
         HarnessId::CodexCli => codex_cli::config_path(home),

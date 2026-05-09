@@ -132,6 +132,7 @@ pub fn apply_with_region(
                 managed_block_hash: region.hash.clone(),
                 file_hash_at_last_write: hash_hex(current.as_bytes()),
                 format: spec.format,
+                last_written_region_payload: region.payload.clone(),
             });
         }
         PreviewStatus::Conflict => {
@@ -172,6 +173,7 @@ pub fn apply_with_region(
         managed_block_hash: region.hash.clone(),
         file_hash_at_last_write: hash_hex(after.as_bytes()),
         format: spec.format,
+        last_written_region_payload: region.payload.clone(),
     })
 }
 

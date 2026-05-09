@@ -72,15 +72,21 @@ pub struct PatchPreview {
     pub status: PreviewStatus,
 }
 
-/// What [`apply`] returns on success. Carries the same hash pair the
-/// `safety::conflict` module needs (Sprint 5+ will persist it into
-/// `state.json`; Sprint 3 returns it but does not yet store it).
+/// What [`apply`] returns on success. Carries the hashes
+/// `safety::conflict` consumes and the canonical region payload the
+/// 3-way merge UI's "original" pane reads back at conflict time.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrovePatch {
     pub managed_block_hash: String,
     pub file_hash_at_last_write: String,
     pub format: Format,
+    /// The canonical payload string Trove wrote at last apply. Empty for
+    /// records migrated from schema v2 — those harnesses fall back to a
+    /// 2-pane orphan-block view in the resolver until the next apply
+    /// re-populates the field.
+    #[serde(default)]
+    pub last_written_region_payload: String,
 }
 
 /// How many timestamped backups each adapter keeps for the harness's
@@ -127,9 +133,25 @@ mod tests {
             managed_block_hash: "a".repeat(64),
             file_hash_at_last_write: "b".repeat(64),
             format: Format::Json,
+            last_written_region_payload: r#"{"env":{"OTEL_FOO":"bar"}}"#.into(),
         };
         let json = serde_json::to_string(&p).unwrap();
         let revived: TrovePatch = serde_json::from_str(&json).unwrap();
         assert_eq!(p, revived);
+        assert!(json.contains("\"lastWrittenRegionPayload\""));
+    }
+
+    #[test]
+    fn trove_patch_accepts_v2_records_missing_last_written_region_payload() {
+        // schemaVersion 2 records persisted before Sprint 8 don't have
+        // the lastWrittenRegionPayload key; serde must default it to ""
+        // so the v2 -> v3 migration is structurally a no-op for serde.
+        let v2_json = r#"{
+            "managedBlockHash": "aaaa",
+            "fileHashAtLastWrite": "bbbb",
+            "format": "json"
+        }"#;
+        let revived: TrovePatch = serde_json::from_str(v2_json).unwrap();
+        assert_eq!(revived.last_written_region_payload, "");
     }
 }
