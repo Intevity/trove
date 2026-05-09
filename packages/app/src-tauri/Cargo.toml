@@ -1,6 +1,6 @@
 [package]
 name = "trove"
-version = "0.1.0"
+version = "0.5.0"
 description = "Trove — vendor-neutral configurator and OTLP gateway for AI coding harnesses"
 authors = ["Intevity"]
 license = "MIT"
