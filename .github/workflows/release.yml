@@ -128,25 +128,44 @@ jobs:
           TROVE_TARGET_TRIPLE: ${{ matrix.rust_target }}
         run: pnpm bundle:sidecar
 
-      # Sprint 8 ships unsigned macOS / Windows builds — users right-click
-      # → Open once on macOS and bypass SmartScreen on Windows. Sprint 10
-      # layers in:
-      #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-      #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID,
-      #   WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD.
-      # An empty APPLE_CERTIFICATE secret breaks tauri-action's keychain
-      # import — never set it to an empty string while the rest of the
-      # signing chain is incomplete.
+      # Sprint 10 — signing + notarization pipelines. Until the operator
+      # provisions every secret in the chain, tauri-action falls back to
+      # producing unsigned bundles (matching Sprint 8 behavior). Once the
+      # secrets are set, Apple Developer ID signing + notarization runs
+      # for macOS bundles, and Authenticode signing runs for Windows
+      # bundles.
+      #
+      # WARNING: An empty APPLE_CERTIFICATE secret breaks tauri-action's
+      # keychain import step — set every Apple secret with valid values,
+      # or none of them. The same applies to the WINDOWS_CERTIFICATE
+      # pair. See documentation/releasing.md for the full secret-prep
+      # runbook.
       #
       # TAURI_SIGNING_PRIVATE_KEY signs the auto-updater's `latest.json`
-      # manifest, not the platform bundles. Sprint 10's updater work
-      # verifies the manifest signature against the embedded public key.
+      # manifest, not the platform bundles. The matching pubkey lives in
+      # `packages/app/src-tauri/tauri.conf.json` `plugins.updater.pubkey`
+      # (Sprint 10 PR 1) and is what the in-app updater verifies against.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code-signing + notarization. tauri-action imports the
+          # base64-encoded .p12 into a temporary keychain on the runner,
+          # then invokes `codesign` with APPLE_SIGNING_IDENTITY and
+          # submits the bundle to notarytool with the APPLE_ID /
+          # APPLE_PASSWORD / APPLE_TEAM_ID triple.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows Authenticode signing. tauri-action expects a
+          # base64-encoded .pfx and its password.
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           projectPath: packages/app
           tagName: ${{ github.ref_name }}
@@ -154,8 +173,11 @@ jobs:
           releaseBody: |
             See the GitHub release notes for changes since the previous tag.
 
-            macOS users: right-click the .app and choose Open to bypass
-            Gatekeeper (signed builds land in Sprint 10).
+            macOS bundles are signed + notarized when the corresponding
+            GitHub secrets are configured; until then they remain unsigned
+            and require the right-click → Open Gatekeeper bypass.
+            Windows bundles are Authenticode-signed under the same
+            condition.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

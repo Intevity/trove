@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Sprint 10 — Hardened-runtime entitlements for a notarized Trove macOS
+  bundle. Trove ships a bundled `trove-otelcol` sidecar (built via ocb)
+  that the Tauri core spawns and supervises; that combination requires:
+
+  * com.apple.security.cs.allow-jit
+    WebKit's JIT runs inside the WebView; without this, hardened-runtime
+    rejects JS execution.
+
+  * com.apple.security.cs.allow-unsigned-executable-memory
+    Same WebView path — Tauri's WebKit needs writable+executable pages.
+
+  * com.apple.security.cs.disable-library-validation
+    Tauri's externalBin sidecar (trove-otelcol) is a separate signed
+    binary; without disabling library validation the loader rejects
+    cross-bundle code. Notarization still verifies the sidecar's own
+    signature.
+
+  * com.apple.security.network.client
+    The supervised Collector dials the user's chosen backend over TLS.
+
+  Deliberately omitted: `app-sandbox` (Trove writes files outside the
+  sandbox container by design — `~/.claude/settings.json` etc.),
+  `cs.allow-dyld-environment-variables` (no DYLD_* injections), and
+  `cs.debugger` (no attach-to-process behavior in production).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.network.client</key>
+  <true/>
+</dict>
+</plist>
