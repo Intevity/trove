@@ -39,7 +39,11 @@ export function App(): JSX.Element {
         {showWizard ? (
           <BackendWizard onComplete={() => void handleWizardComplete()} />
         ) : appState ? (
-          <Dashboard appState={appState} onChangeBackend={() => void handleChangeBackend()} />
+          <Dashboard
+            appState={appState}
+            onChangeBackend={() => void handleChangeBackend()}
+            onAppStateRefresh={() => void refreshAppState()}
+          />
         ) : null}
       </div>
     </main>
