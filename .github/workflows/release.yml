@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-tauri:
+    name: Build Tauri app (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos-arm64
+            rust_target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - os: macos-13
+            platform: macos-x64
+            rust_target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - os: ubuntu-22.04
+            platform: linux-x64
+            rust_target: x86_64-unknown-linux-gnu
+            args: ''
+          - os: windows-2022
+            platform: windows-x64
+            rust_target: x86_64-pc-windows-msvc
+            args: ''
+
+    steps:
+      # Free ~25–30 GB on the Ubuntu runner. Same rationale as ci.yml:
+      # the Tauri build chain plus tauri-action's bundle step pushes
+      # close to the 14 GB default. macOS / Windows runners have more
+      # headroom and don't need the cleanup.
+      - name: Free disk space on runner
+        if: matrix.os == 'ubuntu-22.04'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          tool-cache: false
+          swap-storage: false
+
+      - uses: actions/checkout@v4
+
+      # Linux Tauri build deps + dpkg/fakeroot for the .deb bundle.
+      # `fakeroot` is preinstalled on ubuntu-22.04, but we install it
+      # explicitly so a future image change doesn't break the .deb step.
+      - name: Install Linux Tauri build deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            fakeroot \
+            dpkg
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/app/src-tauri -> target
+          shared-key: trove-rust-${{ runner.os }}-release
+          # Save only on tag pushes; release builds run rarely so
+          # cache hits are mostly opportunistic.
+          save-if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      # Go 1.25+ is required by ocb (the OpenTelemetry Collector
+      # Builder) used by `pnpm build:collector`.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Cache ocb module cache + installed binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/go/bin
+          key: trove-ocb-${{ runner.os }}-${{ hashFiles('resources/otelcol/manifest.yaml') }}
+          restore-keys: |
+            trove-ocb-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TS workspace libraries
+        run: pnpm --filter @trove/shared --filter @trove/collector-presets build
+
+      # build-collector.sh respects TROVE_TARGET_TRIPLE for cross-target
+      # builds. bundle-sidecar.ts then stages the resulting binary into
+      # packages/app/src-tauri/binaries/ with the platform-triple suffix
+      # Tauri's externalBin entry expects.
+      - name: Build trove-otelcol sidecar (${{ matrix.rust_target }})
+        env:
+          TROVE_TARGET_TRIPLE: ${{ matrix.rust_target }}
+        run: pnpm build:collector
+
+      - name: Stage sidecar into Tauri binaries dir
+        env:
+          TROVE_TARGET_TRIPLE: ${{ matrix.rust_target }}
+        run: pnpm bundle:sidecar
+
+      # Sprint 8 ships unsigned macOS / Windows builds — users right-click
+      # → Open once on macOS and bypass SmartScreen on Windows. Sprint 10
+      # layers in:
+      #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+      #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID,
+      #   WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD.
+      # An empty APPLE_CERTIFICATE secret breaks tauri-action's keychain
+      # import — never set it to an empty string while the rest of the
+      # signing chain is incomplete.
+      #
+      # TAURI_SIGNING_PRIVATE_KEY signs the auto-updater's `latest.json`
+      # manifest, not the platform bundles. Sprint 10's updater work
+      # verifies the manifest signature against the embedded public key.
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: packages/app
+          tagName: ${{ github.ref_name }}
+          releaseName: Trove ${{ github.ref_name }}
+          releaseBody: |
+            See the GitHub release notes for changes since the previous tag.
+
+            macOS users: right-click the .app and choose Open to bypass
+            Gatekeeper (signed builds land in Sprint 10).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-tauri]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Promote the draft (created by tauri-action above) to published.
+      # Running this in a separate job means the draft is only flipped
+      # to public after every matrix entry succeeded.
+      - name: Promote draft release to published
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit ${{ github.ref_name }} --draft=false
