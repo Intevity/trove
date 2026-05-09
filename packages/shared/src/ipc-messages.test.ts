@@ -38,11 +38,12 @@ describe('PreviewPatchResponse', () => {
 });
 
 describe('ApplyPatchResponse', () => {
-  it('parses an apply response carrying both hashes', () => {
+  it('parses an apply response carrying both hashes plus the v3 region payload', () => {
     const res = {
       managedBlockHash: 'a'.repeat(64),
       fileHashAtLastWrite: 'b'.repeat(64),
       format: 'json',
+      lastWrittenRegionPayload: '{"env":{"OTEL_FOO":"bar"}}',
     };
     expect(ApplyPatchResponse.parse(res)).toEqual(res);
   });

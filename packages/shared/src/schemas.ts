@@ -113,6 +113,12 @@ export const TrovePatch = z.object({
   fileHashAtLastWrite: z.string().min(1),
   /** Format of the host config file. */
   format: PatchFormat,
+  /** Canonical region payload string Trove wrote at last apply.
+   *  Drives the 3-way merge UI's "original" pane. Defaults to `""`
+   *  for records migrated from schema v2 — those harnesses degrade to
+   *  the resolver's 2-pane orphan-block view until the next apply
+   *  re-populates the field. */
+  lastWrittenRegionPayload: z.string().default(''),
 });
 export type TrovePatch = z.infer<typeof TrovePatch>;
 
@@ -141,12 +147,13 @@ export const HarnessConfig = z.object({
 export type HarnessConfig = z.infer<typeof HarnessConfig>;
 
 /** Persisted application state. Secrets are referenced via SecretRef only.
- *  Schema version bumped to 2 in Sprint 2 alongside the richer
- *  HarnessConfig.trovePatch (replacing trovePatchHash from v1).
- *  Migrations land alongside Sprint 5 when state.json starts being
- *  persisted in the wild. */
+ *  Schema version bumped to 3 in Sprint 8 alongside TrovePatch's new
+ *  `lastWrittenRegionPayload` field that powers the 3-way merge UI.
+ *  v2 -> v3 migration: the loader injects `lastWrittenRegionPayload: ""`
+ *  for any harness without it, then re-stamps schemaVersion on next
+ *  save. Older v2-only consumers cannot read v3 files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   backend: Backend.nullable(),
   harnesses: z.array(HarnessConfig),
 });

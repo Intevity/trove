@@ -33,6 +33,7 @@ fn sample_config(id: HarnessId) -> HarnessConfig {
             managed_block_hash: "a".repeat(64),
             file_hash_at_last_write: "b".repeat(64),
             format: Format::Json,
+            last_written_region_payload: r#"{"env":{"OTEL_FOO":"bar"}}"#.into(),
         },
         options: ApplyOptions::default(),
     }
@@ -87,7 +88,7 @@ fn save_then_load_is_byte_identical_for_each_backend_kind() {
     for backend in backends {
         let dir = tempdir().unwrap();
         let state = AppState {
-            schema_version: 2,
+            schema_version: 3,
             backend: Some(backend.clone()),
             harnesses: vec![sample_config(HarnessId::ClaudeCode)],
         };

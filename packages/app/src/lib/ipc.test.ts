@@ -145,6 +145,7 @@ describe('applyPatch', () => {
       managedBlockHash: 'a'.repeat(64),
       fileHashAtLastWrite: 'b'.repeat(64),
       format: 'json' as const,
+      lastWrittenRegionPayload: '{"env":{"OTEL_FOO":"bar"}}',
     };
     invokeMock.mockResolvedValueOnce(expected);
     const result = await applyPatch('claude-code', {
@@ -181,7 +182,7 @@ describe('getAppState', () => {
 
   it('returns the parsed AppState on success', async () => {
     const expected = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       backend: null,
       harnesses: [],
     };

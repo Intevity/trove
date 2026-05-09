@@ -181,8 +181,23 @@ describe('TrovePatch', () => {
       managedBlockHash: 'a'.repeat(64),
       fileHashAtLastWrite: 'b'.repeat(64),
       format: 'json',
+      lastWrittenRegionPayload: '{"env":{"OTEL_FOO":"bar"}}',
     };
     expect(TrovePatch.parse(patch)).toEqual(patch);
+  });
+
+  it('defaults lastWrittenRegionPayload to empty string when missing (schema v2 -> v3 migration)', () => {
+    // Sprint 8 added lastWrittenRegionPayload alongside the v3 schema
+    // bump. The Zod default() means a v2-shaped record (no payload key)
+    // parses cleanly with an empty payload — the same migration the
+    // Rust loader applies in app_state::load_from_dir.
+    const v2Shape = {
+      managedBlockHash: 'a'.repeat(64),
+      fileHashAtLastWrite: 'b'.repeat(64),
+      format: 'json',
+    };
+    const parsed = TrovePatch.parse(v2Shape);
+    expect(parsed.lastWrittenRegionPayload).toBe('');
   });
 
   it('rejects missing required fields', () => {
@@ -213,6 +228,7 @@ describe('HarnessConfig', () => {
       managedBlockHash: 'a'.repeat(64),
       fileHashAtLastWrite: 'b'.repeat(64),
       format: 'json',
+      lastWrittenRegionPayload: '{"env":{"OTEL_FOO":"bar"}}',
     },
     options: { logUserPrompts: false, customAttributes: {} },
   };
@@ -239,13 +255,13 @@ describe('HarnessConfig', () => {
 });
 
 describe('AppState', () => {
-  it('parses a minimal v2 state with no backend and no harnesses', () => {
+  it('parses a minimal v3 state with no backend and no harnesses', () => {
     const parsed = AppState.parse({
-      schemaVersion: 2,
+      schemaVersion: 3,
       backend: null,
       harnesses: [],
     });
-    expect(parsed.schemaVersion).toBe(2);
+    expect(parsed.schemaVersion).toBe(3);
     expect(parsed.backend).toBeNull();
     expect(parsed.harnesses).toEqual([]);
   });
@@ -254,6 +270,20 @@ describe('AppState', () => {
     expect(() =>
       AppState.parse({
         schemaVersion: 1,
+        backend: null,
+        harnesses: [],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a v2 wire payload (Rust loader migrates v2 to v3 before IPC return)', () => {
+    // Sprint 8 bumped the on-the-wire schema to v3. Pre-Sprint-8 v2
+    // payloads are an internal concern of `app_state::load_from_dir`;
+    // they should never appear at the IPC boundary, so the Zod literal
+    // rejects them outright.
+    expect(() =>
+      AppState.parse({
+        schemaVersion: 2,
         backend: null,
         harnesses: [],
       }),

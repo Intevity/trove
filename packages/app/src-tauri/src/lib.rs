@@ -45,11 +45,13 @@ pub fn run() {
     init_tracing();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             ipc::commands::list_detected_harnesses,
             ipc::commands::preview_patch,
             ipc::commands::apply_patch,
             ipc::commands::revert_patch,
+            ipc::commands::resolve_conflict,
             ipc::commands::get_app_state,
             ipc::commands::save_backend,
             ipc::commands::clear_backend,
