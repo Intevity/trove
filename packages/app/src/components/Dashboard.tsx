@@ -7,16 +7,21 @@ import { useCollectorStatus } from '../hooks/useCollectorStatus.js';
 import { useDetectedHarnesses } from '../hooks/useDetectedHarnesses.js';
 import { useMetricsSnapshot } from '../hooks/useMetricsSnapshot.js';
 import { deriveOverallHealth } from '../lib/health.js';
-import { TroveIpcError, revertPatch } from '../lib/ipc.js';
+import { TroveIpcError, revertPatch, setAutoUpdateEnabled } from '../lib/ipc.js';
 import { HarnessList } from './HarnessList.js';
 import { LogsPanel } from './LogsPanel.js';
 import { OverallHealthBadge } from './OverallHealthBadge.js';
 import { PatchPreviewModal } from './PatchPreviewModal.js';
+import { AutoUpdate } from './Settings/AutoUpdate.js';
 import { SidecarPanel } from './SidecarPanel.js';
 
 interface Props {
   appState: AppState;
   onChangeBackend: () => void;
+  /** Refresh the parent's `appState` after a write (e.g. the
+   *  AutoUpdate toggle persists `autoUpdateEnabled` then asks the
+   *  parent to re-fetch). */
+  onAppStateRefresh: () => void | Promise<void>;
 }
 
 /** Sprint 6 PR 3 dashboard. Replaces the post-wizard App body.
@@ -26,7 +31,7 @@ interface Props {
  *  - `SidecarPanel` — collector state, counts, Test Pipeline.
  *  - `HarnessList` — existing detected-harnesses list.
  *  - `LogsPanel` — live tail of collector.log. */
-export function Dashboard({ appState, onChangeBackend }: Props): JSX.Element {
+export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Props): JSX.Element {
   const { status } = useCollectorStatus();
   const { snapshot } = useMetricsSnapshot();
   const { harnesses, loading, error, refresh } = useDetectedHarnesses();
@@ -114,6 +119,14 @@ export function Dashboard({ appState, onChangeBackend }: Props): JSX.Element {
       ) : null}
 
       <LogsPanel />
+
+      <AutoUpdate
+        enabled={appState.autoUpdateEnabled}
+        onToggle={async (next) => {
+          await setAutoUpdateEnabled(next);
+          await onAppStateRefresh();
+        }}
+      />
 
       {previewing ? (
         <PatchPreviewModal

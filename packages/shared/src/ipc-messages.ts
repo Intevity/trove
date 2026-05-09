@@ -11,6 +11,7 @@ import {
   PatchPreview,
   TestExportResult,
   TrovePatch,
+  UpdateMetadata,
 } from './schemas.js';
 
 /** Tauri command name → response shape table. Each command's request
@@ -91,6 +92,20 @@ export type GetMetricsSnapshotResponse = z.infer<typeof GetMetricsSnapshotRespon
 export const GetCollectorLogTailResponse = CollectorLogTailResponse;
 export type GetCollectorLogTailResponse = z.infer<typeof GetCollectorLogTailResponse>;
 
+/** Sprint 10 — `set_auto_update_enabled`. Args: { enabled: boolean }.
+ *  Toggles the persisted `autoUpdateEnabled` flag in `state.json`.
+ *  Returns nothing on success. */
+export const SetAutoUpdateEnabledResponse = z.null();
+export type SetAutoUpdateEnabledResponse = z.infer<typeof SetAutoUpdateEnabledResponse>;
+
+/** Sprint 10 — `check_for_updates`. No arguments. Calls the Tauri
+ *  updater plugin against the configured GitHub Releases endpoint and
+ *  returns whether an update is available, the candidate version, and
+ *  the running build's version. Failures surface as
+ *  `IpcError::UpdaterCheckFailed`. */
+export const CheckForUpdatesResponse = UpdateMetadata;
+export type CheckForUpdatesResponse = z.infer<typeof CheckForUpdatesResponse>;
+
 /** Canonical Tauri command names, kept here so the IPC client wrapper
  *  and tests share a single source of truth. The Rust side registers
  *  these in `tauri::generate_handler!` in lib.rs; renames must update
@@ -108,6 +123,8 @@ export const IpcCommandName = {
   GetCollectorStatus: 'get_collector_status',
   GetMetricsSnapshot: 'get_metrics_snapshot',
   GetCollectorLogTail: 'get_collector_log_tail',
+  SetAutoUpdateEnabled: 'set_auto_update_enabled',
+  CheckForUpdates: 'check_for_updates',
 } as const;
 export type IpcCommandName = (typeof IpcCommandName)[keyof typeof IpcCommandName];
 

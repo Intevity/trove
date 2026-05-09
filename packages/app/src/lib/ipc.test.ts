@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   TroveIpcError,
   applyPatch,
+  checkForUpdates,
   clearBackend,
   getAppState,
   listDetectedHarnesses,
@@ -10,6 +11,7 @@ import {
   resolveConflict,
   revertPatch,
   saveBackend,
+  setAutoUpdateEnabled,
   testExport,
 } from './ipc.js';
 
@@ -339,5 +341,58 @@ describe('resolveConflict', () => {
     await expect(resolveConflict('claude-code', { kind: 'keep-mine' })).rejects.toBeInstanceOf(
       TroveIpcError,
     );
+  });
+});
+
+describe('setAutoUpdateEnabled', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('forwards the boolean and resolves on success', async () => {
+    invokeMock.mockResolvedValueOnce(null);
+    await expect(setAutoUpdateEnabled(true)).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith('set_auto_update_enabled', { enabled: true });
+  });
+
+  it('forwards false and resolves', async () => {
+    invokeMock.mockResolvedValueOnce(null);
+    await setAutoUpdateEnabled(false);
+    expect(invokeMock).toHaveBeenCalledWith('set_auto_update_enabled', { enabled: false });
+  });
+
+  it('rethrows Rust IpcError as TroveIpcError', async () => {
+    invokeMock.mockRejectedValueOnce({ kind: 'internal', reason: 'disk full' });
+    await expect(setAutoUpdateEnabled(true)).rejects.toBeInstanceOf(TroveIpcError);
+  });
+});
+
+describe('checkForUpdates', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('returns the parsed UpdateMetadata on success', async () => {
+    const meta = { available: true, version: '0.6.1', current: '0.6.0' };
+    invokeMock.mockResolvedValueOnce(meta);
+    const result = await checkForUpdates();
+    expect(result).toEqual(meta);
+    expect(invokeMock).toHaveBeenCalledWith('check_for_updates', undefined);
+  });
+
+  it('parses an "up to date" response with null version', async () => {
+    const meta = { available: false, version: null, current: '0.6.0' };
+    invokeMock.mockResolvedValueOnce(meta);
+    expect(await checkForUpdates()).toEqual(meta);
+  });
+
+  it('rethrows updater-check-failed as TroveIpcError', async () => {
+    invokeMock.mockRejectedValueOnce({
+      kind: 'updater-check-failed',
+      reason: 'sig mismatch',
+    });
+    await expect(checkForUpdates()).rejects.toMatchObject({
+      cause: { kind: 'updater-check-failed', reason: 'sig mismatch' },
+    });
   });
 });

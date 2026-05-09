@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   ApplyPatchResponse,
+  CheckForUpdatesResponse,
   ClearBackendResponse,
   GetAppStateResponse,
   GetCollectorLogTailResponse,
@@ -13,6 +14,7 @@ import {
   ResolveConflictResponse,
   RevertPatchResponse,
   SaveBackendResponse,
+  SetAutoUpdateEnabledResponse,
   TestExportResponse,
   type AppState,
   type ApplyOptions,
@@ -28,6 +30,7 @@ import {
   type PatchPreview,
   type TestExportResult,
   type TrovePatch,
+  type UpdateMetadata,
 } from '@trove/shared';
 
 /** Thrown by IPC wrappers when the Rust side rejected. The structured
@@ -164,4 +167,21 @@ export async function getMetricsSnapshot(): Promise<MetricsSnapshotWire | null> 
  *  discarding events that arrive against the same offset. */
 export async function getCollectorLogTail(lines: number): Promise<CollectorLogTailResponse> {
   return invokeIpc(IpcCommandName.GetCollectorLogTail, { lines }, GetCollectorLogTailResponse);
+}
+
+/** Sprint 10 — flip the persisted `autoUpdateEnabled` flag in
+ *  `state.json`. Drives only the background-on-launch update probe;
+ *  the user-facing "Check for updates now" button calls
+ *  {@link checkForUpdates} directly regardless of this setting. */
+export async function setAutoUpdateEnabled(enabled: boolean): Promise<void> {
+  await invokeIpc(IpcCommandName.SetAutoUpdateEnabled, { enabled }, SetAutoUpdateEnabledResponse);
+}
+
+/** Sprint 10 — explicit "check for updates now" probe. Reaches out to
+ *  the configured GitHub Releases endpoint, verifies the signed
+ *  `latest.json` against the embedded pubkey, and returns whether an
+ *  update is available plus the candidate version. Failures throw a
+ *  `TroveIpcError` whose `cause.kind === 'updater-check-failed'`. */
+export async function checkForUpdates(): Promise<UpdateMetadata> {
+  return invokeIpc(IpcCommandName.CheckForUpdates, undefined, CheckForUpdatesResponse);
 }
