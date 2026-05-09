@@ -10,6 +10,7 @@ import {
   IpcError,
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
+  ResolveConflictResponse,
   RevertPatchResponse,
   SaveBackendResponse,
   TestExportResponse,
@@ -19,6 +20,8 @@ import {
   type BackendDraft,
   type CollectorLogTailResponse,
   type CollectorStatus,
+  type ConflictAction,
+  type ConflictResolutionOutcome,
   type DetectedHarness,
   type HarnessId,
   type MetricsSnapshotWire,
@@ -94,6 +97,23 @@ export async function applyPatch(harnessId: HarnessId, options: ApplyOptions): P
 /** Remove Trove's patch from the harness's host config. */
 export async function revertPatch(harnessId: HarnessId): Promise<void> {
   await invokeIpc(IpcCommandName.RevertPatch, { harnessId }, RevertPatchResponse);
+}
+
+/** Sprint 8 — drive the 3-way merge resolver. Called by
+ *  `<ConflictResolver>` after the user picks one of:
+ *
+ *  - `keep-mine`: re-baselines `state.json` against the user's current
+ *    region. Host file is untouched.
+ *  - `take-theirs`: backs the host config up, overwrites it with what
+ *    Trove would write, and stamps a fresh `TrovePatch` into `state.json`.
+ *  - `merge-manually`: writes `<host>.trove.original` and `<host>.trove.theirs`
+ *    sibling files and returns their paths so the renderer can open the
+ *    host config in the OS default editor via `tauri-plugin-shell`. */
+export async function resolveConflict(
+  harnessId: HarnessId,
+  action: ConflictAction,
+): Promise<ConflictResolutionOutcome> {
+  return invokeIpc(IpcCommandName.ResolveConflict, { harnessId, action }, ResolveConflictResponse);
 }
 
 /** Read the persisted `AppState`. A fresh launch with no `state.json`

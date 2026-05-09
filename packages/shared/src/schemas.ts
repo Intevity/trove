@@ -311,6 +311,58 @@ export type CollectorLogTailResponse = z.infer<typeof CollectorLogTailResponse>;
 export const CollectorLogEvent = CollectorLogLineWire;
 export type CollectorLogEvent = z.infer<typeof CollectorLogEvent>;
 
+/** 3-way merge payload returned via {@link IpcError} when the apply
+ *  path detects a hand-edited managed region and `state.json` carries
+ *  the prior baseline. The resolver UI renders three panes:
+ *
+ *  - Original — what Trove last wrote (the canonical region payload).
+ *    `null` for the orphan-block path (state.json wiped or never had a
+ *    record), where the resolver collapses to a 2-pane (Yours / Trove's)
+ *    layout instead of three.
+ *  - Yours — the region payload as it currently appears in the host
+ *    file (typically the user's hand-edit).
+ *  - Trove's — what `apply_patch` would write next.
+ *
+ *  Mirrors the Rust `ConflictPayload` struct in `ipc::mod`. */
+export const ConflictPayload = z.object({
+  configPath: z.string(),
+  format: PatchFormat,
+  originalRegionPayload: z.string().nullable(),
+  currentRegionPayload: z.string(),
+  theirsRegionPayload: z.string(),
+  fileBefore: z.string(),
+  fileAfterIfTakingTheirs: z.string(),
+});
+export type ConflictPayload = z.infer<typeof ConflictPayload>;
+
+/** What the resolver tells `resolve_conflict` to do. Tagged union with
+ *  kebab-case discriminators that mirror the Rust `ConflictAction`
+ *  enum's serde shape. */
+export const ConflictAction = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('keep-mine') }),
+  z.object({ kind: z.literal('take-theirs'), options: ApplyOptions }),
+  z.object({ kind: z.literal('merge-manually'), options: ApplyOptions }),
+]);
+export type ConflictAction = z.infer<typeof ConflictAction>;
+
+/** Absolute paths of the sibling files dropped by `MergeManually`.
+ *  Mirrors the Rust `SiblingPaths` struct. */
+export const SiblingPaths = z.object({
+  original: z.string(),
+  theirs: z.string(),
+  host: z.string(),
+});
+export type SiblingPaths = z.infer<typeof SiblingPaths>;
+
+/** Successful outcome of `resolve_conflict`. Discriminated by `status`
+ *  on the wire. Mirrors the Rust `ConflictResolutionOutcome` enum. */
+export const ConflictResolutionOutcome = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('applied'), patch: TrovePatch }),
+  z.object({ status: z.literal('marked-mine'), patch: TrovePatch }),
+  z.object({ status: z.literal('merge-deferred'), siblingPaths: SiblingPaths }),
+]);
+export type ConflictResolutionOutcome = z.infer<typeof ConflictResolutionOutcome>;
+
 /** Discriminated union mirroring the Rust `ipc::IpcError` enum.
  *  The TS side branches on `kind` to render specific UI affordances
  *  (e.g. surface the conflicting `path` for region-conflict). */
@@ -323,6 +375,10 @@ export const IpcError = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('region-conflict'),
     path: z.string(),
+  }),
+  z.object({
+    kind: z.literal('region-conflict-detected'),
+    conflict: ConflictPayload,
   }),
   z.object({
     kind: z.literal('harness-not-detected'),

@@ -24,7 +24,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 
-use trove_app::app_state::{Backend, OtlpProtocol};
+use trove_app::app_state::{Backend, OtlpProtocol, SecretRef};
 use trove_app::collector::codegen::{render_with, RenderError, RenderedCollector};
 use trove_app::collector::{
     CollectorState, Supervisor, SupervisorChannels, SupervisorHandle, SupervisorOptions,
@@ -306,6 +306,141 @@ async fn test_export_succeeds_against_a_stub_otlp_receiver() {
         "stub OTLP receiver should have seen at least one POST",
     );
     stub.shutdown().await;
+}
+
+/// Run the preset test-export round trip: render the backend, optionally
+/// rewrite the YAML so all outbound exporter URLs target the localhost
+/// stub, then spawn the supervisor and assert the synthetic export
+/// reaches the stub. `endpoint_env_overrides` lets the caller redirect
+/// `${env:TROVE_*_ENDPOINT}` placeholders to the stub URL; some presets
+/// (Honeycomb) also need a YAML find-replace because the upstream URL
+/// is baked into the template, so `yaml_replacements` lists those.
+async fn run_test_export_for_preset(
+    backend: Backend,
+    stub_url: String,
+    endpoint_env_overrides: &[(&str, String)],
+    yaml_replacements: &[(&str, &str)],
+) {
+    let _guard = collector_lock().lock().await;
+    let Some(binary) = locate_binary() else {
+        eprintln!("[wizard_test_export] skipping preset round-trip: no trove-otelcol binary.");
+        return;
+    };
+
+    let rendered = render(&backend);
+    let mut yaml = rendered.yaml;
+    for (needle, replacement) in yaml_replacements {
+        yaml = yaml.replace(needle, replacement);
+    }
+    let mut env = rendered.env;
+    for (key, value) in endpoint_env_overrides {
+        env.insert((*key).to_string(), Zeroizing::new(value.clone()));
+    }
+    let _ = stub_url; // accepted for clarity at the call site
+    let (yaml_path, log_path, env_plain, _dir) = write_yaml_and_env(&yaml, env);
+
+    let opts = SupervisorOptions::new(binary, yaml_path, log_path.clone()).with_env(env_plain);
+    let handle = Supervisor::start(opts, SupervisorChannels::new())
+        .expect("supervisor starts");
+    wait_for_running(&handle, Duration::from_secs(15))
+        .await
+        .expect("collector running within 15s");
+
+    let result = test_export_at(
+        "http://127.0.0.1:4318/v1/traces",
+        &log_path,
+        Duration::from_secs(5),
+    )
+    .await;
+
+    handle.shutdown().await;
+
+    assert!(
+        matches!(result.status, TestExportStatus::Ok),
+        "expected Ok against stub-redirected preset, got {result:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn datadog_preset_dials_through_stub() {
+    let stub = StubReceiver::start().await.expect("start stub");
+    let stub_url = stub.endpoint();
+    let backend = Backend::Datadog {
+        site: "datadoghq.com".into(),
+        api_key: SecretRef::for_account("backend.datadog.api-key"),
+    };
+    run_test_export_for_preset(
+        backend,
+        stub_url.clone(),
+        &[("TROVE_DATADOG_ENDPOINT", stub_url.clone())],
+        &[],
+    )
+    .await;
+    assert!(stub.count() >= 1, "stub should have received at least one POST");
+    stub.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn grafana_cloud_preset_dials_through_stub() {
+    let stub = StubReceiver::start().await.expect("start stub");
+    let stub_url = stub.endpoint();
+    let backend = Backend::GrafanaCloud {
+        endpoint: "https://otlp.grafana.example/otlp".into(),
+        auth: SecretRef::for_account("backend.grafana-cloud.auth"),
+    };
+    run_test_export_for_preset(
+        backend,
+        stub_url.clone(),
+        &[("TROVE_GRAFANA_ENDPOINT", stub_url.clone())],
+        &[],
+    )
+    .await;
+    assert!(stub.count() >= 1, "stub should have received at least one POST");
+    stub.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn honeycomb_preset_dials_through_stub() {
+    let stub = StubReceiver::start().await.expect("start stub");
+    let stub_url = stub.endpoint();
+    let backend = Backend::Honeycomb {
+        team: SecretRef::for_account("backend.honeycomb.team"),
+        dataset: "trove-test".into(),
+    };
+    // Honeycomb's exporter URL is baked into the YAML template (the
+    // `endpoint: https://api.honeycomb.io` line), so a YAML rewrite is
+    // the only way to redirect it at the localhost stub. Everything
+    // else (auth header, dataset env) is unchanged.
+    run_test_export_for_preset(
+        backend,
+        stub_url.clone(),
+        &[],
+        &[("https://api.honeycomb.io", stub_url.as_str())],
+    )
+    .await;
+    assert!(stub.count() >= 1, "stub should have received at least one POST");
+    stub.shutdown().await;
+}
+
+/// `SigNoz` exports via OTLP/gRPC over TLS — its YAML pins
+/// `tls.insecure: false` and the exporter performs a TLS handshake at
+/// connection time. Pointing it at our plain-HTTP localhost stub fails
+/// the handshake, so a full round-trip is impractical here. The
+/// codegen golden tests in `tests/codegen_goldenfile.rs` cover the YAML
+/// and env shape; this test asserts only that `render` produces a
+/// non-empty exporter section and the canonical env keys.
+#[test]
+fn signoz_preset_renders_canonical_yaml_and_env_keys() {
+    let backend = Backend::Signoz {
+        region: "us".into(),
+        ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
+    };
+    let rendered = render(&backend);
+    assert!(rendered.yaml.contains("otlp/signoz"));
+    assert!(rendered.yaml.contains("${env:TROVE_SIGNOZ_ENDPOINT}"));
+    assert!(rendered.yaml.contains("${env:TROVE_SIGNOZ_INGESTION_KEY}"));
+    assert!(rendered.env.contains_key("TROVE_SIGNOZ_ENDPOINT"));
+    assert!(rendered.env.contains_key("TROVE_SIGNOZ_INGESTION_KEY"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
