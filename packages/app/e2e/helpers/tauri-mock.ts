@@ -41,7 +41,7 @@ export interface TauriMockState {
 }
 
 export const DEFAULT_MOCK_STATE: TauriMockState = {
-  appState: { schemaVersion: 3, backend: null, harnesses: [] },
+  appState: { schemaVersion: 4, backend: null, harnesses: [], autoUpdateEnabled: false },
   detectedHarnesses: [
     {
       id: 'claude-code',
