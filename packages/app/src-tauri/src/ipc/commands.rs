@@ -16,8 +16,9 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 use crate::adapters::{
-    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, claude_code, cline, cline_watcher,
-    codex_cli, cursor_cli, cursor_ide, gemini_cli, opencode, qwen_code,
+    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, cline,
+    cline_watcher, codex_cli, copilot_cli, cursor_cli, cursor_ide, gemini_cli, opencode,
+    qwen_code,
 };
 use crate::app_state::{
     self, AppState, Backend, BackendDraft, HarnessConfig, backend_secret_accounts,
@@ -101,33 +102,45 @@ pub fn preview_patch(
     options: ApplyOptions,
 ) -> Result<PatchPreview, IpcError> {
     let home = home_dir()?;
-    preview_patch_inner(harness_id, &options, &home, || cursor_hook_script_path(&app))
+    preview_patch_inner(harness_id, &options, &home, |id| {
+        external_resource_path(&app, id)
+    })
 }
 
 /// Free-function inner for [`preview_patch`] so unit tests can exercise
-/// the dispatch without synthesising a Tauri `AppHandle`. `hook_resolver`
-/// is invoked only on the Cursor arms; Tier 1 / fallback arms never call
-/// it (tests can pass a closure that panics).
+/// the dispatch without synthesising a Tauri `AppHandle`.
+/// `resolve_resource` is invoked only on the arms that need a bundled
+/// resource (Cursor hook, wrapper scripts); Tier 1 arms and the
+/// log-watch-only Cline arm never call it. Tests can pass a closure
+/// that panics on the unused arms.
 pub fn preview_patch_inner<F>(
     harness_id: HarnessId,
     options: &ApplyOptions,
     home: &Path,
-    hook_resolver: F,
+    resolve_resource: F,
 ) -> Result<PatchPreview, IpcError>
 where
-    F: FnOnce() -> Result<PathBuf, IpcError>,
+    F: FnOnce(HarnessId) -> Result<PathBuf, IpcError>,
 {
     match harness_id {
         HarnessId::ClaudeCode => claude_code::preview(home, options),
         HarnessId::CodexCli => codex_cli::preview(home, options),
         HarnessId::GeminiCli => gemini_cli::preview(home, options),
         HarnessId::QwenCode => qwen_code::preview(home, options),
-        HarnessId::CursorIde => cursor_ide::preview(home, options, &hook_resolver()?),
-        HarnessId::CursorCli => cursor_cli::preview(home, options, &hook_resolver()?),
+        HarnessId::CursorIde => {
+            cursor_ide::preview(home, options, &resolve_resource(HarnessId::CursorIde)?)
+        }
+        HarnessId::CursorCli => {
+            cursor_cli::preview(home, options, &resolve_resource(HarnessId::CursorCli)?)
+        }
         HarnessId::Opencode => opencode::preview(home, options),
         HarnessId::Cline => cline::preview(home, options),
-        // Tier 3 `Aider` and `CopilotCli` land in Sprint 9 PR 3.
-        _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
+        HarnessId::Aider => {
+            aider::preview(home, options, &resolve_resource(HarnessId::Aider)?)
+        }
+        HarnessId::CopilotCli => {
+            copilot_cli::preview(home, options, &resolve_resource(HarnessId::CopilotCli)?)
+        }
     }
 }
 
@@ -152,8 +165,8 @@ pub fn apply_patch(
     options: ApplyOptions,
 ) -> Result<TrovePatch, IpcError> {
     let home = home_dir()?;
-    let preview = preview_patch_inner(harness_id, &options, &home, || {
-        cursor_hook_script_path(&app)
+    let preview = preview_patch_inner(harness_id, &options, &home, |id| {
+        external_resource_path(&app, id)
     })?;
 
     if matches!(preview.status, PreviewStatus::Conflict) {
@@ -170,41 +183,30 @@ pub fn apply_patch(
         HarnessId::GeminiCli => gemini_cli::apply(&home, &options),
         HarnessId::QwenCode => qwen_code::apply(&home, &options),
         HarnessId::CursorIde => {
-            let hook = cursor_hook_script_path(&app)?;
+            let hook = external_resource_path(&app, HarnessId::CursorIde)?;
             cursor_ide::apply(&home, &options, &hook)
         }
         HarnessId::CursorCli => {
-            let hook = cursor_hook_script_path(&app)?;
+            let hook = external_resource_path(&app, HarnessId::CursorCli)?;
             cursor_cli::apply(&home, &options, &hook)
         }
         HarnessId::Opencode => opencode::apply(&home, &options),
         HarnessId::Cline => cline::apply(&home, &options),
-        _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
+        HarnessId::Aider => {
+            let wrapper = external_resource_path(&app, HarnessId::Aider)?;
+            aider::apply(&home, &options, &wrapper)
+        }
+        HarnessId::CopilotCli => {
+            let wrapper = external_resource_path(&app, HarnessId::CopilotCli)?;
+            copilot_cli::apply(&home, &options, &wrapper)
+        }
     }?;
 
-    // Sprint 9 PR 2 — Tier 3 watchers. Cline reads its globalStorage
-    // tasks dir; spawn one tokio task per enable, register the handle
-    // in `TierThreeWatchers` so revert can abort it. Idempotent:
-    // `tier3_watchers::insert` replaces any prior handle for the same
-    // id.
-    if matches!(harness_id, HarnessId::Cline) {
-        use tauri::Manager as _;
-        let tasks = cline::tasks_dir(&home);
-        let handle = cline_watcher::spawn(
-            tasks,
-            options.clone(),
-            cline_watcher::DEFAULT_POLL_INTERVAL,
-        );
-        if let Some(registry) = app.try_state::<TierThreeWatchers>() {
-            registry.insert(harness_id, handle);
-        } else {
-            // The slot is registered in `lib.rs::run`; a missing slot
-            // means the IPC layer was reached from a unit test that
-            // didn't go through the Tauri builder. The watcher's
-            // `JoinHandle` drops here, which aborts it on drop.
-            tracing::warn!(?harness_id, "TierThreeWatchers slot missing; watcher aborted");
-        }
-    }
+    // Sprint 9 PR 2/PR 3 — Tier 3 watchers. Each enabled tier-3
+    // adapter spawns one tokio task and registers it in
+    // `TierThreeWatchers`. `tier3_watchers::insert` replaces any prior
+    // handle for the same id, so re-applies are idempotent.
+    spawn_tier3_watcher(&app, harness_id, &home, &options);
 
     let harness_config = harness_config_from_apply(
         harness_id,
@@ -389,8 +391,8 @@ fn take_theirs(
         .map_err(|e| IpcError::Internal {
             reason: format!("could not resolve app_config_dir: {e}"),
         })?;
-    take_theirs_inner(harness_id, home, &config_dir, options, || {
-        cursor_hook_script_path(app)
+    take_theirs_inner(harness_id, home, &config_dir, options, |id| {
+        external_resource_path(app, id)
     })
 }
 
@@ -405,7 +407,7 @@ pub fn take_theirs_inner<F>(
     hook_resolver: F,
 ) -> Result<ConflictResolutionOutcome, IpcError>
 where
-    F: FnOnce() -> Result<PathBuf, IpcError>,
+    F: FnOnce(HarnessId) -> Result<PathBuf, IpcError>,
 {
     let preview = preview_patch_inner(harness_id, &options, home, hook_resolver)?;
     let host_path = preview.config_path.clone();
@@ -451,8 +453,8 @@ fn merge_manually(
         .map_err(|e| IpcError::Internal {
             reason: format!("could not resolve app_config_dir: {e}"),
         })?;
-    merge_manually_inner(harness_id, home, &config_dir, options, || {
-        cursor_hook_script_path(app)
+    merge_manually_inner(harness_id, home, &config_dir, options, |id| {
+        external_resource_path(app, id)
     })
 }
 
@@ -468,7 +470,7 @@ pub fn merge_manually_inner<F>(
     hook_resolver: F,
 ) -> Result<ConflictResolutionOutcome, IpcError>
 where
-    F: FnOnce() -> Result<PathBuf, IpcError>,
+    F: FnOnce(HarnessId) -> Result<PathBuf, IpcError>,
 {
     let preview = preview_patch_inner(harness_id, options, home, hook_resolver)?;
     let path = preview.config_path.clone();
@@ -548,7 +550,8 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         HarnessId::CursorCli => cursor_cli::revert(&home),
         HarnessId::Opencode => opencode::revert(&home),
         HarnessId::Cline => cline::revert(&home),
-        _ => Err(IpcError::HarnessNotImplemented { id: harness_id }),
+        HarnessId::Aider => aider::revert(&home),
+        HarnessId::CopilotCli => copilot_cli::revert(&home),
     }?;
 
     // Sprint 9 PR 2 — abort the Tier 3 watcher (if any) for this id.
@@ -686,25 +689,109 @@ pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         HarnessId::CursorCli => cursor_cli::config_path(home),
         HarnessId::Opencode => opencode::config_path(home),
         HarnessId::Cline => cline::config_path(home),
-        // Tier 3 `Aider` and `CopilotCli` land in PR 3.
-        _ => PathBuf::new(),
+        HarnessId::Aider => aider::config_path(home),
+        HarnessId::CopilotCli => copilot_cli::config_path(home),
     }
 }
 
-/// Resolve the absolute path of the bundled `cursor-otel-hook.cjs`
-/// script. Tauri stages the file under the app's `resource_dir()` at
-/// install time via the `bundle.resources` entry in `tauri.conf.json`;
-/// in development, it resolves to the equivalent path under the
-/// `target/<profile>` build output.
-fn cursor_hook_script_path(app: &tauri::AppHandle) -> Result<PathBuf, IpcError> {
+/// Resolve the absolute path of the bundled wrapper / hook script for
+/// `id`. Used by adapters that depend on a vendored on-disk resource.
+/// Tier 1 / Cline don't ship one and never call this.
+fn external_resource_path(app: &tauri::AppHandle, id: HarnessId) -> Result<PathBuf, IpcError> {
     use tauri::Manager as _;
     let resource_dir = app.path().resource_dir().map_err(|e| IpcError::Internal {
-        reason: format!("could not resolve Tauri resource_dir for cursor hook: {e}"),
+        reason: format!("could not resolve Tauri resource_dir: {e}"),
     })?;
-    Ok(resource_dir
-        .join("resources")
-        .join("hooks")
-        .join("cursor-otel-hook.cjs"))
+    let rel: &[&str] = match id {
+        HarnessId::CursorIde | HarnessId::CursorCli => &["resources", "hooks", "cursor-otel-hook.cjs"],
+        HarnessId::Aider => &["resources", "wrappers", "trove-aider"],
+        HarnessId::CopilotCli => &["resources", "wrappers", "trove-copilot"],
+        _ => {
+            return Err(IpcError::Internal {
+                reason: format!("no bundled resource for harness {id:?}"),
+            });
+        }
+    };
+    let mut p = resource_dir;
+    for seg in rel {
+        p = p.join(seg);
+    }
+    Ok(p)
+}
+
+/// Spawn the appropriate Tier 3 watcher and register it in the
+/// long-lived `TierThreeWatchers` slot. No-op for non-tier-3 ids.
+fn spawn_tier3_watcher(
+    app: &tauri::AppHandle,
+    id: HarnessId,
+    home: &Path,
+    options: &ApplyOptions,
+) {
+    use tauri::Manager as _;
+    let handle = match id {
+        HarnessId::Cline => Some(cline_watcher::spawn(
+            cline::tasks_dir(home),
+            options.clone(),
+            cline_watcher::DEFAULT_POLL_INTERVAL,
+        )),
+        HarnessId::Aider => {
+            let log = aider::log_path(home);
+            ensure_log_parent(&log);
+            Some(spawn_wrapper_log_watcher(log, options.clone(), id))
+        }
+        HarnessId::CopilotCli => {
+            let log = copilot_cli::log_path(home);
+            ensure_log_parent(&log);
+            Some(spawn_wrapper_log_watcher(log, options.clone(), id))
+        }
+        _ => None,
+    };
+    let Some(handle) = handle else { return };
+    if let Some(registry) = app.try_state::<TierThreeWatchers>() {
+        registry.insert(id, handle);
+    } else {
+        tracing::warn!(?id, "TierThreeWatchers slot missing; watcher aborted");
+    }
+}
+
+/// Best-effort `mkdir -p` for the wrapper log file's parent. The
+/// wrapper script also tries this; duplicating it here means the
+/// `log_watcher`'s first poll doesn't have to wait for the user to
+/// invoke the wrapper before the parent appears.
+fn ensure_log_parent(log: &Path) {
+    if let Some(parent) = log.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+}
+
+/// Tail `log_path` and emit one OTLP log per parseable line. Returns
+/// a `WatcherHandle` whose `abort()` halts the chain (it owns the
+/// inner tail watcher's handle so dropping cancels both).
+fn spawn_wrapper_log_watcher(
+    log_path: PathBuf,
+    options: ApplyOptions,
+    id: HarnessId,
+) -> crate::log_watcher::WatcherHandle {
+    use crate::log_watcher::{DEFAULT_POLL_INTERVAL, spawn as spawn_tail};
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+    let tail = spawn_tail(log_path, tx, DEFAULT_POLL_INTERVAL);
+    let join = tokio::spawn(async move {
+        // The tail handle moves into the task so cancelling this outer
+        // task drops it (and so cancels the inner watcher).
+        let _tail = tail;
+        while let Some(line) = rx.recv().await {
+            let payload = match id {
+                HarnessId::Aider => aider::parse_event_line(&line, &options),
+                HarnessId::CopilotCli => copilot_cli::parse_event_line(&line, &options),
+                _ => None,
+            };
+            let Some(payload) = payload else { continue };
+            if let Err(e) = crate::otlp_emit::post_logs_json(&payload).await {
+                tracing::warn!(error = %e, ?id, "wrapper log watcher OTLP emit failed");
+            }
+        }
+    });
+    crate::log_watcher::WatcherHandle::from_join(join)
 }
 
 #[cfg(test)]
@@ -766,36 +853,15 @@ mod tests {
     }
 
     #[test]
-    fn preview_patch_inner_for_unimplemented_harness_returns_not_implemented() {
-        // Aider is the still-unimplemented Tier 3 harness in PR 2; it
-        // lands in PR 3. The hook resolver should never be called for
-        // non-cursor harnesses.
-        let home = std::path::PathBuf::from("/tmp/should-not-be-touched");
-        let err = preview_patch_inner(
-            HarnessId::Aider,
-            &ApplyOptions::default(),
-            &home,
-            || panic!("hook resolver must not be invoked for Tier 3 harnesses"),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            IpcError::HarnessNotImplemented {
-                id: HarnessId::Aider
-            }
-        ));
-    }
-
-    #[test]
     fn preview_patch_inner_routes_cline_through_adapter_without_resolver() {
         // PR 2 wires Cline: preview returns Fresh with no host file
-        // patch. The hook resolver must not be invoked.
+        // patch. The resource resolver must not be invoked.
         let home = tempfile::tempdir().unwrap();
         let preview = preview_patch_inner(
             HarnessId::Cline,
             &ApplyOptions::default(),
             home.path(),
-            || panic!("hook resolver must not be invoked for cline"),
+            |_| panic!("resource resolver must not be invoked for cline"),
         )
         .unwrap();
         assert!(matches!(preview.status, PreviewStatus::Fresh));
@@ -805,13 +871,13 @@ mod tests {
     #[test]
     fn preview_patch_inner_routes_opencode_through_adapter_without_resolver() {
         // OpenCode is now wired in Sprint 7 PR 2 with a standard SPEC; the
-        // hook resolver must not be invoked for it.
+        // resource resolver must not be invoked for it.
         let home = tempfile::tempdir().unwrap();
         let result = preview_patch_inner(
             HarnessId::Opencode,
             &ApplyOptions::default(),
             home.path(),
-            || panic!("hook resolver must not be invoked for opencode"),
+            |_| panic!("resource resolver must not be invoked for opencode"),
         )
         .unwrap();
         assert!(
@@ -829,7 +895,8 @@ mod tests {
             HarnessId::CursorIde,
             &ApplyOptions::default(),
             home.path(),
-            || {
+            |id| {
+                assert_eq!(id, HarnessId::CursorIde);
                 resolver_called.set(true);
                 Ok(fake_hook.clone())
             },
@@ -847,20 +914,20 @@ mod tests {
             HarnessId::CursorCli,
             &ApplyOptions::default(),
             home.path(),
-            || Ok(fake_hook.clone()),
+            |_| Ok(fake_hook.clone()),
         )
         .unwrap();
         assert!(result.after.contains("/opt/trove/cursor-otel-hook.cjs"));
     }
 
     #[test]
-    fn preview_patch_inner_propagates_hook_resolver_errors() {
+    fn preview_patch_inner_propagates_resource_resolver_errors() {
         let home = std::path::PathBuf::from("/tmp/should-not-be-touched");
         let err = preview_patch_inner(
             HarnessId::CursorIde,
             &ApplyOptions::default(),
             &home,
-            || {
+            |_| {
                 Err(IpcError::Internal {
                     reason: "could not resolve resource_dir".to_string(),
                 })
@@ -868,6 +935,47 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, IpcError::Internal { .. }));
+    }
+
+    #[test]
+    fn preview_patch_inner_routes_aider_through_resolver_and_adapter() {
+        // Sprint 9 PR 3 — Aider preview drives wrapper_common against
+        // the user's primary shell rc.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".zshrc"), "user content\n").unwrap();
+        let fake_wrapper = std::path::PathBuf::from("/opt/trove/wrappers/trove-aider");
+        let result = preview_patch_inner(
+            HarnessId::Aider,
+            &ApplyOptions::default(),
+            dir.path(),
+            |id| {
+                assert_eq!(id, HarnessId::Aider);
+                Ok(fake_wrapper.clone())
+            },
+        )
+        .unwrap();
+        assert!(matches!(result.status, PreviewStatus::Fresh));
+        assert!(result.after.contains("aider() {"));
+        assert!(result.after.contains("/opt/trove/wrappers/trove-aider"));
+    }
+
+    #[test]
+    fn preview_patch_inner_routes_copilot_cli_through_resolver_and_adapter() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".zshrc"), "").unwrap();
+        let fake_wrapper = std::path::PathBuf::from("/opt/trove/wrappers/trove-copilot");
+        let result = preview_patch_inner(
+            HarnessId::CopilotCli,
+            &ApplyOptions::default(),
+            dir.path(),
+            |id| {
+                assert_eq!(id, HarnessId::CopilotCli);
+                Ok(fake_wrapper.clone())
+            },
+        )
+        .unwrap();
+        assert!(result.after.contains("gh-copilot() {"));
+        assert!(result.after.contains("/opt/trove/wrappers/trove-copilot"));
     }
 
     // apply_patch / revert_patch / save_backend / clear_backend / get_app_state

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# trove-aider — Sprint 9 Tier 3 wrapper for the `aider` CLI.
+#
+# Invoked from the user's shell rc (Trove appends a function named
+# `aider` that execs this script). Runs the real aider binary and
+# writes a single JSON-line per invocation to the Trove log file
+# the log watcher tails. Never blocks the user — write failures fall
+# through to stderr and the real aider runs unchanged.
+#
+# Each emitted log line:
+#   {"ts":"<ISO-8601>","tool":"aider","argc":N,"exit_code":<int>,"duration_ms":<int>}
+
+set -uo pipefail
+
+LOG_DIR="${TROVE_STATE_DIR:-$HOME/.local/state/trove}"
+LOG_FILE="$LOG_DIR/aider.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+
+# Resolve the real aider binary, skipping the wrapper itself. We look
+# for the first `aider` on PATH that is not this script — avoids
+# infinite recursion when the shell function shadows the binary.
+SELF="$(readlink -f -- "$0" 2>/dev/null || echo "$0")"
+REAL_AIDER=""
+IFS=':' read -r -a path_parts <<<"${PATH:-}"
+for dir in "${path_parts[@]}"; do
+  [ -z "$dir" ] && continue
+  candidate="$dir/aider"
+  if [ -x "$candidate" ] && [ "$(readlink -f -- "$candidate" 2>/dev/null || echo "$candidate")" != "$SELF" ]; then
+    REAL_AIDER="$candidate"
+    break
+  fi
+done
+
+if [ -z "$REAL_AIDER" ]; then
+  echo "trove-aider: real \`aider\` binary not found on PATH" >&2
+  exit 127
+fi
+
+START_NS="$(date +%s%N 2>/dev/null || echo 0)"
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
+
+"$REAL_AIDER" "$@"
+EXIT=$?
+
+END_NS="$(date +%s%N 2>/dev/null || echo 0)"
+if [ "$END_NS" -ge "$START_NS" ] 2>/dev/null; then
+  DURATION_MS=$(( (END_NS - START_NS) / 1000000 ))
+else
+  DURATION_MS=0
+fi
+
+LINE=$(printf '{"ts":"%s","tool":"aider","argc":%d,"exit_code":%d,"duration_ms":%d}\n' \
+  "$TS" "$#" "$EXIT" "$DURATION_MS")
+
+printf '%s' "$LINE" >>"$LOG_FILE" 2>/dev/null || true
+
+exit "$EXIT"

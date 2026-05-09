@@ -29,11 +29,14 @@ use trove_app::ipc::commands::{
 };
 use trove_app::ipc::ConflictResolutionOutcome;
 
-/// Hook resolver passed to `preview_patch_inner` from Tier 1 tests. Tier
-/// 1 adapters never invoke it; panicking is correct under that
-/// invariant.
-fn unused_hook_resolver() -> Result<std::path::PathBuf, trove_app::ipc::IpcError> {
-    panic!("hook resolver must not be invoked for tier-1 harnesses")
+/// Resource resolver passed to `preview_patch_inner` from Tier 1
+/// tests. Tier 1 adapters never invoke it; panicking is correct under
+/// that invariant. Sprint 9 PR 3 widened the resolver to take a
+/// `HarnessId`; the signature here mirrors that change.
+fn unused_hook_resolver(
+    _id: trove_app::harness::HarnessId,
+) -> Result<std::path::PathBuf, trove_app::ipc::IpcError> {
+    panic!("resource resolver must not be invoked for tier-1 harnesses")
 }
 
 /// Equivalent of `commands::apply_patch`'s success path: install the

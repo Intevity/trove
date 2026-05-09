@@ -33,7 +33,9 @@
     "targets": "all",
     "externalBin": ["binaries/trove-otelcol"],
     "resources": {
-      "../../../resources/hooks/cursor-otel-hook.cjs": "resources/hooks/cursor-otel-hook.cjs"
+      "../../../resources/hooks/cursor-otel-hook.cjs": "resources/hooks/cursor-otel-hook.cjs",
+      "../../../resources/wrappers/trove-aider": "resources/wrappers/trove-aider",
+      "../../../resources/wrappers/trove-copilot": "resources/wrappers/trove-copilot"
     },
     "icon": [
       "icons/32x32.png",

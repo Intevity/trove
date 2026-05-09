@@ -64,6 +64,11 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
         // bundle), so detection there relies on config-dir + app-bundle.
         HarnessId::CursorCli => Some("cursor-agent"),
         HarnessId::Opencode => Some("opencode"),
+        // Sprint 9 PR 3 — Tier 3 wrapper-based adapters detect via
+        // PATH presence of the underlying tool. Cline (PR 2) uses
+        // config-dir signals instead and returns None here.
+        HarnessId::Aider => Some("aider"),
+        HarnessId::CopilotCli => Some("gh"),
         _ => None,
     }
 }

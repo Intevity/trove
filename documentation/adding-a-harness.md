@@ -438,6 +438,75 @@ golden cases apply unchanged.
   `apply_with_region` / `preview_with_region`).
 - **Cross-harness end-to-end** — `tests/adapters_roundtrip.rs`.
 
+## Tier 3 — best-effort (no native OTLP, no clean hook surface)
+
+Tier 3 ships when the upstream tool exposes neither native OTLP nor a
+plugin/hook surface Trove can wedge into. There are two patterns
+Sprint 9 established; pick whichever matches your harness:
+
+### Pattern A — log-watch only (Cline)
+
+When the tool already writes structured records to a known location:
+
+1. Add a `<tool>_data_root(home: &Path) -> PathBuf` style helper that
+   returns the tool's data dir.
+2. Write a polling watcher (e.g. `adapters/cline_watcher.rs`) that
+   tails files under that dir, hashes contents to detect changes,
+   and emits one OTLP `LogRecord` per change via
+   `crate::otlp_emit::post_logs_json`.
+3. The adapter's `preview` / `apply` / `revert` are _synthetic_ — no
+   host-file region:
+   - `preview` returns `PreviewStatus::Fresh` with a descriptive
+     `after` string (the dashboard renders this as the "what will
+     happen" diff).
+   - `apply` returns a `TrovePatch` whose
+     `last_written_region_payload` is a small JSON snapshot of the
+     user's `ApplyOptions`. The IPC layer also spawns the watcher
+     and registers it in `TierThreeWatchers`.
+   - `revert` is a filesystem no-op; the IPC layer aborts the
+     watcher and removes the `state.json` row.
+4. Detection lives in `detect/paths.rs`: probe the tool's data dir
+   and / or its VSCode extension folder.
+
+### Pattern B — shell-rc wrapper (Aider, Copilot CLI)
+
+When the tool runs from a terminal command and we can intercept
+invocations through a shell function:
+
+1. Add a vendored wrapper script under `resources/wrappers/` (POSIX
+   shell). The wrapper runs the real binary, captures `argc`,
+   `exit_code`, `duration_ms`, and writes one JSON-line per
+   invocation to `~/.local/state/trove/<tool>.log` (overrideable
+   via `TROVE_STATE_DIR` for tests).
+2. Register the script in `tauri.conf.json` under
+   `bundle.resources` so Tauri stages it in the app's
+   `resource_dir()` at install time.
+3. The adapter delegates host-file work to
+   `adapters/wrapper_common::{apply_to_primary_shell_rc, revert_primary_shell_rc, preview_for_primary_shell_rc}`.
+   It only owns the `WrapperSpec` (function name, wrapper path,
+   label) and the OTLP parser that turns one log line into one
+   OTLP `LogRecord`-shaped JSON value.
+4. Detection: probe the underlying tool's binary on PATH (`aider`,
+   `gh`).
+5. When you need to avoid shadowing a multi-purpose binary (e.g.
+   `gh` powers `gh repo`, `gh pr`, etc.), name your shell function
+   distinctly (`gh-copilot`) and surface the rename in the row's
+   `COVERAGE_NOTES` tooltip.
+
+In both patterns:
+
+- `HarnessId::has_adapter()` flips on once the adapter is registered.
+- The `adapter_available` field on `DetectedHarness` drives the
+  Enable / Disable button — no parallel hard-coded list on the TS
+  side.
+- The IPC layer (`commands::spawn_tier3_watcher` and
+  `revert_patch`'s abort branch) handles watcher lifecycle. Adapter
+  authors don't manage tokio tasks directly.
+- Add an integration test under `tests/` that exercises the
+  end-to-end signal path: synthetic data → parser → OTLP shape
+  assertions. See `tests/cline_e2e.rs` and `tests/wrapper_e2e.rs`
+  for templates.
+
 ## When the upstream schema changes
 
 The nightly CI run (Sprint 11) re-runs every adapter's golden-file
