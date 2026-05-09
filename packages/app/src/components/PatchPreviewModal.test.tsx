@@ -48,7 +48,7 @@ describe('PatchPreviewModal', () => {
     });
   });
 
-  it('shows the conflict banner when status is conflict', async () => {
+  it('shows the conflict banner when status is conflict and Apply is enabled to surface the resolver', async () => {
     invokeMock.mockResolvedValueOnce({
       ...FRESH_PREVIEW,
       status: 'conflict',
@@ -57,9 +57,36 @@ describe('PatchPreviewModal', () => {
     await waitFor(() => {
       expect(screen.getByTestId('patch-preview-conflict')).toBeDefined();
     });
-    // Apply is disabled in conflict state.
+    // Sprint 8: Apply is enabled in conflict state. Clicking Apply
+    // routes through applyPatch which returns RegionConflictDetected,
+    // which the modal turns into the ConflictResolver render path.
     const apply = screen.getByTestId('patch-preview-apply') as HTMLButtonElement;
-    expect(apply.disabled).toBe(true);
+    expect(apply.disabled).toBe(false);
+  });
+
+  it('swaps to ConflictResolver when applyPatch returns region-conflict-detected', async () => {
+    const conflictPayload = {
+      configPath: '/home/me/.claude/settings.json',
+      format: 'json',
+      originalRegionPayload: '{"a":1}',
+      currentRegionPayload: '{"a":2}',
+      theirsRegionPayload: '{"a":3}',
+      fileBefore: '{"a":2}',
+      fileAfterIfTakingTheirs: '{"a":3}',
+    };
+    invokeMock.mockResolvedValueOnce(FRESH_PREVIEW).mockRejectedValueOnce({
+      kind: 'region-conflict-detected',
+      conflict: conflictPayload,
+    });
+    render(<PatchPreviewModal harnessId="claude-code" onClose={() => {}} onApplied={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('patch-preview-fresh')).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId('patch-preview-apply'));
+    await waitFor(() => {
+      expect(screen.getByTestId('conflict-resolver')).toBeDefined();
+    });
+    expect(screen.getByTestId('conflict-resolver').getAttribute('data-mode')).toBe('three-way');
   });
 
   it('shows the idempotent banner when status is idempotent', async () => {

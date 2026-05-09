@@ -32,6 +32,12 @@ export interface TauriMockState {
   metricsSnapshot: unknown;
   collectorLogTail: unknown;
   testExportResult: unknown;
+  /** Sprint 8 — when set, the apply_patch handler throws this value
+   *  exactly once (then clears it). Used by the conflict-flow e2e to
+   *  surface a region-conflict-detected error from a single click. */
+  applyPatchError?: unknown;
+  /** Sprint 8 — scripted return for the resolve_conflict handler. */
+  resolveConflictOutcome?: unknown;
 }
 
 export const DEFAULT_MOCK_STATE: TauriMockState = {
@@ -97,6 +103,15 @@ export async function installTauriMock(
         status: 'fresh',
       }),
       apply_patch: (args: Record<string, unknown>) => {
+        // Sprint 8 — single-shot conflict injection. If the test seeded
+        // `applyPatchError`, throw it now and clear it so the next
+        // apply (post-resolution) takes the success path.
+        if (store.state.applyPatchError !== undefined) {
+          const err = store.state.applyPatchError;
+          store.state.applyPatchError = undefined;
+          // eslint-disable-next-line @typescript-eslint/no-throw-literal
+          throw err;
+        }
         const id = String(args['harnessId'] ?? '');
         store.state.detectedHarnesses = (store.state.detectedHarnesses ?? []).map((h: unknown) => {
           const harness = h as Record<string, unknown>;
@@ -136,6 +151,17 @@ export async function installTauriMock(
         };
       },
       revert_patch: () => null,
+      resolve_conflict: () =>
+        store.state.resolveConflictOutcome ?? {
+          status: 'marked-mine',
+          patch: {
+            managedBlockHash: 'a'.repeat(64),
+            fileHashAtLastWrite: 'b'.repeat(64),
+            format: 'json',
+            lastWrittenRegionPayload:
+              '{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://attacker.example.com"}}',
+          },
+        },
       save_backend: (args: Record<string, unknown>) => {
         const draft = args['draft'] as Record<string, unknown>;
         const backend: Record<string, unknown> = { kind: draft['kind'] };

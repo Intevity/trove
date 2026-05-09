@@ -15,6 +15,26 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
+      # Free ~25–30 GB by removing pre-installed software the Tauri
+      # build doesn't need (Android SDK, .NET, Haskell, large APT
+      # packages, pre-pulled Docker images). Sprint 8 PR 1 added
+      # `tauri-plugin-shell`, which pulled in additional WebKit/GTK
+      # transitive deps; the `cargo-llvm-cov` instrumented build that
+      # follows roughly doubles the per-test link footprint and was
+      # tipping the runner's default ~14 GB free space below the cliff,
+      # surfacing as `cc: ld terminated with signal 7 [Bus error]`.
+      # Removing the unused toolchains restores headroom.
+      - name: Free disk space on runner
+        uses: jlumbroso/free-disk-space@main
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          tool-cache: false
+          swap-storage: false
+
       - uses: actions/checkout@v4
 
       - name: Install Linux Tauri build deps

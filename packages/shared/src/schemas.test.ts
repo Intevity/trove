@@ -9,6 +9,9 @@ import {
   CollectorLogTailResponse,
   CollectorRunState,
   CollectorStatus,
+  ConflictAction,
+  ConflictPayload,
+  ConflictResolutionOutcome,
   ConflictState,
   DetectedHarness,
   DetectionMethod,
@@ -21,6 +24,7 @@ import {
   PatchPreview,
   PreviewStatus,
   SecretRef,
+  SiblingPaths,
   SignalCounts,
   TelemetryStatus,
   TestExportResult,
@@ -484,8 +488,143 @@ describe('IpcError', () => {
     expect(IpcError.parse(err)).toEqual(err);
   });
 
+  it('parses a region-conflict-detected error carrying a 3-way payload', () => {
+    const err = {
+      kind: 'region-conflict-detected',
+      conflict: {
+        configPath: '/home/me/.claude/settings.json',
+        format: 'json',
+        originalRegionPayload: '{"a":1}',
+        currentRegionPayload: '{"a":2}',
+        theirsRegionPayload: '{"a":3}',
+        fileBefore: '{"a":2}',
+        fileAfterIfTakingTheirs: '{"a":3}',
+      },
+    };
+    expect(IpcError.parse(err)).toEqual(err);
+  });
+
+  it('parses a region-conflict-detected error in 2-way orphan-block mode', () => {
+    const err = {
+      kind: 'region-conflict-detected',
+      conflict: {
+        configPath: '/home/me/.claude/settings.json',
+        format: 'json',
+        originalRegionPayload: null,
+        currentRegionPayload: '{"a":2}',
+        theirsRegionPayload: '{"a":3}',
+        fileBefore: '{"a":2}',
+        fileAfterIfTakingTheirs: '{"a":3}',
+      },
+    };
+    expect(IpcError.parse(err)).toEqual(err);
+  });
+
   it('rejects an unknown kind', () => {
     expect(() => IpcError.parse({ kind: 'misc', reason: 'huh' })).toThrow();
+  });
+});
+
+describe('ConflictPayload', () => {
+  const sample = {
+    configPath: '/tmp/.claude/settings.json',
+    format: 'json' as const,
+    originalRegionPayload: '{"a":1}',
+    currentRegionPayload: '{"a":2}',
+    theirsRegionPayload: '{"a":3}',
+    fileBefore: '{"a":2}',
+    fileAfterIfTakingTheirs: '{"a":3}',
+  };
+
+  it('round-trips a 3-way payload', () => {
+    expect(ConflictPayload.parse(sample)).toEqual(sample);
+  });
+
+  it('accepts null originalRegionPayload (orphan-block 2-way fallback)', () => {
+    const orphan = { ...sample, originalRegionPayload: null };
+    expect(ConflictPayload.parse(orphan)).toEqual(orphan);
+  });
+
+  it('rejects when configPath is missing', () => {
+    const broken = { ...sample } as Partial<ConflictPayload>;
+    delete broken.configPath;
+    expect(() => ConflictPayload.parse(broken)).toThrow();
+  });
+});
+
+describe('ConflictAction', () => {
+  it('parses a keep-mine action with no payload', () => {
+    expect(ConflictAction.parse({ kind: 'keep-mine' })).toEqual({ kind: 'keep-mine' });
+  });
+
+  it('parses a take-theirs action carrying ApplyOptions', () => {
+    const action = {
+      kind: 'take-theirs' as const,
+      options: { logUserPrompts: false, customAttributes: {} },
+    };
+    expect(ConflictAction.parse(action)).toEqual(action);
+  });
+
+  it('parses a merge-manually action carrying ApplyOptions', () => {
+    const action = {
+      kind: 'merge-manually' as const,
+      options: { logUserPrompts: true, customAttributes: { team: 'platform' } },
+    };
+    expect(ConflictAction.parse(action)).toEqual(action);
+  });
+
+  it('rejects an unknown kind', () => {
+    expect(() => ConflictAction.parse({ kind: 'rebase-onto-trove' })).toThrow();
+  });
+});
+
+describe('SiblingPaths', () => {
+  it('round-trips a triple of paths', () => {
+    const paths = {
+      original: '/tmp/x.trove.original',
+      theirs: '/tmp/x.trove.theirs',
+      host: '/tmp/x',
+    };
+    expect(SiblingPaths.parse(paths)).toEqual(paths);
+  });
+
+  it('rejects when host is missing', () => {
+    expect(() => SiblingPaths.parse({ original: '/tmp/o', theirs: '/tmp/t' })).toThrow();
+  });
+});
+
+describe('ConflictResolutionOutcome', () => {
+  const patch: TrovePatch = {
+    managedBlockHash: 'a'.repeat(64),
+    fileHashAtLastWrite: 'b'.repeat(64),
+    format: 'json',
+    lastWrittenRegionPayload: '{"a":1}',
+  };
+
+  it('parses an applied outcome with a fresh patch', () => {
+    const outcome = { status: 'applied' as const, patch };
+    expect(ConflictResolutionOutcome.parse(outcome)).toEqual(outcome);
+  });
+
+  it('parses a marked-mine outcome with the user-baselined patch', () => {
+    const outcome = { status: 'marked-mine' as const, patch };
+    expect(ConflictResolutionOutcome.parse(outcome)).toEqual(outcome);
+  });
+
+  it('parses a merge-deferred outcome carrying sibling paths', () => {
+    const outcome = {
+      status: 'merge-deferred' as const,
+      siblingPaths: {
+        original: '/tmp/x.trove.original',
+        theirs: '/tmp/x.trove.theirs',
+        host: '/tmp/x',
+      },
+    };
+    expect(ConflictResolutionOutcome.parse(outcome)).toEqual(outcome);
+  });
+
+  it('rejects an unknown status', () => {
+    expect(() => ConflictResolutionOutcome.parse({ status: 'rolled-back', patch })).toThrow();
   });
 });
 

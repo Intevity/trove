@@ -128,6 +128,7 @@ pub enum ConflictResolutionOutcome {
     /// `MergeManually` wrote sibling files and asked the OS to open
     /// the host config. The UI surfaces a "I've finished merging,
     /// re-apply" CTA driven by these paths.
+    #[serde(rename_all = "camelCase")]
     MergeDeferred { sibling_paths: SiblingPaths },
 }
 
@@ -235,5 +236,94 @@ mod tests {
         };
         let msg = format!("{err}");
         assert!(msg.contains("ClaudeCode"));
+    }
+
+    fn sample_payload() -> ConflictPayload {
+        ConflictPayload {
+            config_path: "/tmp/.claude/settings.json".into(),
+            format: crate::safety::sentinels::Format::Json,
+            original_region_payload: Some(r#"{"a":1}"#.into()),
+            current_region_payload: r#"{"a":2}"#.into(),
+            theirs_region_payload: r#"{"a":3}"#.into(),
+            file_before: r#"{"a":2}"#.into(),
+            file_after_if_taking_theirs: r#"{"a":3}"#.into(),
+        }
+    }
+
+    #[test]
+    fn region_conflict_detected_serializes_with_kebab_kind_and_camel_payload_fields() {
+        let err = IpcError::RegionConflictDetected {
+            conflict: Box::new(sample_payload()),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"kind\":\"region-conflict-detected\""));
+        assert!(json.contains("\"configPath\":\"/tmp/.claude/settings.json\""));
+        assert!(json.contains("\"originalRegionPayload\":\"{\\\"a\\\":1}\""));
+        assert!(json.contains("\"currentRegionPayload\""));
+        assert!(json.contains("\"theirsRegionPayload\""));
+        assert!(json.contains("\"fileBefore\""));
+        assert!(json.contains("\"fileAfterIfTakingTheirs\""));
+    }
+
+    #[test]
+    fn region_conflict_detected_orphan_path_serializes_original_as_null() {
+        let mut payload = sample_payload();
+        payload.original_region_payload = None;
+        let err = IpcError::RegionConflictDetected {
+            conflict: Box::new(payload),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"originalRegionPayload\":null"));
+    }
+
+    #[test]
+    fn conflict_action_kebab_kind_with_options_options() {
+        let action = ConflictAction::TakeTheirs {
+            options: crate::adapters::ApplyOptions::default(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        assert!(json.contains("\"kind\":\"take-theirs\""));
+        assert!(json.contains("\"options\""));
+
+        let json = serde_json::to_string(&ConflictAction::KeepMine).unwrap();
+        assert_eq!(json, r#"{"kind":"keep-mine"}"#);
+
+        let json = serde_json::to_string(&ConflictAction::MergeManually {
+            options: crate::adapters::ApplyOptions::default(),
+        })
+        .unwrap();
+        assert!(json.contains("\"kind\":\"merge-manually\""));
+    }
+
+    #[test]
+    fn conflict_resolution_outcome_serializes_camel_case_fields_per_variant() {
+        // Applied: single-word `patch` field — coincidentally fine, but
+        // pin it anyway so a future refactor doesn't drift.
+        let outcome = ConflictResolutionOutcome::Applied {
+            patch: crate::adapters::TrovePatch {
+                managed_block_hash: "h".into(),
+                file_hash_at_last_write: "f".into(),
+                format: crate::safety::sentinels::Format::Json,
+                last_written_region_payload: r#"{"a":1}"#.into(),
+            },
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"status\":\"applied\""));
+        assert!(json.contains("\"patch\""));
+        assert!(json.contains("\"lastWrittenRegionPayload\""));
+
+        // MergeDeferred: needs the variant-level rename_all so the
+        // wire emits `siblingPaths`, not `sibling_paths`.
+        let outcome = ConflictResolutionOutcome::MergeDeferred {
+            sibling_paths: SiblingPaths {
+                original: "/tmp/x.trove.original".into(),
+                theirs: "/tmp/x.trove.theirs".into(),
+                host: "/tmp/x".into(),
+            },
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"status\":\"merge-deferred\""));
+        assert!(json.contains("\"siblingPaths\""));
+        assert!(!json.contains("\"sibling_paths\""));
     }
 }

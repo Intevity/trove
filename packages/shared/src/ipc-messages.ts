@@ -5,6 +5,7 @@ import {
   Backend,
   CollectorLogTailResponse,
   CollectorStatus,
+  ConflictResolutionOutcome,
   DetectedHarness,
   MetricsSnapshotWire,
   PatchPreview,
@@ -37,6 +38,14 @@ export type ApplyPatchResponse = z.infer<typeof ApplyPatchResponse>;
 /** `revert_patch` — args: { harnessId }. Returns nothing on success. */
 export const RevertPatchResponse = z.null();
 export type RevertPatchResponse = z.infer<typeof RevertPatchResponse>;
+
+/** Sprint 8 — `resolve_conflict`. Args: { harnessId, action }. The
+ *  resolver UI calls this when the user picks one of `keep-mine`,
+ *  `take-theirs`, or `merge-manually`. Returns the post-resolution
+ *  outcome (a fresh `TrovePatch` for the apply paths, or sibling-file
+ *  paths for the manual-merge branch). */
+export const ResolveConflictResponse = ConflictResolutionOutcome;
+export type ResolveConflictResponse = z.infer<typeof ResolveConflictResponse>;
 
 /** `get_app_state` — no arguments. Returns the current `AppState`
  *  (a fresh launch with no `state.json` returns the default). */
@@ -91,6 +100,7 @@ export const IpcCommandName = {
   PreviewPatch: 'preview_patch',
   ApplyPatch: 'apply_patch',
   RevertPatch: 'revert_patch',
+  ResolveConflict: 'resolve_conflict',
   GetAppState: 'get_app_state',
   SaveBackend: 'save_backend',
   ClearBackend: 'clear_backend',

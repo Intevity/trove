@@ -139,6 +139,8 @@ function describeIpcError(err: TroveIpcError): string {
       return cause.reason;
     case 'region-conflict':
       return cause.path;
+    case 'region-conflict-detected':
+      return cause.conflict.configPath;
     case 'harness-not-detected':
     case 'harness-not-implemented':
       return cause.id;

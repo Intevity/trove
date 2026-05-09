@@ -7,6 +7,7 @@ import {
   getAppState,
   listDetectedHarnesses,
   previewPatch,
+  resolveConflict,
   revertPatch,
   saveBackend,
   testExport,
@@ -276,5 +277,66 @@ describe('testExport', () => {
   it('rejects an unknown status', async () => {
     invokeMock.mockResolvedValueOnce({ status: 'maybe', detail: '' });
     await expect(testExport()).rejects.toThrow();
+  });
+});
+
+describe('resolveConflict', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  const sampleApplyOptions = { logUserPrompts: false, customAttributes: {} };
+  const samplePatch = {
+    managedBlockHash: 'a'.repeat(64),
+    fileHashAtLastWrite: 'b'.repeat(64),
+    format: 'json' as const,
+    lastWrittenRegionPayload: '{"a":1}',
+  };
+
+  it('forwards a keep-mine action and parses the marked-mine outcome', async () => {
+    invokeMock.mockResolvedValueOnce({ status: 'marked-mine', patch: samplePatch });
+    const result = await resolveConflict('claude-code', { kind: 'keep-mine' });
+    expect(result).toEqual({ status: 'marked-mine', patch: samplePatch });
+    expect(invokeMock).toHaveBeenCalledWith('resolve_conflict', {
+      harnessId: 'claude-code',
+      action: { kind: 'keep-mine' },
+    });
+  });
+
+  it('forwards a take-theirs action carrying ApplyOptions', async () => {
+    invokeMock.mockResolvedValueOnce({ status: 'applied', patch: samplePatch });
+    const result = await resolveConflict('claude-code', {
+      kind: 'take-theirs',
+      options: sampleApplyOptions,
+    });
+    expect(result).toEqual({ status: 'applied', patch: samplePatch });
+    expect(invokeMock).toHaveBeenCalledWith('resolve_conflict', {
+      harnessId: 'claude-code',
+      action: { kind: 'take-theirs', options: sampleApplyOptions },
+    });
+  });
+
+  it('forwards a merge-manually action and parses sibling paths', async () => {
+    const siblingPaths = {
+      original: '/tmp/x.trove.original',
+      theirs: '/tmp/x.trove.theirs',
+      host: '/tmp/x',
+    };
+    invokeMock.mockResolvedValueOnce({ status: 'merge-deferred', siblingPaths });
+    const result = await resolveConflict('claude-code', {
+      kind: 'merge-manually',
+      options: sampleApplyOptions,
+    });
+    expect(result).toEqual({ status: 'merge-deferred', siblingPaths });
+  });
+
+  it('rethrows Rust IpcError as TroveIpcError', async () => {
+    invokeMock.mockRejectedValueOnce({
+      kind: 'internal',
+      reason: 'state.json missing prior record',
+    });
+    await expect(resolveConflict('claude-code', { kind: 'keep-mine' })).rejects.toBeInstanceOf(
+      TroveIpcError,
+    );
   });
 });
