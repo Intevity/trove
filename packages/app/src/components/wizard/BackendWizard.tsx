@@ -144,6 +144,7 @@ function describeIpcError(err: TroveIpcError): string {
     case 'harness-not-detected':
     case 'harness-not-implemented':
       return cause.id;
+    case 'updater-check-failed':
     case 'internal':
       return cause.reason;
   }

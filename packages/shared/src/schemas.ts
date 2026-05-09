@@ -147,15 +147,18 @@ export const HarnessConfig = z.object({
 export type HarnessConfig = z.infer<typeof HarnessConfig>;
 
 /** Persisted application state. Secrets are referenced via SecretRef only.
- *  Schema version bumped to 3 in Sprint 8 alongside TrovePatch's new
- *  `lastWrittenRegionPayload` field that powers the 3-way merge UI.
- *  v2 -> v3 migration: the loader injects `lastWrittenRegionPayload: ""`
- *  for any harness without it, then re-stamps schemaVersion on next
- *  save. Older v2-only consumers cannot read v3 files. */
+ *  Schema version bumped to 4 in Sprint 10 alongside the new
+ *  `autoUpdateEnabled` flag that gates the background-on-launch update
+ *  probe. Migrations are centralised in the Rust loader: v2/v3 documents
+ *  load cleanly via `serde(default)` defaults (`""` for the patch
+ *  payload, `false` for `autoUpdateEnabled`) and the loader re-stamps
+ *  schemaVersion to 4 so the next save persists v4 to disk. Older
+ *  consumers cannot read v4 files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(3),
+  schemaVersion: z.literal(4),
   backend: Backend.nullable(),
   harnesses: z.array(HarnessConfig),
+  autoUpdateEnabled: z.boolean(),
 });
 export type AppState = z.infer<typeof AppState>;
 
@@ -394,8 +397,23 @@ export const IpcError = z.discriminatedUnion('kind', [
     reason: z.string(),
   }),
   z.object({
+    kind: z.literal('updater-check-failed'),
+    reason: z.string(),
+  }),
+  z.object({
     kind: z.literal('internal'),
     reason: z.string(),
   }),
 ]);
 export type IpcError = z.infer<typeof IpcError>;
+
+/** Sprint 10 — outcome of `check_for_updates`. The React Settings
+ *  component branches on `available` to render either the "update to vX
+ *  available" CTA or the "you're on vY, no update" notice. Mirrors the
+ *  Rust `UpdateMetadata` struct (camelCase keys on the wire). */
+export const UpdateMetadata = z.object({
+  available: z.boolean(),
+  version: z.string().nullable(),
+  current: z.string(),
+});
+export type UpdateMetadata = z.infer<typeof UpdateMetadata>;

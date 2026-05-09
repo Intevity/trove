@@ -64,6 +64,12 @@ pub enum IpcError {
     #[error("io error at {path}: {reason}")]
     Io { path: String, reason: String },
 
+    /// Sprint 10 — `check_for_updates` failed. Causes range from network
+    /// errors to a malformed `latest.json` to a signature mismatch
+    /// against the embedded pubkey. The UI surfaces `reason` verbatim.
+    #[error("updater check failed: {reason}")]
+    UpdaterCheckFailed { reason: String },
+
     /// Catch-all for unexpected failures the UI should treat as a bug.
     #[error("internal error: {reason}")]
     Internal { reason: String },
@@ -227,6 +233,16 @@ mod tests {
         };
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("\"kind\":\"internal\""));
+    }
+
+    #[test]
+    fn updater_check_failed_serializes_with_kebab_kind() {
+        let err = IpcError::UpdaterCheckFailed {
+            reason: "network timeout".into(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"kind\":\"updater-check-failed\""));
+        assert!(json.contains("\"reason\":\"network timeout\""));
     }
 
     #[test]

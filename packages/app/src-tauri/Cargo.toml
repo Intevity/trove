@@ -23,6 +23,12 @@ tauri = { version = "2", features = ["tray-icon", "devtools"] }
 # grant `shell:allow-execute` — only `shell:allow-open` scoped to the
 # user's home directory in `capabilities/default.json`.
 tauri-plugin-shell = "2"
+# Sprint 10 — opt-in auto-updater. Default off; the React Settings
+# section flips `autoUpdateEnabled` in state.json which gates the
+# `check_for_updates` IPC command. Pubkey lives in tauri.conf.json
+# `plugins.updater.pubkey` and verifies the signed `latest.json`
+# manifest tauri-action publishes alongside each release.
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = [
     "macros",

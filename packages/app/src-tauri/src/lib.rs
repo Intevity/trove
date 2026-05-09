@@ -50,6 +50,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             ipc::commands::list_detected_harnesses,
             ipc::commands::preview_patch,
@@ -60,6 +61,8 @@ pub fn run() {
             ipc::commands::save_backend,
             ipc::commands::clear_backend,
             ipc::commands::test_export,
+            ipc::commands::set_auto_update_enabled,
+            ipc::commands::check_for_updates,
             ipc::collector_status::get_collector_status,
             ipc::collector_status::get_metrics_snapshot,
             ipc::collector_status::get_collector_log_tail,
