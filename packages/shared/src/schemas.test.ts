@@ -29,6 +29,7 @@ import {
   TelemetryStatus,
   TestExportResult,
   TrovePatch,
+  UpdateMetadata,
 } from './schemas.js';
 
 describe('HarnessId', () => {
@@ -259,15 +260,37 @@ describe('HarnessConfig', () => {
 });
 
 describe('AppState', () => {
-  it('parses a minimal v3 state with no backend and no harnesses', () => {
+  it('parses a minimal v4 state with no backend, no harnesses, and auto-update off', () => {
     const parsed = AppState.parse({
-      schemaVersion: 3,
+      schemaVersion: 4,
       backend: null,
       harnesses: [],
+      autoUpdateEnabled: false,
     });
-    expect(parsed.schemaVersion).toBe(3);
+    expect(parsed.schemaVersion).toBe(4);
     expect(parsed.backend).toBeNull();
     expect(parsed.harnesses).toEqual([]);
+    expect(parsed.autoUpdateEnabled).toBe(false);
+  });
+
+  it('parses a v4 state with autoUpdateEnabled true', () => {
+    const parsed = AppState.parse({
+      schemaVersion: 4,
+      backend: null,
+      harnesses: [],
+      autoUpdateEnabled: true,
+    });
+    expect(parsed.autoUpdateEnabled).toBe(true);
+  });
+
+  it('rejects when autoUpdateEnabled is missing', () => {
+    expect(() =>
+      AppState.parse({
+        schemaVersion: 4,
+        backend: null,
+        harnesses: [],
+      }),
+    ).toThrow();
   });
 
   it('rejects the legacy schemaVersion 1', () => {
@@ -276,22 +299,26 @@ describe('AppState', () => {
         schemaVersion: 1,
         backend: null,
         harnesses: [],
+        autoUpdateEnabled: false,
       }),
     ).toThrow();
   });
 
-  it('rejects a v2 wire payload (Rust loader migrates v2 to v3 before IPC return)', () => {
-    // Sprint 8 bumped the on-the-wire schema to v3. Pre-Sprint-8 v2
+  it('rejects v2/v3 wire payloads (Rust loader migrates them to v4 before IPC return)', () => {
+    // Sprint 10 bumped the on-the-wire schema to v4. Pre-Sprint-10 v2/v3
     // payloads are an internal concern of `app_state::load_from_dir`;
     // they should never appear at the IPC boundary, so the Zod literal
     // rejects them outright.
-    expect(() =>
-      AppState.parse({
-        schemaVersion: 2,
-        backend: null,
-        harnesses: [],
-      }),
-    ).toThrow();
+    for (const schemaVersion of [2, 3]) {
+      expect(() =>
+        AppState.parse({
+          schemaVersion,
+          backend: null,
+          harnesses: [],
+          autoUpdateEnabled: false,
+        }),
+      ).toThrow();
+    }
   });
 });
 
@@ -485,6 +512,11 @@ describe('IpcError', () => {
 
   it('parses an internal error', () => {
     const err = { kind: 'internal', reason: 'unexpected' };
+    expect(IpcError.parse(err)).toEqual(err);
+  });
+
+  it('parses an updater-check-failed error', () => {
+    const err = { kind: 'updater-check-failed', reason: 'network timeout' };
     expect(IpcError.parse(err)).toEqual(err);
   });
 
@@ -749,5 +781,21 @@ describe('CollectorLogTailResponse', () => {
     expect(CollectorLogTailResponse.parse(payload)).toEqual(payload);
     // Same shape as the live event payload.
     expect(CollectorLogLineWire.parse(payload.lines[0])).toEqual(payload.lines[0]);
+  });
+});
+
+describe('UpdateMetadata', () => {
+  it('parses an "update available" response', () => {
+    const meta = { available: true, version: '0.6.1', current: '0.6.0' };
+    expect(UpdateMetadata.parse(meta)).toEqual(meta);
+  });
+
+  it('parses an "up to date" response with null version', () => {
+    const meta = { available: false, version: null, current: '0.6.0' };
+    expect(UpdateMetadata.parse(meta)).toEqual(meta);
+  });
+
+  it('rejects when current is missing', () => {
+    expect(() => UpdateMetadata.parse({ available: false, version: null })).toThrow();
   });
 });

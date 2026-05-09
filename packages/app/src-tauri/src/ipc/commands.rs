@@ -642,6 +642,67 @@ pub fn clear_backend(app: tauri::AppHandle) -> Result<(), IpcError> {
     Ok(())
 }
 
+/// Sprint 10 — flip the persisted `auto_update_enabled` flag in
+/// `state.json`. Drives nothing on its own; the background-on-launch
+/// update probe (when wired) reads this flag, and the React Settings
+/// component renders the toggle's checked state from it.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_auto_update_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), IpcError> {
+    let mut state = app_state::load(&app)?;
+    if state.auto_update_enabled == enabled {
+        return Ok(());
+    }
+    state.auto_update_enabled = enabled;
+    app_state::save(&app, &state)?;
+    Ok(())
+}
+
+/// Sprint 10 — outcome of `check_for_updates`. The React Settings
+/// component renders `available + version` ("update to v0.6.1
+/// available") or just `current` ("you're on v0.6.0, no update").
+/// `current` is always populated; `version` only when an update was
+/// found.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMetadata {
+    /// `true` when the updater located a newer release.
+    pub available: bool,
+    /// Semver string of the available release. `None` when
+    /// `available` is `false`.
+    pub version: Option<String>,
+    /// Semver string of the running build (from `CARGO_PKG_VERSION`).
+    pub current: String,
+}
+
+/// Sprint 10 — explicit "check for updates now" probe. The Tauri
+/// updater plugin fetches the signed `latest.json` manifest from the
+/// GitHub Releases endpoint configured in `tauri.conf.json` and
+/// compares the version against the running build. Always runs (the
+/// auto-on-launch flag is a separate background path); failures
+/// surface as `IpcError::UpdaterCheckFailed`.
+#[tauri::command]
+pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateMetadata, IpcError> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app
+        .updater()
+        .map_err(|e| IpcError::UpdaterCheckFailed { reason: e.to_string() })?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateMetadata {
+            available: true,
+            version: Some(update.version.clone()),
+            current: crate::app_version().to_string(),
+        }),
+        Ok(None) => Ok(UpdateMetadata {
+            available: false,
+            version: None,
+            current: crate::app_version().to_string(),
+        }),
+        Err(e) => Err(IpcError::UpdaterCheckFailed { reason: e.to_string() }),
+    }
+}
+
 /// Convert codegen's secrecy-wrapped env map into the plain map the
 /// supervisor's `Command::envs` consumes. Each [`Zeroizing`] string
 /// drops as the iterator advances; a momentary plain-`String` copy

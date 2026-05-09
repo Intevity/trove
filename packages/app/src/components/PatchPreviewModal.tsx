@@ -276,6 +276,8 @@ function describeIpcError(err: TroveIpcError): string {
       return `${cause.id} adapter not yet implemented.`;
     case 'io':
       return `${cause.path}: ${cause.reason}`;
+    case 'updater-check-failed':
+      return `update check failed: ${cause.reason}`;
     case 'internal':
       return cause.reason;
   }

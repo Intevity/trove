@@ -88,9 +88,10 @@ fn save_then_load_is_byte_identical_for_each_backend_kind() {
     for backend in backends {
         let dir = tempdir().unwrap();
         let state = AppState {
-            schema_version: 3,
+            schema_version: 4,
             backend: Some(backend.clone()),
             harnesses: vec![sample_config(HarnessId::ClaudeCode)],
+            auto_update_enabled: false,
         };
         save_to_dir(dir.path(), &state).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();

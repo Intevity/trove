@@ -40,13 +40,14 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
   await installTauriMock(page, {
     // Seed a backend so the dashboard renders directly (no wizard step).
     appState: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       backend: {
         kind: 'signoz',
         region: 'us-east',
         ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
       },
       harnesses: [],
+      autoUpdateEnabled: false,
     },
     collectorStatus: {
       state: { kind: 'running', pid: 1234, restarts: 0 },
@@ -91,13 +92,14 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
 }) => {
   await installTauriMock(page, {
     appState: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       backend: {
         kind: 'signoz',
         region: 'us-east',
         ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
       },
       harnesses: [],
+      autoUpdateEnabled: false,
     },
     collectorStatus: {
       state: { kind: 'running', pid: 1234, restarts: 0 },

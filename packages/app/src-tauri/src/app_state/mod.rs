@@ -16,12 +16,17 @@
 //! ## Migration scaffold
 //!
 //! [`load_from_dir`] reads only `schemaVersion` from the file before
-//! parsing the rest. The current schema is version `3`. v2 files are
-//! migrated in-place: the loader deserializes them into the v3 shape
-//! (the new `TrovePatch.lastWrittenRegionPayload` field uses
-//! `#[serde(default)]` so missing keys become `""`), then re-stamps
+//! parsing the rest. The current schema is version `4`. Older versions
+//! are migrated in-place by relying on `#[serde(default)]` for fields
+//! introduced in later schemas:
+//! - v2 → v4: `TrovePatch.lastWrittenRegionPayload` (Sprint 8) defaults
+//!   to `""`; `AppState.autoUpdateEnabled` (Sprint 10) defaults to
+//!   `false`.
+//! - v3 → v4: `AppState.autoUpdateEnabled` defaults to `false`.
+//!
+//! After parse, the loader re-stamps
 //! `schema_version = CURRENT_SCHEMA_VERSION` on the in-memory value so
-//! the next save persists v3 to disk. v1 was never written in the wild
+//! the next save persists v4 to disk. v1 was never written in the wild
 //! and remains an explicit error.
 
 use std::collections::BTreeMap;
@@ -40,7 +45,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// Opaque keychain handle. The actual secret never leaves the OS
 /// keychain. Mirrors `SecretRef` in `packages/shared/src/schemas.ts`.
@@ -164,11 +169,19 @@ pub struct HarnessConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {
-    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `2`). Older or
+    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `4`). Older or
     /// newer values surface as [`AppStateError::UnknownSchemaVersion`].
     pub schema_version: u32,
     pub backend: Option<Backend>,
     pub harnesses: Vec<HarnessConfig>,
+    /// Sprint 10 — opt-in auto-updater. Default `false`; flipped via the
+    /// `set_auto_update_enabled` IPC command. Gates only the
+    /// background-on-launch update probe; the user-facing
+    /// `check_for_updates` IPC command is an explicit action and runs
+    /// regardless. Trove never contacts GitHub Releases without either
+    /// this flag set, or a click in the UI.
+    #[serde(default)]
+    pub auto_update_enabled: bool,
 }
 
 impl Default for AppState {
@@ -178,6 +191,7 @@ impl Default for AppState {
             schema_version: CURRENT_SCHEMA_VERSION,
             backend: None,
             harnesses: Vec::new(),
+            auto_update_enabled: false,
         }
     }
 }
@@ -232,12 +246,15 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2 -> v3 migration. Sprint 8 added TrovePatch.lastWrittenRegionPayload
-        // with serde(default = ""), so a v2 document deserializes cleanly
-        // into the v3 in-memory shape. We re-stamp schema_version on the
-        // returned struct so the next save persists v3 to disk and the
-        // matching loader hits the v3 branch from then on.
-        2 | 3 => {
+        // v2 → v4 / v3 → v4 migration. Sprint 8 added
+        // `TrovePatch.lastWrittenRegionPayload` (defaults to ""); Sprint
+        // 10 added `AppState.autoUpdateEnabled` (defaults to false). Both
+        // use `#[serde(default)]`, so older documents deserialize cleanly
+        // into the v4 in-memory shape with sensible defaults. We re-stamp
+        // schema_version on the returned struct so the next save persists
+        // v4 to disk and the matching loader hits the v4 branch from then
+        // on.
+        2..=4 => {
             let mut state: AppState =
                 serde_json::from_slice(&bytes).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
@@ -498,12 +515,13 @@ mod tests {
     }
 
     #[test]
-    fn default_is_v3_with_null_backend_and_no_harnesses() {
+    fn default_is_v4_with_null_backend_no_harnesses_and_auto_update_off() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 3);
+        assert_eq!(s.schema_version, 4);
         assert!(s.backend.is_none());
         assert!(s.harnesses.is_empty());
+        assert!(!s.auto_update_enabled);
     }
 
     #[test]
@@ -545,13 +563,28 @@ mod tests {
     #[test]
     fn app_state_round_trips_through_serde() {
         let state = AppState {
-            schema_version: 3,
+            schema_version: 4,
             backend: Some(sample_signoz()),
             harnesses: vec![sample_harness(HarnessId::ClaudeCode)],
+            auto_update_enabled: false,
         };
         let json = serde_json::to_string(&state).unwrap();
         let revived: AppState = serde_json::from_str(&json).unwrap();
         assert_eq!(state, revived);
+    }
+
+    #[test]
+    fn app_state_round_trips_with_auto_update_enabled_true() {
+        let state = AppState {
+            schema_version: 4,
+            backend: None,
+            harnesses: Vec::new(),
+            auto_update_enabled: true,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"autoUpdateEnabled\":true"));
+        let revived: AppState = serde_json::from_str(&json).unwrap();
+        assert!(revived.auto_update_enabled);
     }
 
     #[test]
@@ -565,9 +598,10 @@ mod tests {
     fn save_then_load_is_identity() {
         let dir = tempfile::tempdir().unwrap();
         let original = AppState {
-            schema_version: 3,
+            schema_version: 4,
             backend: Some(sample_signoz()),
             harnesses: vec![sample_harness(HarnessId::GeminiCli)],
+            auto_update_enabled: false,
         };
         save_to_dir(dir.path(), &original).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();
@@ -591,11 +625,13 @@ mod tests {
     }
 
     #[test]
-    fn v2_state_is_loaded_and_migrated_to_v3() {
-        // Sprint 8 introduced TrovePatch.lastWrittenRegionPayload. v2
-        // documents predate it and must load cleanly: serde defaults
-        // backfill the missing field as "", and the loader re-stamps
-        // schema_version to 3 so the next save persists v3 to disk.
+    fn v2_state_is_loaded_and_migrated_to_current() {
+        // Sprint 8 introduced TrovePatch.lastWrittenRegionPayload. Sprint
+        // 10 added AppState.autoUpdateEnabled. v2 documents predate both
+        // and must load cleanly: serde defaults backfill missing fields
+        // (`""` for the patch payload, `false` for autoUpdateEnabled),
+        // and the loader re-stamps schema_version to v4 so the next save
+        // persists v4 to disk.
         let dir = tempfile::tempdir().unwrap();
         let v2_doc = br#"{
             "schemaVersion": 2,
@@ -620,15 +656,17 @@ mod tests {
         }"#;
         std::fs::write(dir.path().join("state.json"), v2_doc).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
-        assert_eq!(state.schema_version, 3);
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(state.schema_version, 4);
         assert_eq!(state.harnesses.len(), 1);
         assert_eq!(state.harnesses[0].trove_patch.last_written_region_payload, "");
+        assert!(!state.auto_update_enabled);
     }
 
     #[test]
-    fn v2_state_round_trips_to_v3_on_disk_after_save() {
-        // Re-saving a migrated state must persist schemaVersion: 3 with
-        // the new field present. Confirms the in-memory migration is
+    fn v2_state_round_trips_to_current_on_disk_after_save() {
+        // Re-saving a migrated state must persist the current schemaVersion
+        // with the new field present. Confirms the in-memory migration is
         // reflected back to disk on the next save.
         let dir = tempfile::tempdir().unwrap();
         let v2_doc = br#"{
@@ -640,7 +678,79 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 3"));
+        assert!(on_disk.contains("\"schemaVersion\": 4"));
+        assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
+    }
+
+    #[test]
+    fn v3_state_is_migrated_to_v4_with_auto_update_off() {
+        // Sprint 10 added AppState.autoUpdateEnabled. v3 documents from
+        // Sprint 8/9 lack the field — serde(default) backfills `false` and
+        // the loader re-stamps schema_version to v4.
+        let dir = tempfile::tempdir().unwrap();
+        let v3_doc = br#"{
+            "schemaVersion": 3,
+            "backend": null,
+            "harnesses": [
+                {
+                    "id": "gemini-cli",
+                    "enabled": true,
+                    "configPath": "/home/u/.gemini/settings.json",
+                    "lastPatchedAt": "2026-05-08T00:00:00Z",
+                    "trovePatch": {
+                        "managedBlockHash": "cccc",
+                        "fileHashAtLastWrite": "dddd",
+                        "format": "json",
+                        "lastWrittenRegionPayload": "{\"telemetry\":{}}"
+                    },
+                    "options": {
+                        "logUserPrompts": false,
+                        "customAttributes": {}
+                    }
+                }
+            ]
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v3_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, 4);
+        assert!(!state.auto_update_enabled);
+        assert_eq!(state.harnesses.len(), 1);
+        // Field carried through migration unchanged.
+        assert_eq!(
+            state.harnesses[0].trove_patch.last_written_region_payload,
+            "{\"telemetry\":{}}"
+        );
+    }
+
+    #[test]
+    fn v3_state_round_trips_to_v4_on_disk_after_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let v3_doc = br#"{
+            "schemaVersion": 3,
+            "backend": null,
+            "harnesses": []
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v3_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+        assert!(on_disk.contains("\"schemaVersion\": 4"));
+        assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
+    }
+
+    #[test]
+    fn v4_state_with_auto_update_true_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let v4_doc = br#"{
+            "schemaVersion": 4,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": true
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v4_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, 4);
+        assert!(state.auto_update_enabled);
     }
 
     #[test]
