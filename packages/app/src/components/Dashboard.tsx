@@ -185,7 +185,7 @@ function BackendBanner({
 function BackendDetail({ backend }: { backend: Backend }): JSX.Element | null {
   switch (backend.kind) {
     case 'signoz':
-      return <span className="text-slate-500"> ({backend.region})</span>;
+      return <span className="text-slate-500"> ({backend.endpoint})</span>;
     case 'honeycomb':
       return <span className="text-slate-500"> ({backend.dataset})</span>;
     case 'datadog':

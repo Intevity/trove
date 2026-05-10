@@ -70,7 +70,11 @@ describe('Backend', () => {
   const ref: SecretRef = { service: 'trove', account: 'k' };
 
   it('parses a SigNoz backend', () => {
-    const parsed = Backend.parse({ kind: 'signoz', region: 'us', ingestionKey: ref });
+    const parsed = Backend.parse({
+      kind: 'signoz',
+      endpoint: 'ingest.us.signoz.cloud:443',
+      ingestionKey: ref,
+    });
     expect(parsed.kind).toBe('signoz');
   });
 
@@ -128,7 +132,11 @@ describe('Backend', () => {
 describe('BackendDraft', () => {
   it('parses each variant with raw string secrets', () => {
     expect(
-      BackendDraft.parse({ kind: 'signoz', region: 'us', ingestionKey: 'raw-secret' }).kind,
+      BackendDraft.parse({
+        kind: 'signoz',
+        endpoint: 'ingest.us.signoz.cloud:443',
+        ingestionKey: 'raw-secret',
+      }).kind,
     ).toBe('signoz');
     expect(
       BackendDraft.parse({ kind: 'honeycomb', team: 'raw-secret', dataset: 'main' }).kind,
@@ -160,7 +168,13 @@ describe('BackendDraft', () => {
   });
 
   it('rejects an empty raw secret', () => {
-    expect(() => BackendDraft.parse({ kind: 'signoz', region: 'us', ingestionKey: '' })).toThrow();
+    expect(() =>
+      BackendDraft.parse({
+        kind: 'signoz',
+        endpoint: 'ingest.us.signoz.cloud:443',
+        ingestionKey: '',
+      }),
+    ).toThrow();
   });
 
   it('rejects an unknown draft kind', () => {

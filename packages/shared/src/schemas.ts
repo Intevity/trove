@@ -26,7 +26,7 @@ export type SecretRef = z.infer<typeof SecretRef>;
 export const Backend = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('signoz'),
-    region: z.string().min(1),
+    endpoint: z.string().min(1),
     ingestionKey: SecretRef,
   }),
   z.object({
@@ -69,7 +69,7 @@ export type Backend = z.infer<typeof Backend>;
 export const BackendDraft = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('signoz'),
-    region: z.string().min(1),
+    endpoint: z.string().min(1),
     ingestionKey: z.string().min(1),
   }),
   z.object({

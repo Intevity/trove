@@ -166,7 +166,7 @@ export async function installTauriMock(
         const draft = args['draft'] as Record<string, unknown>;
         const backend: Record<string, unknown> = { kind: draft['kind'] };
         if (draft['kind'] === 'signoz') {
-          backend['region'] = draft['region'];
+          backend['endpoint'] = draft['endpoint'];
           backend['ingestionKey'] = {
             service: 'trove',
             account: 'backend.signoz.ingestion-key',

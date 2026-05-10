@@ -210,12 +210,12 @@ describe('saveBackend', () => {
   it('forwards the draft and parses the persisted Backend', async () => {
     const draft = {
       kind: 'signoz' as const,
-      region: 'us-east',
+      endpoint: 'ingest.us.signoz.cloud:443',
       ingestionKey: 'raw-secret-DO-NOT-PERSIST',
     };
     const persisted = {
       kind: 'signoz' as const,
-      region: 'us-east',
+      endpoint: 'ingest.us.signoz.cloud:443',
       ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
     };
     invokeMock.mockResolvedValueOnce(persisted);

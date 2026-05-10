@@ -24,7 +24,7 @@ describe('BackendWizard', () => {
       if (cmd === 'save_backend') {
         return Promise.resolve({
           kind: 'signoz',
-          region: 'us-east',
+          endpoint: 'ingest.us.signoz.cloud:443',
           ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
         });
       }
@@ -39,7 +39,7 @@ describe('BackendWizard', () => {
     // Step 1: pick SigNoz.
     fireEvent.click(screen.getByTestId('preset-signoz'));
 
-    // Step 2: enter the ingestion key (region is pre-filled).
+    // Step 2: enter the ingestion key (endpoint is pre-filled).
     fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
       target: { value: 'sk-ingest-test' },
     });
@@ -59,7 +59,11 @@ describe('BackendWizard', () => {
     // test_export was called with no args.
     const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'save_backend');
     expect(saveCall?.[1]).toEqual({
-      draft: { kind: 'signoz', region: 'us-east', ingestionKey: 'sk-ingest-test' },
+      draft: {
+        kind: 'signoz',
+        endpoint: 'ingest.us.signoz.cloud:443',
+        ingestionKey: 'sk-ingest-test',
+      },
     });
     expect(invokeMock.mock.calls.find((c) => c[0] === 'test_export')).toBeDefined();
   });
@@ -69,7 +73,7 @@ describe('BackendWizard', () => {
       if (cmd === 'save_backend') {
         return Promise.resolve({
           kind: 'signoz',
-          region: 'us-east',
+          endpoint: 'ingest.us.signoz.cloud:443',
           ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
         });
       }

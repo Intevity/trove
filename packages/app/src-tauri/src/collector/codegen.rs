@@ -93,13 +93,13 @@ pub fn render_with(
 ) -> Result<RenderedCollector, RenderError> {
     match backend {
         Backend::Signoz {
-            region,
+            endpoint,
             ingestion_key,
         } => {
             let mut env = HashMap::new();
             env.insert(
                 "TROVE_SIGNOZ_ENDPOINT".to_string(),
-                Zeroizing::new(format!("ingest.{region}.signoz.cloud:443")),
+                Zeroizing::new(endpoint.clone()),
             );
             env.insert(
                 "TROVE_SIGNOZ_INGESTION_KEY".to_string(),

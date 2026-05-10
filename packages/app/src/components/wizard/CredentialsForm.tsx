@@ -18,7 +18,7 @@ export interface CredentialsFormProps {
 function emptyDraft(kind: Kind): BackendDraft {
   switch (kind) {
     case 'signoz':
-      return { kind, region: 'us-east', ingestionKey: '' };
+      return { kind, endpoint: 'ingest.us.signoz.cloud:443', ingestionKey: '' };
     case 'honeycomb':
       return { kind, team: '', dataset: '' };
     case 'grafana-cloud':
@@ -32,14 +32,35 @@ function emptyDraft(kind: Kind): BackendDraft {
   }
 }
 
+/** Normalize fields that users commonly paste in inconvenient forms.
+ *  SigNoz Cloud's docs sometimes show the ingestion endpoint as a full
+ *  `https://...` URL, but the OTLP/gRPC exporter expects `host:port`.
+ *  Strip the scheme and any trailing slashes here so a paste-and-go
+ *  flow works. */
+function canonicalizeDraft(draft: BackendDraft): BackendDraft {
+  if (draft.kind === 'signoz') {
+    const endpoint = draft.endpoint
+      .trim()
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/+$/, '');
+    return { ...draft, endpoint };
+  }
+  return draft;
+}
+
 /** Per-kind validator. Returns the first user-facing error string, or
  *  null when the draft is ready to submit. */
 function validate(draft: BackendDraft): string | null {
   switch (draft.kind) {
-    case 'signoz':
-      if (!draft.region.trim()) return 'Region is required';
+    case 'signoz': {
+      const ep = draft.endpoint.trim();
+      if (!ep) return 'Endpoint is required';
+      if (!/^[A-Za-z0-9.-]+:\d+$/.test(ep)) {
+        return 'Endpoint must look like ingest.us.signoz.cloud:443';
+      }
       if (!draft.ingestionKey.trim()) return 'Ingestion key is required';
       return null;
+    }
     case 'honeycomb':
       if (!draft.team.trim()) return 'Team API key is required';
       if (!draft.dataset.trim()) return 'Dataset is required';
@@ -81,13 +102,14 @@ export function CredentialsForm({ kind, onSubmit, onBack }: CredentialsFormProps
 
   const handleSubmit = (e: React.FormEvent): void => {
     e.preventDefault();
-    const message = validate(draft);
+    const canonical = canonicalizeDraft(draft);
+    const message = validate(canonical);
     if (message !== null) {
       setError(message);
       return;
     }
     setError(null);
-    onSubmit(draft);
+    onSubmit(canonical);
   };
 
   return (
@@ -142,11 +164,12 @@ function renderFields(
       return (
         <>
           <TextField
-            label="Region"
-            value={draft.region}
-            onChange={(v) => setDraft({ ...draft, region: v })}
-            placeholder="us-east"
-            testId="signoz-region"
+            label="OTLP endpoint"
+            value={draft.endpoint}
+            onChange={(v) => setDraft({ ...draft, endpoint: v })}
+            placeholder="ingest.us.signoz.cloud:443"
+            testId="signoz-endpoint"
+            helper={<span>Copy this from SigNoz Cloud → Settings → Ingestion Settings.</span>}
           />
           <PasswordField
             label="Ingestion key"
@@ -275,12 +298,14 @@ function TextField({
   onChange,
   placeholder,
   testId,
+  helper,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   testId: string;
+  helper?: React.ReactNode;
 }): JSX.Element {
   return (
     <label className="block">
@@ -293,6 +318,9 @@ function TextField({
         data-testid={testId}
         className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900"
       />
+      {helper ? (
+        <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{helper}</span>
+      ) : null}
     </label>
   );
 }

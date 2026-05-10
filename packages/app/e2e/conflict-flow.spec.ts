@@ -43,7 +43,7 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
       schemaVersion: 4,
       backend: {
         kind: 'signoz',
-        region: 'us-east',
+        endpoint: 'ingest.us.signoz.cloud:443',
         ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
       },
       harnesses: [],
@@ -95,7 +95,7 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
       schemaVersion: 4,
       backend: {
         kind: 'signoz',
-        region: 'us-east',
+        endpoint: 'ingest.us.signoz.cloud:443',
         ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
       },
       harnesses: [],
