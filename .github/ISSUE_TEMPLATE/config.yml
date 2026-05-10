@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/Intevity/trove/discussions
+    about: For usage questions, configuration help, or general discussion. File an issue only for bug reports and feature requests.

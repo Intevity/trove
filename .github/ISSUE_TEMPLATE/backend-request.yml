@@ -1,0 +1,62 @@
+name: New backend preset
+description: Request a first-class wizard preset for an OTLP-compatible backend.
+labels: [enhancement, backend-request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Trove already supports any OTLP-compatible backend via the
+        **Generic OTLP** option in the wizard. File this issue when you'd
+        like a first-class preset (one-click setup, auth UI, etc.).
+
+        See [`documentation/adding-a-backend.md`](https://github.com/Intevity/trove/blob/main/documentation/adding-a-backend.md)
+        for the contract.
+  - type: input
+    id: backend-name
+    attributes:
+      label: Backend name
+      placeholder: e.g. New Relic, Dynatrace, Last9, Highlight, ClickHouse
+    validations:
+      required: true
+  - type: input
+    id: docs-url
+    attributes:
+      label: OTLP docs URL
+      description: The vendor's OTLP-ingest documentation.
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Default OTLP protocol
+      options:
+        - HTTP (4318)
+        - gRPC (4317)
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: auth
+    attributes:
+      label: Authentication pattern
+      description: |
+        How do users authenticate? Bearer token, API key header, mTLS,
+        signed URL, etc. If multiple, name them.
+    validations:
+      required: true
+  - type: textarea
+    id: regions
+    attributes:
+      label: Regions / instances
+      description: |
+        Does the backend have multiple regional endpoints
+        (e.g. Honeycomb's `api.honeycomb.io` vs `api.eu1.honeycomb.io`)?
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes
+      description: Anything else that would help us scope the preset.
+    validations:
+      required: false

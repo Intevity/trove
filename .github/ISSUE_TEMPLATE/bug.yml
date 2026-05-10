@@ -1,0 +1,87 @@
+name: Bug report
+description: Something Trove did or didn't do that doesn't match what the docs say.
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing! Before submitting, please **redact any backend
+        credentials, API keys, or prompts** from the logs you paste below —
+        Trove's collector emits to your backend, but log files may still
+        carry sensitive context.
+  - type: dropdown
+    id: harness
+    attributes:
+      label: Affected harness
+      description: Which harness adapter is involved? Pick "n/a" for non-adapter bugs (UI, sidecar, wizard).
+      options:
+        - n/a (not adapter-related)
+        - claude-code
+        - gemini-cli
+        - codex-cli
+        - qwen-code
+        - opencode
+        - cursor-ide
+        - cursor-cli
+        - cline
+        - aider
+        - copilot-cli
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x86_64)
+        - Linux (aarch64)
+        - Windows (x86_64)
+    validations:
+      required: true
+  - type: input
+    id: trove-version
+    attributes:
+      label: Trove version
+      description: Find under "About Trove" in the tray menu, or run `trove --version` if you've installed the CLI sidecar.
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: harness-version
+    attributes:
+      label: Harness version
+      description: Output of e.g. `claude --version`, `gemini --version`, etc.
+    validations:
+      required: false
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What you did, what you expected, what happened instead.
+      placeholder: |
+        1. Open Trove and click "Detect harnesses"
+        2. Toggle Claude Code on
+        3. Run `claude` in a fresh shell
+        4. Expected: telemetry shows up in the dashboard. Actually: ...
+    validations:
+      required: true
+  - type: textarea
+    id: collector-log
+    attributes:
+      label: Collector log (redacted)
+      description: |
+        Paste the relevant tail of `~/.local/state/trove/collector.log`
+        (Linux/macOS) or `%LOCALAPPDATA%\trove\collector.log` (Windows).
+        Strip credentials and prompt content first.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, related issues, hunches.
+    validations:
+      required: false

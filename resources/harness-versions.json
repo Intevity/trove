@@ -1,0 +1,65 @@
+{
+  "_doc": "Schema-target version per harness. The nightly version-drift detector compares each pinnedVersion against the latest published version reported by npm / PyPI / GitHub releases; a newer upstream opens an `adapter-regression` issue. Bumping pinnedVersion is the manual maintainer action after re-validating the adapter golden-file suite against the new version. Source values: 'npm', 'pypi', or 'github' (owner/repo). Set 'active': false to exclude an entry from the drift gate while keeping it tracked.",
+  "harnesses": {
+    "claude-code": {
+      "source": "npm",
+      "package": "@anthropic-ai/claude-code",
+      "pinnedVersion": "2.0.0",
+      "active": true
+    },
+    "gemini-cli": {
+      "source": "npm",
+      "package": "@google/gemini-cli",
+      "pinnedVersion": "0.1.0",
+      "active": true
+    },
+    "codex-cli": {
+      "source": "npm",
+      "package": "@openai/codex",
+      "pinnedVersion": "0.20.0",
+      "active": true
+    },
+    "qwen-code": {
+      "source": "npm",
+      "package": "@qwen-code/qwen-code",
+      "pinnedVersion": "0.1.0",
+      "active": false
+    },
+    "opencode": {
+      "source": "npm",
+      "package": "opencode-ai",
+      "pinnedVersion": "0.1.0",
+      "active": false
+    },
+    "aider": {
+      "source": "pypi",
+      "package": "aider-chat",
+      "pinnedVersion": "0.85.0",
+      "active": true
+    },
+    "cursor-ide": {
+      "source": "github",
+      "package": "getcursor/cursor",
+      "pinnedVersion": "0.45.0",
+      "active": false
+    },
+    "cursor-cli": {
+      "source": "github",
+      "package": "getcursor/cursor",
+      "pinnedVersion": "0.45.0",
+      "active": false
+    },
+    "cline": {
+      "source": "github",
+      "package": "cline/cline",
+      "pinnedVersion": "3.0.0",
+      "active": false
+    },
+    "copilot-cli": {
+      "source": "github",
+      "package": "github/gh-copilot",
+      "pinnedVersion": "1.0.0",
+      "active": false
+    }
+  }
+}
