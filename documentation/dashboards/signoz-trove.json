@@ -1,0 +1,142 @@
+{
+  "title": "Trove — AI Coding Telemetry",
+  "description": "Cross-harness AI-coding telemetry forwarded by Trove. All widgets group by trove.source.",
+  "tags": ["trove", "ai-coding", "otlp"],
+  "layout": [
+    { "i": "1", "x": 0, "y": 0, "w": 6, "h": 3 },
+    { "i": "2", "x": 6, "y": 0, "w": 6, "h": 3 },
+    { "i": "3", "x": 0, "y": 3, "w": 6, "h": 3 },
+    { "i": "4", "x": 6, "y": 3, "w": 6, "h": 3 },
+    { "i": "5", "x": 0, "y": 6, "w": 12, "h": 4 }
+  ],
+  "variables": {},
+  "widgets": [
+    {
+      "id": "1",
+      "title": "Sessions per minute",
+      "description": "Rate of *.session.count increments grouped by trove.source",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "metrics",
+              "queryName": "A",
+              "aggregateOperator": "rate",
+              "aggregateAttribute": { "key": "session.count" },
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "groupBy": [{ "key": "trove.source", "type": "resource" }],
+              "stepInterval": 60
+            }
+          ]
+        }
+      },
+      "yAxisUnit": "ops"
+    },
+    {
+      "id": "2",
+      "title": "Tool calls per minute",
+      "description": "Rate of *.tool.call.count increments grouped by trove.source",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "metrics",
+              "queryName": "A",
+              "aggregateOperator": "rate",
+              "aggregateAttribute": { "key": "tool.call.count" },
+              "timeAggregation": "rate",
+              "spaceAggregation": "sum",
+              "groupBy": [{ "key": "trove.source", "type": "resource" }],
+              "stepInterval": 60
+            }
+          ]
+        }
+      },
+      "yAxisUnit": "ops"
+    },
+    {
+      "id": "3",
+      "title": "Token spend over time",
+      "description": "Sum of *.token.usage (input + output) grouped by trove.source",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "metrics",
+              "queryName": "A",
+              "aggregateOperator": "sum",
+              "aggregateAttribute": { "key": "token.usage" },
+              "spaceAggregation": "sum",
+              "groupBy": [{ "key": "trove.source", "type": "resource" }],
+              "stepInterval": 300
+            }
+          ]
+        }
+      },
+      "yAxisUnit": "short"
+    },
+    {
+      "id": "4",
+      "title": "Error rate",
+      "description": "Ratio of *.error.count to *.api_request.count grouped by trove.source",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "metrics",
+              "queryName": "A",
+              "aggregateOperator": "rate",
+              "aggregateAttribute": { "key": "error.count" },
+              "spaceAggregation": "sum",
+              "groupBy": [{ "key": "trove.source", "type": "resource" }],
+              "stepInterval": 300
+            },
+            {
+              "dataSource": "metrics",
+              "queryName": "B",
+              "aggregateOperator": "rate",
+              "aggregateAttribute": { "key": "api_request.count" },
+              "spaceAggregation": "sum",
+              "groupBy": [{ "key": "trove.source", "type": "resource" }],
+              "stepInterval": 300
+            }
+          ],
+          "queryFormulas": [{ "expression": "A / B", "queryName": "F1" }]
+        }
+      },
+      "yAxisUnit": "percentunit"
+    },
+    {
+      "id": "5",
+      "title": "Top harnesses by activity",
+      "description": "Total session count over the time range grouped by trove.source",
+      "panelTypes": "table",
+      "query": {
+        "queryType": "builder",
+        "builder": {
+          "queryData": [
+            {
+              "dataSource": "metrics",
+              "queryName": "A",
+              "aggregateOperator": "sum_rate",
+              "aggregateAttribute": { "key": "session.count" },
+              "spaceAggregation": "sum",
+              "groupBy": [{ "key": "trove.source", "type": "resource" }],
+              "limit": 10,
+              "orderBy": [{ "columnName": "value", "order": "desc" }]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

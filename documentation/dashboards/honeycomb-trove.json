@@ -1,0 +1,67 @@
+{
+  "name": "Trove — AI Coding Telemetry",
+  "description": "Cross-harness AI-coding telemetry forwarded by Trove. All queries break down by trove.source.",
+  "style": "list",
+  "column_layout": "multi",
+  "queries": [
+    {
+      "caption": "Sessions per minute",
+      "query_style": "graph",
+      "dataset": "trove",
+      "query": {
+        "calculations": [{ "op": "RATE_SUM", "column": "session.count" }],
+        "breakdowns": ["trove.source"],
+        "time_range": 21600,
+        "granularity": 60
+      }
+    },
+    {
+      "caption": "Tool calls per minute",
+      "query_style": "graph",
+      "dataset": "trove",
+      "query": {
+        "calculations": [{ "op": "RATE_SUM", "column": "tool.call.count" }],
+        "breakdowns": ["trove.source"],
+        "time_range": 21600,
+        "granularity": 60
+      }
+    },
+    {
+      "caption": "Token spend over time",
+      "query_style": "graph",
+      "dataset": "trove",
+      "query": {
+        "calculations": [{ "op": "SUM", "column": "token.usage" }],
+        "breakdowns": ["trove.source"],
+        "time_range": 21600,
+        "granularity": 300
+      }
+    },
+    {
+      "caption": "Error rate",
+      "query_style": "graph",
+      "dataset": "trove",
+      "query": {
+        "calculations": [
+          { "op": "RATE_SUM", "column": "error.count" },
+          { "op": "RATE_SUM", "column": "api_request.count" }
+        ],
+        "breakdowns": ["trove.source"],
+        "time_range": 21600,
+        "granularity": 300
+      }
+    },
+    {
+      "caption": "Top harnesses by activity",
+      "query_style": "table",
+      "dataset": "trove",
+      "query": {
+        "calculations": [{ "op": "SUM", "column": "session.count" }],
+        "breakdowns": ["trove.source"],
+        "orders": [{ "op": "SUM", "column": "session.count", "order": "descending" }],
+        "limit": 10,
+        "time_range": 21600
+      }
+    }
+  ]
+}
