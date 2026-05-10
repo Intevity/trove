@@ -8,6 +8,7 @@ import { useDetectedHarnesses } from '../hooks/useDetectedHarnesses.js';
 import { useMetricsSnapshot } from '../hooks/useMetricsSnapshot.js';
 import { deriveOverallHealth } from '../lib/health.js';
 import { TroveIpcError, revertPatch, setAutoUpdateEnabled } from '../lib/ipc.js';
+import { DiagnosticsPanel } from './Diagnostics/DiagnosticsPanel.js';
 import { HarnessList } from './HarnessList.js';
 import { LogsPanel } from './LogsPanel.js';
 import { OverallHealthBadge } from './OverallHealthBadge.js';
@@ -85,6 +86,8 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
   return (
     <div data-testid="dashboard" className="flex flex-col gap-4">
       <OverallHealthBadge health={health} detail={detail} />
+
+      <DiagnosticsPanel appState={appState} state={status?.state ?? null} metrics={snapshot} />
 
       {appState.backend ? (
         <BackendBanner backend={appState.backend} onChange={onChangeBackend} />
