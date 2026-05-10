@@ -131,12 +131,18 @@ pub async fn test_export_at(
             OtlpEmitError::Transport { endpoint, source } if source.is_timeout() => {
                 TestExportResult {
                     status: TestExportStatus::Timeout,
-                    detail: format!("HTTP request to {endpoint} timed out: {source}"),
+                    detail: append_log_trailer(
+                        format!("HTTP request to {endpoint} timed out: {source}"),
+                        log_path,
+                    ),
                 }
             }
             OtlpEmitError::Transport { endpoint, source } => TestExportResult {
                 status: TestExportStatus::Failed,
-                detail: format!("HTTP request to {endpoint} failed: {source}"),
+                detail: append_log_trailer(
+                    format!("HTTP request to {endpoint} failed: {source}"),
+                    log_path,
+                ),
             },
             OtlpEmitError::NonOk { status, .. } => TestExportResult {
                 status: TestExportStatus::Failed,
@@ -167,6 +173,69 @@ pub async fn test_export_at(
 
 fn current_log_size(path: &Path) -> u64 {
     std::fs::metadata(path).map_or(0, |m| m.len())
+}
+
+/// Maximum number of bytes from the end of `collector.log` we examine
+/// when surfacing diagnostic context on a transport failure.
+const LOG_TAIL_BYTES: usize = 16 * 1024;
+/// Cap on how many error lines we surface in the wizard's failure
+/// detail. Keeps the message short while still giving users enough
+/// context to diagnose a misconfiguration.
+const LOG_TAIL_MAX_LINES: usize = 5;
+
+/// Read up to the last `LOG_TAIL_BYTES` of `log_path`, return the most
+/// recent lines whose lowercase form contains `"error"` or which match
+/// any [`FAILURE_MARKERS`] entry. Bounded to [`LOG_TAIL_MAX_LINES`].
+/// Used to surface "why isn't the local collector reachable?" context
+/// when the synthetic-span POST cannot connect to 127.0.0.1:4318.
+fn tail_log_errors(log_path: &Path) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(log_path) else {
+        return Vec::new();
+    };
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    let start = bytes.len().saturating_sub(LOG_TAIL_BYTES);
+    // Step forward from `start` until we land on a UTF-8 char boundary
+    // so the slice decodes cleanly even on a mid-codepoint cut.
+    let mut safe_start = start;
+    while safe_start < bytes.len() && (bytes[safe_start] & 0b1100_0000) == 0b1000_0000 {
+        safe_start += 1;
+    }
+    let Ok(tail) = std::str::from_utf8(&bytes[safe_start..]) else {
+        return Vec::new();
+    };
+    let mut errors: Vec<String> = Vec::new();
+    for line in tail.lines() {
+        let lower = line.to_ascii_lowercase();
+        let is_error = lower.contains("error")
+            || FAILURE_MARKERS.iter().any(|m| line.contains(m));
+        if is_error {
+            errors.push(line.chars().take(240).collect());
+        }
+    }
+    if errors.len() > LOG_TAIL_MAX_LINES {
+        let drop = errors.len() - LOG_TAIL_MAX_LINES;
+        errors.drain(0..drop);
+    }
+    errors
+}
+
+/// Append a "Recent collector log:" trailer to `detail` when
+/// [`tail_log_errors`] finds anything. No-op when the log is missing,
+/// empty, or contains no error lines.
+fn append_log_trailer(detail: String, log_path: &Path) -> String {
+    let lines = tail_log_errors(log_path);
+    if lines.is_empty() {
+        return detail;
+    }
+    let mut out = detail;
+    out.push_str("\n\nRecent collector log:");
+    for line in lines {
+        out.push_str("\n> ");
+        out.push_str(&line);
+    }
+    out
 }
 
 /// Read `log_path` from `since` to current length and return the first
@@ -270,6 +339,80 @@ mod tests {
         std::fs::write(&path, &huge).unwrap();
         let line = scan_log_for_marker(&path, 0).unwrap();
         assert!(line.len() <= 240);
+    }
+
+    #[test]
+    fn tail_log_errors_returns_empty_when_log_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent.log");
+        assert!(tail_log_errors(&path).is_empty());
+    }
+
+    #[test]
+    fn tail_log_errors_returns_empty_when_no_error_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        std::fs::write(&path, b"info\tstarted\ninfo\thealth ok\n").unwrap();
+        assert!(tail_log_errors(&path).is_empty());
+    }
+
+    #[test]
+    fn tail_log_errors_surfaces_error_and_marker_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        std::fs::write(
+            &path,
+            b"info\tstarted\nerror\texporter dial tcp: connection refused\n\
+              info\tnoise\nFailed to send 5 spans to backend\n",
+        )
+        .unwrap();
+        let lines = tail_log_errors(&path);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("connection refused"));
+        assert!(lines[1].contains("Failed to send"));
+    }
+
+    #[test]
+    fn tail_log_errors_caps_at_max_lines_keeping_most_recent() {
+        use std::fmt::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        let mut buf = String::new();
+        for i in 0..20 {
+            writeln!(buf, "error\tfailure number {i}").unwrap();
+        }
+        std::fs::write(&path, buf.as_bytes()).unwrap();
+        let lines = tail_log_errors(&path);
+        assert_eq!(lines.len(), LOG_TAIL_MAX_LINES);
+        // Last line in the file must be in the surfaced set.
+        assert!(lines.last().unwrap().contains("number 19"));
+    }
+
+    #[test]
+    fn append_log_trailer_is_noop_when_no_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        std::fs::write(&path, b"info\tquiet\n").unwrap();
+        let detail = append_log_trailer("HTTP request failed".to_string(), &path);
+        assert_eq!(detail, "HTTP request failed");
+    }
+
+    #[test]
+    fn append_log_trailer_appends_recent_errors_under_preamble() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        std::fs::write(
+            &path,
+            b"info\tstartup\nerror\texporter dial tcp 127.0.0.1:4317: connection refused\n",
+        )
+        .unwrap();
+        let detail = append_log_trailer(
+            "HTTP request to http://127.0.0.1:4318/v1/traces failed: connect refused".to_string(),
+            &path,
+        );
+        assert!(detail.starts_with("HTTP request to http://127.0.0.1:4318/v1/traces failed: connect refused"));
+        assert!(detail.contains("Recent collector log:"));
+        assert!(detail.contains("> error\texporter dial tcp 127.0.0.1:4317: connection refused"));
     }
 
     #[tokio::test]

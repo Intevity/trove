@@ -432,7 +432,7 @@ async fn honeycomb_preset_dials_through_stub() {
 #[test]
 fn signoz_preset_renders_canonical_yaml_and_env_keys() {
     let backend = Backend::Signoz {
-        region: "us".into(),
+        endpoint: "ingest.us.signoz.cloud:443".into(),
         ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
     };
     let rendered = render(&backend);

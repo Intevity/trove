@@ -49,7 +49,7 @@ fn signoz_yaml_matches_checked_in_template_byte_for_byte() {
     const TEMPLATE: &str =
         include_str!("../../../collector-presets/templates/signoz.yaml");
     let backend = Backend::Signoz {
-        region: "us-east".into(),
+        endpoint: "ingest.us.signoz.cloud:443".into(),
         ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
     };
     let r = render(&backend);
@@ -59,7 +59,7 @@ fn signoz_yaml_matches_checked_in_template_byte_for_byte() {
 #[test]
 fn signoz_env_has_endpoint_and_ingestion_key() {
     let backend = Backend::Signoz {
-        region: "us-east".into(),
+        endpoint: "ingest.us.signoz.cloud:443".into(),
         ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
     };
     let r = render(&backend);
@@ -72,7 +72,7 @@ fn signoz_env_has_endpoint_and_ingestion_key() {
     );
     assert_eq!(
         env_value(&r, "TROVE_SIGNOZ_ENDPOINT"),
-        "ingest.us-east.signoz.cloud:443",
+        "ingest.us.signoz.cloud:443",
     );
     assert_eq!(
         env_value(&r, "TROVE_SIGNOZ_INGESTION_KEY"),
@@ -240,7 +240,7 @@ fn otelcol_passthrough_resolver_is_never_called() {
 #[test]
 fn keychain_failure_propagates_as_render_error() {
     let backend = Backend::Signoz {
-        region: "us-east".into(),
+        endpoint: "ingest.us.signoz.cloud:443".into(),
         ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
     };
     let result = render_with(&backend, &|account| {

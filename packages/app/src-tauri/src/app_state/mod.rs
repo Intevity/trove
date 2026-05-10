@@ -84,7 +84,7 @@ pub enum OtlpProtocol {
 pub enum Backend {
     #[serde(rename_all = "camelCase")]
     Signoz {
-        region: String,
+        endpoint: String,
         ingestion_key: SecretRef,
     },
     #[serde(rename_all = "camelCase")]
@@ -129,7 +129,7 @@ pub enum Backend {
 pub enum BackendDraft {
     #[serde(rename_all = "camelCase")]
     Signoz {
-        region: String,
+        endpoint: String,
         ingestion_key: String,
     },
     #[serde(rename_all = "camelCase")]
@@ -255,8 +255,48 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         // v4 to disk and the matching loader hits the v4 branch from then
         // on.
         2..=4 => {
-            let mut state: AppState =
+            // Field-shape migration: SigNoz `region` → `endpoint`. The
+            // wizard used to ask for a region code and codegen built
+            // `ingest.{region}.signoz.cloud:443`. SigNoz Cloud actually
+            // hands users a full ingestion URL, so we now collect that
+            // verbatim. Pre-existing state.json files persisted the old
+            // `region` field; reproduce the old format string exactly so
+            // a user upgrading sees the same hostname they had before
+            // (auto-recovery rule: don't silently change meaning).
+            // Independent of `schemaVersion` because the change is a
+            // field rename within one discriminated-union variant; a
+            // version bump would force older clients to refuse files
+            // that round-trip through this loader cleanly.
+            let mut value: serde_json::Value =
                 serde_json::from_slice(&bytes).map_err(|e| AppStateError::Parse {
+                    reason: e.to_string(),
+                })?;
+            if let Some(backend) = value
+                .get_mut("backend")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                let is_signoz = backend
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("signoz");
+                if is_signoz
+                    && backend.contains_key("region")
+                    && !backend.contains_key("endpoint")
+                {
+                    let region = backend
+                        .remove("region")
+                        .and_then(|v| v.as_str().map(String::from))
+                        .unwrap_or_default();
+                    backend.insert(
+                        "endpoint".to_string(),
+                        serde_json::Value::String(format!(
+                            "ingest.{region}.signoz.cloud:443"
+                        )),
+                    );
+                }
+            }
+            let mut state: AppState =
+                serde_json::from_value(value).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
                 })?;
             state.schema_version = CURRENT_SCHEMA_VERSION;
@@ -334,7 +374,7 @@ pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecre
 
     let backend = match draft {
         BackendDraft::Signoz {
-            region,
+            endpoint,
             ingestion_key,
         } => {
             let account = accounts::signoz_ingestion_key();
@@ -343,7 +383,7 @@ pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecre
                 value: zeroize::Zeroizing::new(ingestion_key),
             });
             Backend::Signoz {
-                region,
+                endpoint,
                 ingestion_key: SecretRef::for_account(account),
             }
         }
@@ -493,7 +533,7 @@ mod tests {
 
     fn sample_signoz() -> Backend {
         Backend::Signoz {
-            region: "us-east".into(),
+            endpoint: "ingest.us.signoz.cloud:443".into(),
             ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
         }
     }
@@ -528,7 +568,7 @@ mod tests {
     fn backend_serializes_kebab_case_kind_and_camel_case_fields() {
         let json = serde_json::to_string(&sample_signoz()).unwrap();
         assert!(json.contains("\"kind\":\"signoz\""));
-        assert!(json.contains("\"region\":\"us-east\""));
+        assert!(json.contains("\"endpoint\":\"ingest.us.signoz.cloud:443\""));
         assert!(json.contains("\"ingestionKey\""));
         assert!(!json.contains("ingestion_key"));
     }
@@ -817,6 +857,73 @@ mod tests {
         let nested = outer.path().join("nope/yet");
         save_to_dir(&nested, &AppState::default()).unwrap();
         assert!(nested.join("state.json").exists());
+    }
+
+    #[test]
+    fn signoz_region_state_is_migrated_to_endpoint_on_load() {
+        // Pre-fix builds persisted SigNoz as `{"kind":"signoz","region":"X",...}`
+        // and codegen built `ingest.{region}.signoz.cloud:443`. New builds
+        // collect the full endpoint string; on load, transform legacy state
+        // into the new field shape using the prior format string verbatim
+        // so the user's hostname doesn't silently change meaning.
+        let dir = tempfile::tempdir().unwrap();
+        let legacy_doc = br#"{
+            "schemaVersion": 4,
+            "backend": {
+                "kind": "signoz",
+                "region": "us",
+                "ingestionKey": {
+                    "service": "trove",
+                    "account": "backend.signoz.ingestion-key"
+                }
+            },
+            "harnesses": [],
+            "autoUpdateEnabled": false
+        }"#;
+        std::fs::write(dir.path().join("state.json"), legacy_doc).unwrap();
+
+        let state = load_from_dir(dir.path()).unwrap();
+        let Some(Backend::Signoz {
+            ref endpoint,
+            ref ingestion_key,
+        }) = state.backend
+        else {
+            panic!("expected a SigNoz backend, got {:?}", state.backend);
+        };
+        assert_eq!(endpoint, "ingest.us.signoz.cloud:443");
+        assert_eq!(ingestion_key.account, "backend.signoz.ingestion-key");
+
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+        assert!(on_disk.contains("\"endpoint\": \"ingest.us.signoz.cloud:443\""));
+        assert!(!on_disk.contains("\"region\""));
+    }
+
+    #[test]
+    fn signoz_state_already_in_endpoint_form_is_unchanged_on_load() {
+        // Idempotency: a state.json that already uses `endpoint` must load
+        // verbatim without the migration accidentally rewriting it.
+        let dir = tempfile::tempdir().unwrap();
+        let new_doc = br#"{
+            "schemaVersion": 4,
+            "backend": {
+                "kind": "signoz",
+                "endpoint": "ingest.eu.signoz.cloud:443",
+                "ingestionKey": {
+                    "service": "trove",
+                    "account": "backend.signoz.ingestion-key"
+                }
+            },
+            "harnesses": [],
+            "autoUpdateEnabled": false
+        }"#;
+        std::fs::write(dir.path().join("state.json"), new_doc).unwrap();
+
+        let state = load_from_dir(dir.path()).unwrap();
+        let Some(Backend::Signoz { ref endpoint, .. }) = state.backend else {
+            panic!("expected a SigNoz backend, got {:?}", state.backend);
+        };
+        assert_eq!(endpoint, "ingest.eu.signoz.cloud:443");
     }
 
     #[test]

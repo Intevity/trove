@@ -18,7 +18,7 @@ use trove_app::safety::sentinels::Format;
 
 fn signoz() -> Backend {
     Backend::Signoz {
-        region: "us-east".into(),
+        endpoint: "ingest.us.signoz.cloud:443".into(),
         ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
     }
 }

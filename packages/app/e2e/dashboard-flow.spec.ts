@@ -21,8 +21,8 @@ test('full first-run flow lands the dashboard in the green state', async ({ page
   await expect(page.getByTestId('backend-wizard')).toBeVisible();
   await page.getByTestId('preset-signoz').click();
 
-  // Credentials form: SigNoz region defaults to "us-east"; fill the
-  // ingestion key.
+  // Credentials form: SigNoz endpoint defaults to
+  // "ingest.us.signoz.cloud:443"; fill the ingestion key.
   await expect(page.getByTestId('credentials-form')).toBeVisible();
   await page.getByTestId('signoz-ingestion-key').fill('signoz-secret-key');
   await page.getByTestId('credentials-form-continue').click();

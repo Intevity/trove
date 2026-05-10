@@ -32,7 +32,7 @@ const SIGNOZ_STATE = {
   schemaVersion: 4,
   backend: {
     kind: 'signoz' as const,
-    region: 'us-east',
+    endpoint: 'ingest.us.signoz.cloud:443',
     ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
   },
   harnesses: [],
@@ -156,6 +156,6 @@ describe('App', () => {
     });
     const banner = screen.getByTestId('backend-banner');
     expect(banner.textContent).toContain('SigNoz Cloud');
-    expect(banner.textContent).toContain('us-east');
+    expect(banner.textContent).toContain('ingest.us.signoz.cloud:443');
   });
 });

@@ -30,7 +30,7 @@ fn save_and_read(state: &AppState) -> String {
 #[test]
 fn signoz_ingestion_key_does_not_land_in_state_json() {
     let draft = BackendDraft::Signoz {
-        region: "us-east".into(),
+        endpoint: "ingest.us.signoz.cloud:443".into(),
         ingestion_key: CANARY.into(),
     };
     let (backend, secrets) = drain_secrets_from_draft(draft);

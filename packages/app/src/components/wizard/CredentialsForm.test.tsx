@@ -8,7 +8,7 @@ describe('CredentialsForm', () => {
     const onSubmit = vi.fn();
     render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
 
-    // Region pre-filled with 'us-east'; user adds the ingestion key.
+    // Endpoint pre-filled with 'ingest.us.signoz.cloud:443'; user adds the ingestion key.
     fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
       target: { value: 'sk-ingest-test' },
     });
@@ -16,7 +16,7 @@ describe('CredentialsForm', () => {
 
     expect(onSubmit).toHaveBeenCalledWith({
       kind: 'signoz',
-      region: 'us-east',
+      endpoint: 'ingest.us.signoz.cloud:443',
       ingestionKey: 'sk-ingest-test',
     });
   });
@@ -27,6 +27,50 @@ describe('CredentialsForm', () => {
     fireEvent.click(screen.getByTestId('credentials-form-continue'));
     expect(screen.getByTestId('credentials-form-error').textContent).toMatch(/Ingestion key/);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty SigNoz endpoint', () => {
+    const onSubmit = vi.fn();
+    render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('signoz-endpoint'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('credentials-form-continue'));
+    expect(screen.getByTestId('credentials-form-error').textContent).toMatch(
+      /Endpoint is required/,
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed SigNoz endpoint that lacks a port', () => {
+    const onSubmit = vi.fn();
+    render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('signoz-endpoint'), {
+      target: { value: 'signoz.cloud' },
+    });
+    fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
+      target: { value: 'sk-ingest-test' },
+    });
+    fireEvent.click(screen.getByTestId('credentials-form-continue'));
+    expect(screen.getByTestId('credentials-form-error').textContent).toMatch(
+      /Endpoint must look like/,
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('strips an https:// scheme and trailing slash from a pasted SigNoz endpoint', () => {
+    const onSubmit = vi.fn();
+    render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('signoz-endpoint'), {
+      target: { value: 'https://ingest.eu.signoz.cloud:443/' },
+    });
+    fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
+      target: { value: 'sk-ingest-test' },
+    });
+    fireEvent.click(screen.getByTestId('credentials-form-continue'));
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: 'signoz',
+      endpoint: 'ingest.eu.signoz.cloud:443',
+      ingestionKey: 'sk-ingest-test',
+    });
   });
 
   it('toggles password fields between password and text type', () => {

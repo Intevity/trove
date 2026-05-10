@@ -46,7 +46,7 @@ function appState(opts?: { backend?: AppState['backend']; harnesses?: HarnessCon
       opts?.backend === undefined
         ? {
             kind: 'signoz',
-            region: 'us',
+            endpoint: 'ingest.us.signoz.cloud:443',
             ingestionKey: { service: 'trove', account: 'signoz-key' },
           }
         : opts.backend,
