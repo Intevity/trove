@@ -1,0 +1,59 @@
+name: New harness adapter
+description: Request support for an AI coding harness Trove doesn't yet adapt.
+labels: [enhancement, adapter-request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for harnesses Trove doesn't already support. For
+        regressions on an existing adapter, use the **Bug report** template.
+
+        Adapter contracts and the step-by-step "adding a harness" guide
+        are in [`documentation/adding-a-harness.md`](https://github.com/Intevity/trove/blob/main/documentation/adding-a-harness.md).
+  - type: input
+    id: harness-name
+    attributes:
+      label: Harness name
+      placeholder: e.g. Continue, Windsurf, Roo Code, Zed AI, JetBrains AI Assistant
+    validations:
+      required: true
+  - type: input
+    id: upstream-url
+    attributes:
+      label: Upstream URL
+      description: Project homepage / docs site / GitHub repo.
+    validations:
+      required: true
+  - type: dropdown
+    id: telemetry-path
+    attributes:
+      label: Telemetry path
+      description: How does the harness emit observability data today?
+      options:
+        - Native OTLP (configurable via env or settings file)
+        - Plugin-based (third-party plugin emits OTLP)
+        - Hooks (script-driven before/after events)
+        - Log files (no native OTLP)
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: config-shape
+    attributes:
+      label: Config-file shape
+      description: |
+        Where does the harness store its config and what file format?
+        Paste a representative excerpt if you have one.
+      placeholder: |
+        Path: ~/.continue/config.json
+        Format: JSON
+        Telemetry section: { "telemetry": { ... } }
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes
+      description: User-base estimates, integration tractability, links to upstream issues.
+    validations:
+      required: false
