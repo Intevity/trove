@@ -16,17 +16,20 @@
 //! ## Migration scaffold
 //!
 //! [`load_from_dir`] reads only `schemaVersion` from the file before
-//! parsing the rest. The current schema is version `4`. Older versions
+//! parsing the rest. The current schema is version `5`. Older versions
 //! are migrated in-place by relying on `#[serde(default)]` for fields
 //! introduced in later schemas:
-//! - v2 → v4: `TrovePatch.lastWrittenRegionPayload` (Sprint 8) defaults
+//! - v2 → v5: `TrovePatch.lastWrittenRegionPayload` (Sprint 8) defaults
 //!   to `""`; `AppState.autoUpdateEnabled` (Sprint 10) defaults to
-//!   `false`.
-//! - v3 → v4: `AppState.autoUpdateEnabled` defaults to `false`.
+//!   `false`; `AppState.identity` (Sprint 12) defaults to its
+//!   `Identity::default()` (off, auto, empty strings).
+//! - v3 → v5: `AppState.autoUpdateEnabled` defaults to `false`;
+//!   `AppState.identity` defaults to off.
+//! - v4 → v5: `AppState.identity` defaults to off.
 //!
 //! After parse, the loader re-stamps
 //! `schema_version = CURRENT_SCHEMA_VERSION` on the in-memory value so
-//! the next save persists v4 to disk. v1 was never written in the wild
+//! the next save persists v5 to disk. v1 was never written in the wild
 //! and remains an explicit error.
 
 use std::collections::BTreeMap;
@@ -45,7 +48,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 5;
 
 /// Opaque keychain handle. The actual secret never leaves the OS
 /// keychain. Mirrors `SecretRef` in `packages/shared/src/schemas.ts`.
@@ -164,12 +167,51 @@ pub struct HarnessConfig {
     pub options: ApplyOptions,
 }
 
+/// Identity attribution for outgoing telemetry. Opt-in; off by
+/// default. When enabled, the collector pipeline tags every signal
+/// with `user.name` and `user.email` resource attributes via a
+/// dynamically-rendered `resource/identity` processor. Source:
+///
+/// - `Auto`: resolve from the lowest-friction probe at runtime —
+///   detected harness configs (when one exposes identity), then git
+///   global config (`git config --global user.name/email`).
+/// - `Manual`: use the persisted [`Self::name`] / [`Self::email`]
+///   verbatim.
+///
+/// Empty resolved values cause the processor to be omitted entirely
+/// rather than tagging signals with empty strings.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Identity {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub source: IdentitySource,
+    /// User-entered override values. Read only when `source == Manual`;
+    /// retained when toggling back to `Auto` so the user does not have
+    /// to re-type after a round-trip.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub email: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IdentitySource {
+    /// Probe ladder: harness configs first, then git config.
+    #[default]
+    Auto,
+    /// Use the persisted name/email verbatim.
+    Manual,
+}
+
 /// Persisted application state. Secrets are referenced via [`SecretRef`]
 /// only. Mirrors the Zod `AppState` schema.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {
-    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `4`). Older or
+    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `5`). Older or
     /// newer values surface as [`AppStateError::UnknownSchemaVersion`].
     pub schema_version: u32,
     pub backend: Option<Backend>,
@@ -182,6 +224,12 @@ pub struct AppState {
     /// this flag set, or a click in the UI.
     #[serde(default)]
     pub auto_update_enabled: bool,
+    /// Sprint 12 — opt-in `user.name`/`user.email` attribution for
+    /// outgoing telemetry. Off by default; flipped via
+    /// `set_identity_enabled` and `set_identity_manual`. See
+    /// [`Identity`].
+    #[serde(default)]
+    pub identity: Identity,
 }
 
 impl Default for AppState {
@@ -192,6 +240,7 @@ impl Default for AppState {
             backend: None,
             harnesses: Vec::new(),
             auto_update_enabled: false,
+            identity: Identity::default(),
         }
     }
 }
@@ -246,15 +295,16 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2 → v4 / v3 → v4 migration. Sprint 8 added
+        // v2..=v5 migration. Sprint 8 added
         // `TrovePatch.lastWrittenRegionPayload` (defaults to ""); Sprint
-        // 10 added `AppState.autoUpdateEnabled` (defaults to false). Both
-        // use `#[serde(default)]`, so older documents deserialize cleanly
-        // into the v4 in-memory shape with sensible defaults. We re-stamp
+        // 10 added `AppState.autoUpdateEnabled` (defaults to false);
+        // Sprint 12 added `AppState.identity` (defaults to off). All use
+        // `#[serde(default)]`, so older documents deserialize cleanly
+        // into the v5 in-memory shape with sensible defaults. We re-stamp
         // schema_version on the returned struct so the next save persists
-        // v4 to disk and the matching loader hits the v4 branch from then
+        // v5 to disk and the matching loader hits the v5 branch from then
         // on.
-        2..=4 => {
+        2..=5 => {
             // Field-shape migration: SigNoz `region` → `endpoint`. The
             // wizard used to ask for a region code and codegen built
             // `ingest.{region}.signoz.cloud:443`. SigNoz Cloud actually
@@ -555,13 +605,17 @@ mod tests {
     }
 
     #[test]
-    fn default_is_v4_with_null_backend_no_harnesses_and_auto_update_off() {
+    fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 4);
+        assert_eq!(s.schema_version, 5);
         assert!(s.backend.is_none());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
+        assert!(!s.identity.enabled);
+        assert_eq!(s.identity.source, IdentitySource::Auto);
+        assert!(s.identity.name.is_empty());
+        assert!(s.identity.email.is_empty());
     }
 
     #[test]
@@ -603,10 +657,11 @@ mod tests {
     #[test]
     fn app_state_round_trips_through_serde() {
         let state = AppState {
-            schema_version: 4,
+            schema_version: CURRENT_SCHEMA_VERSION,
             backend: Some(sample_signoz()),
             harnesses: vec![sample_harness(HarnessId::ClaudeCode)],
             auto_update_enabled: false,
+            identity: Identity::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let revived: AppState = serde_json::from_str(&json).unwrap();
@@ -616,10 +671,11 @@ mod tests {
     #[test]
     fn app_state_round_trips_with_auto_update_enabled_true() {
         let state = AppState {
-            schema_version: 4,
+            schema_version: CURRENT_SCHEMA_VERSION,
             backend: None,
             harnesses: Vec::new(),
             auto_update_enabled: true,
+            identity: Identity::default(),
         };
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"autoUpdateEnabled\":true"));
@@ -638,10 +694,11 @@ mod tests {
     fn save_then_load_is_identity() {
         let dir = tempfile::tempdir().unwrap();
         let original = AppState {
-            schema_version: 4,
+            schema_version: CURRENT_SCHEMA_VERSION,
             backend: Some(sample_signoz()),
             harnesses: vec![sample_harness(HarnessId::GeminiCli)],
             auto_update_enabled: false,
+            identity: Identity::default(),
         };
         save_to_dir(dir.path(), &original).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();
@@ -697,7 +754,6 @@ mod tests {
         std::fs::write(dir.path().join("state.json"), v2_doc).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
         assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(state.schema_version, 4);
         assert_eq!(state.harnesses.len(), 1);
         assert_eq!(state.harnesses[0].trove_patch.last_written_region_payload, "");
         assert!(!state.auto_update_enabled);
@@ -718,15 +774,16 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 4"));
+        assert!(on_disk.contains("\"schemaVersion\": 5"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
     #[test]
-    fn v3_state_is_migrated_to_v4_with_auto_update_off() {
+    fn v3_state_is_migrated_to_current_with_auto_update_off() {
         // Sprint 10 added AppState.autoUpdateEnabled. v3 documents from
-        // Sprint 8/9 lack the field — serde(default) backfills `false` and
-        // the loader re-stamps schema_version to v4.
+        // Sprint 8/9 lack the field — serde(default) backfills `false`
+        // and the loader re-stamps schema_version to the current
+        // version.
         let dir = tempfile::tempdir().unwrap();
         let v3_doc = br#"{
             "schemaVersion": 3,
@@ -752,7 +809,7 @@ mod tests {
         }"#;
         std::fs::write(dir.path().join("state.json"), v3_doc).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
-        assert_eq!(state.schema_version, 4);
+        assert_eq!(state.schema_version, 5);
         assert!(!state.auto_update_enabled);
         assert_eq!(state.harnesses.len(), 1);
         // Field carried through migration unchanged.
@@ -763,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_state_round_trips_to_v4_on_disk_after_save() {
+    fn v3_state_round_trips_to_current_on_disk_after_save() {
         let dir = tempfile::tempdir().unwrap();
         let v3_doc = br#"{
             "schemaVersion": 3,
@@ -774,7 +831,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 4"));
+        assert!(on_disk.contains("\"schemaVersion\": 5"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -789,8 +846,58 @@ mod tests {
         }"#;
         std::fs::write(dir.path().join("state.json"), v4_doc).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
-        assert_eq!(state.schema_version, 4);
+        assert_eq!(state.schema_version, 5);
         assert!(state.auto_update_enabled);
+    }
+
+    #[test]
+    fn v4_state_migrates_to_v5_with_identity_off() {
+        // Sprint 12 added AppState.identity. v4 documents lack the
+        // field — serde(default) backfills `Identity::default()` (off,
+        // auto, empty strings) and the loader re-stamps schema_version
+        // to v5.
+        let dir = tempfile::tempdir().unwrap();
+        let v4_doc = br#"{
+            "schemaVersion": 4,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": false
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v4_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, 5);
+        assert!(!state.identity.enabled);
+        assert_eq!(state.identity.source, IdentitySource::Auto);
+        assert!(state.identity.name.is_empty());
+        assert!(state.identity.email.is_empty());
+    }
+
+    #[test]
+    fn v5_state_with_manual_identity_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let v5_doc = br#"{
+            "schemaVersion": 5,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": false,
+            "identity": {
+                "enabled": true,
+                "source": "manual",
+                "name": "Ada Lovelace",
+                "email": "ada@example.com"
+            }
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v5_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert!(state.identity.enabled);
+        assert_eq!(state.identity.source, IdentitySource::Manual);
+        assert_eq!(state.identity.name, "Ada Lovelace");
+        assert_eq!(state.identity.email, "ada@example.com");
+        // Re-save round-trips cleanly without losing the manual fields.
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+        assert!(on_disk.contains("\"source\": \"manual\""));
+        assert!(on_disk.contains("\"email\": \"ada@example.com\""));
     }
 
     #[test]

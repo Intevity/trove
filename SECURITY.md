@@ -95,6 +95,18 @@ export, in addition to whatever each harness redacts at source.
 toggle to enable prompt logging is **per-harness, not global**, and
 the UI labels it as a sensitive operation.
 
+`user.name` / `user.email` resource attribution is **off** by
+default. When the user explicitly opts in via the Identity panel,
+Trove resolves the values through a probe ladder — detected harness
+configs first (today every probe is a stub that returns nothing, so
+no new file surface is read), then `git config --global user.name` /
+`user.email`, then a user-typed manual override. The values are
+injected by the local collector via a `resource/identity` processor;
+with the toggle off the YAML is byte-identical to today's output and
+no tagging occurs. Adding a per-harness identity probe in the future
+requires expanding this document's _What Trove can see_ table —
+identity tagging never silently widens Trove's read scope.
+
 ---
 
 ## How to revoke

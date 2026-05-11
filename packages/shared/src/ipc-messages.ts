@@ -9,6 +9,7 @@ import {
   DetectedHarness,
   MetricsSnapshotWire,
   PatchPreview,
+  ResolvedIdentity,
   TestExportResult,
   TrovePatch,
   UpdateMetadata,
@@ -106,6 +107,35 @@ export type SetAutoUpdateEnabledResponse = z.infer<typeof SetAutoUpdateEnabledRe
 export const CheckForUpdatesResponse = UpdateMetadata;
 export type CheckForUpdatesResponse = z.infer<typeof CheckForUpdatesResponse>;
 
+/** Sprint 12 — `set_identity_enabled`. Toggles the persisted opt-in
+ *  identity-tagging flag and (when a backend is configured) reloads
+ *  the collector with the updated YAML. */
+export const SetIdentityEnabledRequest = z.object({ enabled: z.boolean() });
+export type SetIdentityEnabledRequest = z.infer<typeof SetIdentityEnabledRequest>;
+export const SetIdentityEnabledResponse = z.null();
+export type SetIdentityEnabledResponse = z.infer<typeof SetIdentityEnabledResponse>;
+
+/** Sprint 12 — `set_identity_manual`. Persists a user-typed
+ *  name/email override and pins `identity.source` to `manual`. */
+export const SetIdentityManualRequest = z.object({
+  name: z.string(),
+  email: z.string(),
+});
+export type SetIdentityManualRequest = z.infer<typeof SetIdentityManualRequest>;
+export const SetIdentityManualResponse = z.null();
+export type SetIdentityManualResponse = z.infer<typeof SetIdentityManualResponse>;
+
+/** Sprint 12 — `set_identity_auto`. Pins `identity.source` back to
+ *  `auto` without touching the persisted name/email values. */
+export const SetIdentityAutoResponse = z.null();
+export type SetIdentityAutoResponse = z.infer<typeof SetIdentityAutoResponse>;
+
+/** Sprint 12 — `resolve_identity_preview`. Returns the values the
+ *  collector would tag with right now, plus the probe-ladder source
+ *  the UI surfaces to the user. */
+export const ResolveIdentityPreviewResponse = ResolvedIdentity;
+export type ResolveIdentityPreviewResponse = z.infer<typeof ResolveIdentityPreviewResponse>;
+
 /** Canonical Tauri command names, kept here so the IPC client wrapper
  *  and tests share a single source of truth. The Rust side registers
  *  these in `tauri::generate_handler!` in lib.rs; renames must update
@@ -125,6 +155,10 @@ export const IpcCommandName = {
   GetCollectorLogTail: 'get_collector_log_tail',
   SetAutoUpdateEnabled: 'set_auto_update_enabled',
   CheckForUpdates: 'check_for_updates',
+  SetIdentityEnabled: 'set_identity_enabled',
+  SetIdentityManual: 'set_identity_manual',
+  SetIdentityAuto: 'set_identity_auto',
+  ResolveIdentityPreview: 'resolve_identity_preview',
 } as const;
 export type IpcCommandName = (typeof IpcCommandName)[keyof typeof IpcCommandName];
 

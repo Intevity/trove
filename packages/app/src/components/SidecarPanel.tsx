@@ -1,18 +1,29 @@
 import { useState } from 'react';
 
-import type { CollectorRunState, MetricsSnapshotWire, TestExportResult } from '@trove/shared';
+import type {
+  Backend,
+  CollectorRunState,
+  MetricsSnapshotWire,
+  TestExportResult,
+} from '@trove/shared';
 
 import { TroveIpcError, testExport } from '../lib/ipc.js';
+import { SyntheticSpanHints } from './wizard/SyntheticSpanHints.js';
 
 interface Props {
   state: CollectorRunState | null;
   metrics: MetricsSnapshotWire | null;
+  /** Backend currently configured. Used only to label the post-success
+   *  synthetic-span hints ("Look for this in {label}"). Null on the
+   *  brief window between collector startup and backend save, in which
+   *  case the hints fall back to a generic preamble. */
+  backend?: Backend | null | undefined;
 }
 
 /** Collector / sidecar dashboard tile. Surfaces the supervisor's
  *  current run state, summary counts from the metrics tap, and the
  *  "Test Pipeline" affordance the e2e exercises. */
-export function SidecarPanel({ state, metrics }: Props): JSX.Element {
+export function SidecarPanel({ state, metrics, backend }: Props): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TestExportResult | null>(null);
   const [error, setError] = useState<TroveIpcError | null>(null);
@@ -64,34 +75,37 @@ export function SidecarPanel({ state, metrics }: Props): JSX.Element {
         </div>
       </dl>
 
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          data-testid="test-pipeline-button"
-          disabled={busy}
-          onClick={() => void handleTest()}
-          className="rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-900 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100 dark:hover:bg-blue-900"
-        >
-          {busy ? 'Testing…' : 'Test Pipeline'}
-        </button>
-        {result ? (
-          <span
-            data-testid="test-pipeline-result"
-            data-status={result.status}
-            className={`text-xs ${
-              result.status === 'ok'
-                ? 'text-emerald-700 dark:text-emerald-300'
-                : 'text-amber-700 dark:text-amber-300'
-            }`}
+      <div className="mt-3 flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="test-pipeline-button"
+            disabled={busy}
+            onClick={() => void handleTest()}
+            className="rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-900 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100 dark:hover:bg-blue-900"
           >
-            {result.status === 'ok' ? '✓' : '⚠︎'} {result.detail}
-          </span>
-        ) : null}
-        {error ? (
-          <span className="text-xs text-red-700 dark:text-red-300">
-            Test failed: {error.cause.kind}
-          </span>
-        ) : null}
+            {busy ? 'Testing…' : 'Test Pipeline'}
+          </button>
+          {result ? (
+            <span
+              data-testid="test-pipeline-result"
+              data-status={result.status}
+              className={`text-xs ${
+                result.status === 'ok'
+                  ? 'text-emerald-700 dark:text-emerald-300'
+                  : 'text-amber-700 dark:text-amber-300'
+              }`}
+            >
+              {result.status === 'ok' ? '✓' : '⚠︎'} {result.detail}
+            </span>
+          ) : null}
+          {error ? (
+            <span className="text-xs text-red-700 dark:text-red-300">
+              Test failed: {error.cause.kind}
+            </span>
+          ) : null}
+        </div>
+        {result?.status === 'ok' ? <SyntheticSpanHints backendKind={backend?.kind} /> : null}
       </div>
     </section>
   );

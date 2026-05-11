@@ -597,9 +597,25 @@ pub fn save_backend(app: tauri::AppHandle, draft: BackendDraft) -> Result<Backen
 
     let rendered = codegen::render(&backend).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
-    crate::reload_collector(&app, &rendered.yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
+    let yaml = render_with_identity(rendered.yaml, &state);
+    crate::reload_collector(&app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
 
     Ok(backend)
+}
+
+/// Wrap a freshly rendered Collector YAML with the active
+/// `resource/identity` overlay when [`AppState::identity`] is enabled,
+/// or pass it through unchanged otherwise. Lives next to the IPC
+/// callers because the identity probe ladder reads the current
+/// detection set, and the IPC layer is where the detection sweep
+/// already runs.
+fn render_with_identity(yaml: String, state: &AppState) -> String {
+    if !state.identity.enabled {
+        return yaml;
+    }
+    let harnesses = crate::detect::detect_all();
+    let resolved = crate::identity::resolve(&state.identity, &harnesses);
+    crate::collector::codegen::apply_identity_overlay(yaml, &resolved)
 }
 
 /// Send a synthetic OTLP/HTTP traces payload through the local
@@ -656,6 +672,93 @@ pub fn set_auto_update_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(
     state.auto_update_enabled = enabled;
     app_state::save(&app, &state)?;
     Ok(())
+}
+
+/// Sprint 12 — opt-in identity tagging. Flips the persisted
+/// [`AppState::identity::enabled`] flag, then reloads the collector so
+/// the active YAML reflects the new processor list immediately. When
+/// the collector is not yet running (no backend saved), this is a
+/// pure state mutation.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_identity_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), IpcError> {
+    let mut state = app_state::load(&app)?;
+    if state.identity.enabled == enabled {
+        return Ok(());
+    }
+    state.identity.enabled = enabled;
+    app_state::save(&app, &state)?;
+    reload_collector_for_identity(&app, &state)?;
+    Ok(())
+}
+
+/// Sprint 12 — persist a user-entered name/email override and pin the
+/// source to [`crate::app_state::IdentitySource::Manual`]. Empty
+/// values are accepted (mirrors the wizard's "clear my overrides"
+/// affordance); the resolve ladder falls through when both are empty.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_identity_manual(
+    app: tauri::AppHandle,
+    name: String,
+    email: String,
+) -> Result<(), IpcError> {
+    let mut state = app_state::load(&app)?;
+    state.identity.source = crate::app_state::IdentitySource::Manual;
+    state.identity.name = name;
+    state.identity.email = email;
+    app_state::save(&app, &state)?;
+    reload_collector_for_identity(&app, &state)?;
+    Ok(())
+}
+
+/// Sprint 12 — pin the source back to
+/// [`crate::app_state::IdentitySource::Auto`] without touching the
+/// persisted name/email. The retained values are kept as a fallback
+/// after the harness and git layers in [`crate::identity::resolve`].
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_identity_auto(app: tauri::AppHandle) -> Result<(), IpcError> {
+    let mut state = app_state::load(&app)?;
+    if matches!(state.identity.source, crate::app_state::IdentitySource::Auto) {
+        return Ok(());
+    }
+    state.identity.source = crate::app_state::IdentitySource::Auto;
+    app_state::save(&app, &state)?;
+    reload_collector_for_identity(&app, &state)?;
+    Ok(())
+}
+
+/// Sprint 12 — preview the resolved identity without persisting. The
+/// React Settings panel calls this on mount and after each mutation
+/// to render "Source: detected from <harness> | git config | manual
+/// entry | none" with the values the next collector reload would
+/// pick up.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn resolve_identity_preview(
+    app: tauri::AppHandle,
+) -> Result<crate::identity::Resolved, IpcError> {
+    let state = app_state::load(&app)?;
+    let harnesses = crate::detect::detect_all();
+    Ok(crate::identity::resolve(&state.identity, &harnesses))
+}
+
+/// Shared helper: regenerate `collector.yaml` and recycle the
+/// supervised collector with the current identity overlay applied.
+/// When no backend is saved yet, the collector is in smoke-config
+/// mode and the overlay has nothing to wrap; this is a no-op.
+fn reload_collector_for_identity(
+    app: &tauri::AppHandle,
+    state: &AppState,
+) -> Result<(), IpcError> {
+    let Some(backend) = state.backend.as_ref() else {
+        return Ok(());
+    };
+    let rendered = codegen::render(backend).map_err(render_error_to_ipc)?;
+    let env = unwrap_env(rendered.env);
+    let yaml = render_with_identity(rendered.yaml, state);
+    crate::reload_collector(app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))
 }
 
 /// Sprint 10 — outcome of `check_for_updates`. The React Settings

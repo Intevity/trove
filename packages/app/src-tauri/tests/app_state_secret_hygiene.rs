@@ -40,10 +40,11 @@ fn signoz_ingestion_key_does_not_land_in_state_json() {
     assert!(secrets.iter().any(|s| s.value.as_str() == CANARY));
 
     let state = AppState {
-        schema_version: 4,
+        schema_version: trove_app::app_state::CURRENT_SCHEMA_VERSION,
         backend: Some(backend),
         harnesses: Vec::new(),
         auto_update_enabled: false,
+        identity: trove_app::app_state::Identity::default(),
     };
     let on_disk = save_and_read(&state);
     assert!(
@@ -60,10 +61,11 @@ fn honeycomb_team_does_not_land_in_state_json() {
     };
     let (backend, _) = drain_secrets_from_draft(draft);
     let state = AppState {
-        schema_version: 4,
+        schema_version: trove_app::app_state::CURRENT_SCHEMA_VERSION,
         backend: Some(backend),
         harnesses: Vec::new(),
         auto_update_enabled: false,
+        identity: trove_app::app_state::Identity::default(),
     };
     assert!(!save_and_read(&state).contains(CANARY));
 }
@@ -76,10 +78,11 @@ fn datadog_api_key_does_not_land_in_state_json() {
     };
     let (backend, _) = drain_secrets_from_draft(draft);
     let state = AppState {
-        schema_version: 4,
+        schema_version: trove_app::app_state::CURRENT_SCHEMA_VERSION,
         backend: Some(backend),
         harnesses: Vec::new(),
         auto_update_enabled: false,
+        identity: trove_app::app_state::Identity::default(),
     };
     assert!(!save_and_read(&state).contains(CANARY));
 }
@@ -92,10 +95,11 @@ fn grafana_cloud_auth_does_not_land_in_state_json() {
     };
     let (backend, _) = drain_secrets_from_draft(draft);
     let state = AppState {
-        schema_version: 4,
+        schema_version: trove_app::app_state::CURRENT_SCHEMA_VERSION,
         backend: Some(backend),
         harnesses: Vec::new(),
         auto_update_enabled: false,
+        identity: trove_app::app_state::Identity::default(),
     };
     assert!(!save_and_read(&state).contains(CANARY));
 }
@@ -117,10 +121,11 @@ fn otlp_generic_header_values_do_not_land_in_state_json() {
     assert_eq!(secrets.len(), 2);
 
     let state = AppState {
-        schema_version: 4,
+        schema_version: trove_app::app_state::CURRENT_SCHEMA_VERSION,
         backend: Some(backend),
         harnesses: Vec::new(),
         auto_update_enabled: false,
+        identity: trove_app::app_state::Identity::default(),
     };
     let on_disk = save_and_read(&state);
     assert!(!on_disk.contains(CANARY));

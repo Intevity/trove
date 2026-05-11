@@ -141,6 +141,11 @@ export interface HarnessListProps {
   /** Set of harness IDs whose row is currently mid-revert (button
    *  disables + label changes). */
   busyIds?: ReadonlySet<HarnessId>;
+  /** Optional click handler for the header's Refresh button. Wired
+   *  from the dashboard, which owns the `refresh()` returned by
+   *  `useDetectedHarnesses`. When omitted (e.g. test fixtures that
+   *  only care about row rendering), the button isn't rendered. */
+  onRefresh?: () => void | Promise<void>;
 }
 
 export function HarnessList({
@@ -149,6 +154,7 @@ export function HarnessList({
   onEnable,
   onDisable,
   busyIds,
+  onRefresh,
 }: HarnessListProps): JSX.Element {
   // Detected harnesses are the actionable ones — surface them first so a
   // user scanning the list lands on the rows they can toggle without
@@ -163,37 +169,71 @@ export function HarnessList({
     return [...detected, ...undetected];
   }, [harnesses]);
 
-  if (loading) {
-    return (
-      <p className="text-sm text-slate-500 dark:text-slate-400" data-testid="harness-list-loading">
-        Detecting harnesses…
-      </p>
-    );
-  }
-
-  if (harnesses.length === 0) {
-    return (
-      <p className="text-sm text-slate-500 dark:text-slate-400" data-testid="harness-list-empty">
-        No supported harnesses detected on this machine.
-      </p>
-    );
-  }
-
   return (
-    <ul
-      className="divide-y divide-slate-200 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-800"
-      data-testid="harness-list"
-    >
-      {sorted.map((harness) => (
-        <HarnessRow
-          key={harness.id}
-          harness={harness}
-          onEnable={onEnable}
-          onDisable={onDisable}
-          busy={busyIds?.has(harness.id) ?? false}
-        />
-      ))}
-    </ul>
+    <section data-testid="harness-list-section">
+      <header className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          Detected harnesses
+        </h2>
+        {onRefresh ? (
+          <button
+            type="button"
+            data-testid="harness-list-refresh"
+            disabled={loading}
+            onClick={() => void onRefresh()}
+            className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            aria-label="refresh harness detection"
+            title="Re-run detection — useful when you've just installed a harness"
+          >
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+              className={loading ? 'animate-spin' : ''}
+            >
+              <path
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M3 8a5 5 0 1 1 1.464 3.536M3 13v-2.5h2.5"
+              />
+            </svg>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        ) : null}
+      </header>
+
+      {loading ? (
+        <p
+          className="text-sm text-slate-500 dark:text-slate-400"
+          data-testid="harness-list-loading"
+        >
+          Detecting harnesses…
+        </p>
+      ) : harnesses.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400" data-testid="harness-list-empty">
+          No supported harnesses detected on this machine.
+        </p>
+      ) : (
+        <ul
+          className="divide-y divide-slate-200 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-800"
+          data-testid="harness-list"
+        >
+          {sorted.map((harness) => (
+            <HarnessRow
+              key={harness.id}
+              harness={harness}
+              onEnable={onEnable}
+              onDisable={onDisable}
+              busy={busyIds?.has(harness.id) ?? false}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

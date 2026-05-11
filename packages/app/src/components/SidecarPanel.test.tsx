@@ -75,6 +75,39 @@ describe('SidecarPanel', () => {
     });
   });
 
+  it('renders synthetic-span hints after an ok test, labeled with the backend', async () => {
+    invokeMock.mockResolvedValue({ status: 'ok', detail: 'received span' });
+    render(
+      <SidecarPanel
+        state={RUNNING}
+        metrics={snapshot()}
+        backend={{
+          kind: 'signoz',
+          endpoint: 'https://ingest.eu.signoz.cloud:443',
+          ingestionKey: { service: 'trove', account: 'signoz' },
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('test-pipeline-button'));
+    await waitFor(() => {
+      expect(screen.getByTestId('synthetic-span-hints')).toBeDefined();
+    });
+    expect(screen.getByTestId('synthetic-span-hints').textContent).toContain('SigNoz Cloud');
+    expect(screen.getByTestId('hint-trace-id').textContent).toBe(
+      '74726f7665740000c0deca5e0d5705ed',
+    );
+  });
+
+  it('does not render synthetic-span hints on a failed test', async () => {
+    invokeMock.mockResolvedValue({ status: 'failed', detail: 'bad' });
+    render(<SidecarPanel state={RUNNING} metrics={snapshot()} />);
+    fireEvent.click(screen.getByTestId('test-pipeline-button'));
+    await waitFor(() => {
+      expect(screen.getByTestId('test-pipeline-result').getAttribute('data-status')).toBe('failed');
+    });
+    expect(screen.queryByTestId('synthetic-span-hints')).toBeNull();
+  });
+
   it('disables Test Pipeline while busy', async () => {
     let resolve: ((v: unknown) => void) | undefined;
     invokeMock.mockImplementation(

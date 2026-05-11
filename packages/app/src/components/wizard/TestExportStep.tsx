@@ -1,4 +1,6 @@
-import type { TestExportResult } from '@trove/shared';
+import type { BackendDraft, TestExportResult } from '@trove/shared';
+
+import { SyntheticSpanHints } from './SyntheticSpanHints.js';
 
 export interface TestExportStepProps {
   /** Disables every button while we're mid-test or mid-save. */
@@ -6,6 +8,10 @@ export interface TestExportStepProps {
   /** What the most recent run returned, or null when the user hasn't
    *  pressed the button yet. */
   result: TestExportResult | null;
+  /** Kind of backend the user is configuring; threads through to the
+   *  post-success hints block so the "Look for this in {label}"
+   *  preamble names the user's chosen backend by label. */
+  backendKind?: BackendDraft['kind'] | undefined;
   onTest: () => void;
   onSave: () => void;
   onBack: () => void;
@@ -14,6 +20,7 @@ export interface TestExportStepProps {
 export function TestExportStep({
   busy,
   result,
+  backendKind,
   onTest,
   onSave,
   onBack,
@@ -44,7 +51,7 @@ export function TestExportStep({
           {busy && status === null ? 'Testing…' : result === null ? 'Test export' : 'Test again'}
         </button>
 
-        {result ? <ResultBanner result={result} /> : null}
+        {result ? <ResultBanner result={result} backendKind={backendKind} /> : null}
 
         <div className="flex items-center justify-between pt-2">
           <button
@@ -84,15 +91,21 @@ export function TestExportStep({
   );
 }
 
-function ResultBanner({ result }: { result: TestExportResult }): JSX.Element {
+function ResultBanner({
+  result,
+  backendKind,
+}: {
+  result: TestExportResult;
+  backendKind?: BackendDraft['kind'] | undefined;
+}): JSX.Element {
   if (result.status === 'ok') {
     return (
-      <p
-        data-testid="test-export-banner-ok"
-        className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200"
-      >
-        ✅ {result.detail}
-      </p>
+      <div data-testid="test-export-banner-ok">
+        <p className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">
+          ✅ {result.detail}
+        </p>
+        <SyntheticSpanHints backendKind={backendKind} />
+      </div>
     );
   }
   if (result.status === 'failed') {

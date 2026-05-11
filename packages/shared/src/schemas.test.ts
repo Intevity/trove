@@ -274,35 +274,56 @@ describe('HarnessConfig', () => {
 });
 
 describe('AppState', () => {
-  it('parses a minimal v4 state with no backend, no harnesses, and auto-update off', () => {
+  const defaultIdentity = {
+    enabled: false,
+    source: 'auto' as const,
+    name: '',
+    email: '',
+  };
+
+  it('parses a minimal v5 state with default identity off', () => {
     const parsed = AppState.parse({
-      schemaVersion: 4,
+      schemaVersion: 5,
       backend: null,
       harnesses: [],
       autoUpdateEnabled: false,
+      identity: defaultIdentity,
     });
-    expect(parsed.schemaVersion).toBe(4);
+    expect(parsed.schemaVersion).toBe(5);
     expect(parsed.backend).toBeNull();
     expect(parsed.harnesses).toEqual([]);
     expect(parsed.autoUpdateEnabled).toBe(false);
+    expect(parsed.identity.enabled).toBe(false);
+    expect(parsed.identity.source).toBe('auto');
   });
 
-  it('parses a v4 state with autoUpdateEnabled true', () => {
+  it('parses a v5 state with autoUpdateEnabled true and identity tagging on', () => {
     const parsed = AppState.parse({
-      schemaVersion: 4,
+      schemaVersion: 5,
       backend: null,
       harnesses: [],
       autoUpdateEnabled: true,
+      identity: {
+        enabled: true,
+        source: 'manual',
+        name: 'Ada Lovelace',
+        email: 'ada@example.com',
+      },
     });
     expect(parsed.autoUpdateEnabled).toBe(true);
+    expect(parsed.identity.enabled).toBe(true);
+    expect(parsed.identity.source).toBe('manual');
+    expect(parsed.identity.name).toBe('Ada Lovelace');
+    expect(parsed.identity.email).toBe('ada@example.com');
   });
 
   it('rejects when autoUpdateEnabled is missing', () => {
     expect(() =>
       AppState.parse({
-        schemaVersion: 4,
+        schemaVersion: 5,
         backend: null,
         harnesses: [],
+        identity: defaultIdentity,
       }),
     ).toThrow();
   });
@@ -314,22 +335,23 @@ describe('AppState', () => {
         backend: null,
         harnesses: [],
         autoUpdateEnabled: false,
+        identity: defaultIdentity,
       }),
     ).toThrow();
   });
 
-  it('rejects v2/v3 wire payloads (Rust loader migrates them to v4 before IPC return)', () => {
-    // Sprint 10 bumped the on-the-wire schema to v4. Pre-Sprint-10 v2/v3
-    // payloads are an internal concern of `app_state::load_from_dir`;
-    // they should never appear at the IPC boundary, so the Zod literal
-    // rejects them outright.
-    for (const schemaVersion of [2, 3]) {
+  it('rejects v2/v3/v4 wire payloads (Rust loader migrates them to v5 before IPC return)', () => {
+    // Sprint 12 bumped the on-the-wire schema to v5. Earlier payloads are
+    // an internal concern of `app_state::load_from_dir`; they should never
+    // appear at the IPC boundary, so the Zod literal rejects them outright.
+    for (const schemaVersion of [2, 3, 4]) {
       expect(() =>
         AppState.parse({
           schemaVersion,
           backend: null,
           harnesses: [],
           autoUpdateEnabled: false,
+          identity: defaultIdentity,
         }),
       ).toThrow();
     }
