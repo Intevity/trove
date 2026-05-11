@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+
 import type { DetectedHarness, HarnessId } from '@trove/shared';
 
 const HARNESS_LABELS: Record<HarnessId, string> = {
@@ -11,6 +13,30 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   cline: 'Cline',
   aider: 'Aider',
   'copilot-cli': 'GitHub Copilot CLI',
+};
+
+/** Per-harness mark rendered as an inline SVG to the left of each row.
+ *  `bg` is the brand-aligned color of the rounded-square tile; `mark` is
+ *  the 1–2 character monogram drawn in white at the centre. The SVG root
+ *  carries no background, so the tile sits cleanly over either light or
+ *  dark row backgrounds. We render an inline SVG (rather than shipping
+ *  brand artwork) so each logo is recognizable without taking on
+ *  third-party trademark obligations. */
+interface HarnessLogoSpec {
+  bg: string;
+  mark: string;
+}
+const HARNESS_LOGOS: Record<HarnessId, HarnessLogoSpec> = {
+  'claude-code': { bg: '#CC785C', mark: 'C' },
+  'gemini-cli': { bg: '#1A73E8', mark: 'G' },
+  'codex-cli': { bg: '#10A37F', mark: 'O' },
+  'qwen-code': { bg: '#FF6A00', mark: 'Q' },
+  opencode: { bg: '#0F766E', mark: '{}' },
+  'cursor-ide': { bg: '#0EA5E9', mark: 'C' },
+  'cursor-cli': { bg: '#0284C7', mark: 'C$' },
+  cline: { bg: '#EF4444', mark: 'CL' },
+  aider: { bg: '#A855F7', mark: 'A' },
+  'copilot-cli': { bg: '#24292E', mark: 'gh' },
 };
 
 /** Per-harness coverage advisory surfaced as a badge next to the
@@ -76,6 +102,19 @@ export function HarnessList({
   onDisable,
   busyIds,
 }: HarnessListProps): JSX.Element {
+  // Detected harnesses are the actionable ones — surface them first so a
+  // user scanning the list lands on the rows they can toggle without
+  // hunting. Stable partition preserves the parent's relative order
+  // inside each group.
+  const sorted = useMemo(() => {
+    const detected: DetectedHarness[] = [];
+    const undetected: DetectedHarness[] = [];
+    for (const h of harnesses) {
+      (h.detected ? detected : undetected).push(h);
+    }
+    return [...detected, ...undetected];
+  }, [harnesses]);
+
   if (loading) {
     return (
       <p className="text-sm text-slate-500 dark:text-slate-400" data-testid="harness-list-loading">
@@ -97,7 +136,7 @@ export function HarnessList({
       className="divide-y divide-slate-200 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-800"
       data-testid="harness-list"
     >
-      {harnesses.map((harness) => (
+      {sorted.map((harness) => (
         <HarnessRow
           key={harness.id}
           harness={harness}
@@ -107,6 +146,41 @@ export function HarnessList({
         />
       ))}
     </ul>
+  );
+}
+
+/** Inline brand mark for a harness. SVG root has no background so the
+ *  tile composites cleanly over either light or dark row surfaces.
+ *  `dimmed` greys out the logo for undetected rows to mirror the row's
+ *  muted styling. */
+function HarnessLogo({ id, dimmed }: { id: HarnessId; dimmed: boolean }): JSX.Element {
+  const { bg, mark } = HARNESS_LOGOS[id];
+  const fontSize = mark.length >= 2 ? 11 : 14;
+  return (
+    <svg
+      width="32"
+      height="32"
+      viewBox="0 0 32 32"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={`${HARNESS_LABELS[id]} logo`}
+      data-testid={`harness-logo-${id}`}
+      className={`shrink-0 ${dimmed ? 'opacity-40 grayscale' : ''}`}
+    >
+      <rect x="0" y="0" width="32" height="32" rx="8" fill={bg} />
+      <text
+        x="16"
+        y="17"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontFamily="system-ui, -apple-system, sans-serif"
+        fontSize={fontSize}
+        fontWeight="700"
+        fill="#ffffff"
+      >
+        {mark}
+      </text>
+    </svg>
   );
 }
 
@@ -142,16 +216,25 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
     }
   };
 
+  const rowClass = harness.detected
+    ? 'flex items-center justify-between gap-4 border-l-2 border-l-emerald-400 bg-white px-4 py-3 dark:bg-slate-950'
+    : 'flex items-center justify-between gap-4 border-l-2 border-l-transparent bg-slate-50/60 px-4 py-3 dark:bg-slate-900/40';
+  const labelClass = harness.detected
+    ? 'text-sm font-medium text-slate-900 dark:text-slate-100'
+    : 'text-sm font-medium text-slate-500 dark:text-slate-400';
+
   return (
     <li
-      className="flex items-center justify-between gap-4 px-4 py-3"
+      className={rowClass}
       data-testid={`harness-row-${harness.id}`}
+      data-detected={harness.detected ? 'true' : 'false'}
     >
-      <div>
-        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
-          {HARNESS_LABELS[harness.id]}
-        </p>
-        <p className="text-xs text-slate-500 dark:text-slate-400">{detectionLabel}</p>
+      <div className="flex items-center gap-3">
+        <HarnessLogo id={harness.id} dimmed={!harness.detected} />
+        <div>
+          <p className={labelClass}>{HARNESS_LABELS[harness.id]}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{detectionLabel}</p>
+        </div>
       </div>
       <div className="flex flex-col items-end gap-1 text-right">
         <span

@@ -29,6 +29,65 @@ describe('HarnessList', () => {
     expect(screen.getByTestId('harness-list-empty')).toBeDefined();
   });
 
+  it('orders detected harnesses before undetected ones, preserving relative order within each group', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({ id: 'gemini-cli', detected: false, detectionMethod: null, configPath: null }),
+          row({ id: 'claude-code', detected: true }),
+          row({ id: 'cline', detected: false, detectionMethod: null, configPath: null }),
+          row({ id: 'aider', detected: true }),
+        ]}
+        loading={false}
+      />,
+    );
+    const rows = screen.getAllByTestId(/^harness-row-/);
+    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
+      'harness-row-claude-code',
+      'harness-row-aider',
+      'harness-row-gemini-cli',
+      'harness-row-cline',
+    ]);
+  });
+
+  it('flags each row with a data-detected attribute the styles key off of', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({ id: 'claude-code', detected: true }),
+          row({ id: 'qwen-code', detected: false, detectionMethod: null, configPath: null }),
+        ]}
+        loading={false}
+      />,
+    );
+    expect(screen.getByTestId('harness-row-claude-code').getAttribute('data-detected')).toBe(
+      'true',
+    );
+    expect(screen.getByTestId('harness-row-qwen-code').getAttribute('data-detected')).toBe('false');
+  });
+
+  it('renders an inline SVG logo for every harness row, transparent root', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({ id: 'claude-code', detected: true }),
+          row({ id: 'gemini-cli', detected: false, detectionMethod: null, configPath: null }),
+        ]}
+        loading={false}
+      />,
+    );
+    const claudeLogo = screen.getByTestId('harness-logo-claude-code');
+    expect(claudeLogo.tagName).toBe('svg');
+    // Transparent background: the SVG element itself carries no fill.
+    expect(claudeLogo.getAttribute('fill')).toBeNull();
+    // Detected logo renders without the dimming filter classes.
+    expect(claudeLogo.getAttribute('class')).not.toMatch(/grayscale/);
+    // Undetected logo is dimmed.
+    const geminiLogo = screen.getByTestId('harness-logo-gemini-cli');
+    expect(geminiLogo.getAttribute('class')).toMatch(/grayscale/);
+    expect(geminiLogo.getAttribute('class')).toMatch(/opacity-/);
+  });
+
   it('renders one row per detected harness', () => {
     render(
       <HarnessList
