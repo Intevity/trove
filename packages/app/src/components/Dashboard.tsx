@@ -137,7 +137,6 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
         enabled={appState.identity.enabled}
         manualName={appState.identity.name}
         manualEmail={appState.identity.email}
-        backend={appState.backend}
         onChanged={() => void onAppStateRefresh()}
       />
 

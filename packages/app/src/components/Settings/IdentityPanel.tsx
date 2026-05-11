@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { presetMetadataFor } from '@trove/collector-presets';
-import type { Backend, ResolvedIdentity, ResolvedIdentitySource } from '@trove/shared';
+import type { ResolvedIdentity, ResolvedIdentitySource } from '@trove/shared';
 
 import {
   TroveIpcError,
@@ -18,9 +17,6 @@ interface Props {
   /** Persisted manual values; pre-fills the override inputs. */
   manualName: string;
   manualEmail: string;
-  /** Active backend (or null). Used to name the destination in the
-   *  "this sends your name and email to X" warning. */
-  backend?: Backend | null | undefined;
   /** Called after a mutation persists so the parent re-fetches
    *  appState. */
   onChanged: () => void | Promise<void>;
@@ -34,18 +30,8 @@ interface Props {
  *  resource attributes resolved via the probe ladder in
  *  `crate::identity::resolve` (harness → git config → manual
  *  override). An expanded form lets the user override the auto-
- *  resolved values verbatim.
- *
- *  No data leaves the local collector until the user explicitly
- *  flips the toggle — the warning copy names the active backend so
- *  the destination is unambiguous. */
-export function IdentityPanel({
-  enabled,
-  manualName,
-  manualEmail,
-  backend,
-  onChanged,
-}: Props): JSX.Element {
+ *  resolved values verbatim. */
+export function IdentityPanel({ enabled, manualName, manualEmail, onChanged }: Props): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<TroveIpcError | null>(null);
   const [preview, setPreview] = useState<ResolvedIdentity | null>(null);
@@ -113,9 +99,6 @@ export function IdentityPanel({
     }
   };
 
-  const backendLabel = backend ? presetMetadataFor(backend.kind).label : null;
-  const destination = backendLabel ?? 'your observability backend';
-
   return (
     <section
       data-testid="identity-panel"
@@ -142,7 +125,7 @@ export function IdentityPanel({
             Off by default. When on, every signal carries{' '}
             <code className="font-mono text-[11px]">user.name</code> and{' '}
             <code className="font-mono text-[11px]">user.email</code> resource attributes and lands
-            at <span className="font-medium">{destination}</span>.
+            on your observability platform.
           </span>
         </span>
       </label>
