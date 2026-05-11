@@ -322,9 +322,18 @@ async fn supervise_loop(
     // 127.0.0.1:8888 (the otelcol Prometheus telemetry endpoint) and
     // every spawn here fails with `bind: address already in use`,
     // producing a crashloop the user sees as "Sidecar down".
+    //
+    // Two reapers, defense in depth:
+    //   1. `reap_orphan_collector` reads <app_data>/collector.pid (the
+    //      authoritative record written after each successful spawn).
+    //   2. `reap_orphans_by_name` scans the process table for any
+    //      other process whose executable name matches the supervisor
+    //      binary. Catches orphans from pre-fix app versions (no
+    //      collector.pid existed yet) and corrupted pid files.
     if let Some(pid_path) = opts.pid_file_path.as_deref() {
         reap_orphan_collector(pid_path, &opts.binary_path).await;
     }
+    reap_orphans_by_name(&opts.binary_path).await;
 
     loop {
         // Honor shutdown that arrived during a previous backoff window.
@@ -548,6 +557,105 @@ async fn reap_orphan_collector(pid_path: &std::path::Path, binary_path: &std::pa
     let _ = std::fs::remove_file(pid_path);
 }
 
+/// Find every running process whose executable name matches `binary`'s
+/// leaf name and reap it. Complements [`reap_orphan_collector`] for the
+/// case where a pre-fix app version (which didn't write a PID file)
+/// left an orphan behind, or where the PID file was corrupted.
+///
+/// Skips the current process so we never reach in and kill ourselves
+/// (defensive — the supervisor binary differs from the collector
+/// binary, but the check is cheap).
+async fn reap_orphans_by_name(binary: &std::path::Path) {
+    let Some(name) = binary
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let self_pid = std::process::id();
+    let mut survivors = Vec::new();
+    for pid in find_processes_by_name(&name) {
+        if pid == self_pid {
+            continue;
+        }
+        tracing::warn!(
+            pid,
+            binary = ?binary,
+            "found orphaned collector by name scan; reaping",
+        );
+        send_terminate_signal(pid);
+        survivors.push(pid);
+    }
+    if survivors.is_empty() {
+        return;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        survivors.retain(|p| process_is_alive(*p));
+        if survivors.is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    for pid in survivors {
+        tracing::warn!(pid, "name-scanned orphan did not exit; force killing");
+        send_kill_signal(pid);
+    }
+}
+
+/// List PIDs of running processes whose executable matches `name` (its
+/// leaf — `trove-otelcol` or `trove-otelcol.exe`). Returns an empty
+/// vec on any error so callers can treat it as "nothing to reap."
+fn find_processes_by_name(name: &str) -> Vec<u32> {
+    // Strip a trailing `.exe` so callers on Windows that pass
+    // `trove-otelcol.exe` still match the tasklist IMAGENAME column.
+    let stem = name.trim_end_matches(".exe");
+    #[cfg(unix)]
+    {
+        // `pgrep -x <name>` matches the executable name exactly. We
+        // pass the stem; macOS's process accounting truncates `comm`
+        // at 15 chars, so a longer binary name relies on the prefix
+        // match `pgrep` performs by default if `-x` finds nothing.
+        if let Ok(out) = std::process::Command::new("pgrep").args(["-x", stem]).output() {
+            if out.status.success() {
+                return String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|l| l.trim().parse::<u32>().ok())
+                    .filter(|p| *p > 0)
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+    #[cfg(windows)]
+    {
+        let filter = format!("IMAGENAME eq {stem}.exe");
+        if let Ok(out) = std::process::Command::new("tasklist")
+            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .output()
+        {
+            if out.status.success() {
+                return String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|line| {
+                        let cols: Vec<&str> = line.split(',').collect();
+                        cols.get(1)
+                            .and_then(|c| c.trim_matches('"').parse::<u32>().ok())
+                    })
+                    .filter(|p| *p > 0)
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = stem;
+        Vec::new()
+    }
+}
+
 fn read_pid_file(path: &std::path::Path) -> Option<u32> {
     let contents = std::fs::read_to_string(path).ok()?;
     contents.trim().parse::<u32>().ok().filter(|p| *p > 0)
@@ -741,6 +849,22 @@ mod tests {
         // Should not panic, should not create the file.
         reap_orphan_collector(&pid_path, &binary).await;
         assert!(!pid_path.exists());
+    }
+
+    #[test]
+    fn find_processes_by_name_returns_empty_for_nonsense_name() {
+        assert!(find_processes_by_name("trove-totally-not-a-real-binary-xyz").is_empty());
+    }
+
+    #[tokio::test]
+    async fn reap_orphans_by_name_is_safe_when_no_matches() {
+        let binary = std::path::PathBuf::from(
+            "/usr/local/bin/trove-totally-not-a-real-binary-xyz",
+        );
+        // Must complete without panicking and without affecting the
+        // test runner's own process.
+        reap_orphans_by_name(&binary).await;
+        assert!(process_is_alive(std::process::id()));
     }
 
     #[tokio::test]
