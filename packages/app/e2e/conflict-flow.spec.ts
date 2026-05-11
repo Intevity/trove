@@ -67,6 +67,10 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
   // Dashboard mounts immediately because backend is set.
   await expect(page.getByTestId('dashboard')).toBeVisible();
 
+  // The harness list lives behind the Harnesses tab — switch to it
+  // before opening the per-harness patch modal.
+  await page.getByTestId('tab-harnesses').click();
+
   // Open the patch modal for Claude Code (seeded as detected).
   await page.getByLabel('toggle-claude-code').click();
   await expect(page.getByTestId('patch-preview-modal')).toBeVisible();
@@ -115,6 +119,7 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
 
   await page.goto('/');
   await expect(page.getByTestId('dashboard')).toBeVisible();
+  await page.getByTestId('tab-harnesses').click();
   await page.getByLabel('toggle-claude-code').click();
   await page.getByTestId('patch-preview-apply').click();
 
