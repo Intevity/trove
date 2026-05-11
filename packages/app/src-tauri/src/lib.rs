@@ -183,15 +183,18 @@ fn start_collector(
     let binary_path = sidecar_binary_path()?;
     let config_path = ensure_collector_config(app)?;
     let log_path = ensure_log_path(app)?;
+    let pid_path = collector_pid_path(app)?;
 
     tracing::info!(
         ?binary_path,
         ?config_path,
         ?log_path,
+        ?pid_path,
         "starting trove-otelcol supervisor",
     );
 
-    let opts = SupervisorOptions::new(binary_path, config_path, log_path);
+    let opts = SupervisorOptions::new(binary_path, config_path, log_path)
+        .with_pid_file_path(pid_path);
     let handle = Supervisor::start(opts, channels)?;
     Ok(handle)
 }
@@ -215,6 +218,7 @@ pub fn reload_collector<S: std::hash::BuildHasher>(
     let binary_path = sidecar_binary_path()?;
     let config_path = collector_config_path(app)?;
     let log_path = ensure_log_path(app)?;
+    let pid_path = collector_pid_path(app)?;
 
     safety::atomic::write_atomic(&config_path, yaml.as_bytes())?;
 
@@ -243,7 +247,9 @@ pub fn reload_collector<S: std::hash::BuildHasher>(
     // (clippy::implicit_hasher); SupervisorOptions stores a concrete
     // map and doesn't propagate the generic.
     let env: std::collections::HashMap<String, String> = env.into_iter().collect();
-    let opts = SupervisorOptions::new(binary_path, config_path, log_path).with_env(env);
+    let opts = SupervisorOptions::new(binary_path, config_path, log_path)
+        .with_pid_file_path(pid_path)
+        .with_env(env);
     // Reuse the long-lived channels so existing subscribers (tray,
     // dashboard hooks) keep observing transitions across the reload.
     let channels = app.state::<SupervisorChannels>().inner().clone();
@@ -314,6 +320,17 @@ fn ensure_log_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
     let dir = app.path().app_log_dir()?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("collector.log"))
+}
+
+/// Resolve the path used by the supervisor to record the spawned
+/// child's PID. Lives next to `collector.yaml` in the app data dir.
+/// On the next launch, the supervisor reads this file to detect any
+/// orphaned `trove-otelcol` process from a previous session that
+/// otherwise blocks port 8888 and triggers a perpetual crashloop.
+fn collector_pid_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
+    let dir = app.path().app_data_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("collector.pid"))
 }
 
 /// Public accessor for the collector log path the supervisor tees its
