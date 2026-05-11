@@ -11,6 +11,7 @@ pub mod app_state;
 pub mod collector;
 pub mod detect;
 pub mod harness;
+pub mod identity;
 pub mod ipc;
 pub mod log_watcher;
 pub mod otlp_emit;
@@ -63,6 +64,10 @@ pub fn run() {
             ipc::commands::test_export,
             ipc::commands::set_auto_update_enabled,
             ipc::commands::check_for_updates,
+            ipc::commands::set_identity_enabled,
+            ipc::commands::set_identity_manual,
+            ipc::commands::set_identity_auto,
+            ipc::commands::resolve_identity_preview,
             ipc::collector_status::get_collector_status,
             ipc::collector_status::get_metrics_snapshot,
             ipc::collector_status::get_collector_log_tail,
@@ -324,16 +329,32 @@ fn prepare_collector_runtime(
 ) -> Result<(PathBuf, std::collections::HashMap<String, String>), CollectorBootError> {
     let config_path = collector_config_path(app)?;
     let (yaml, env) = match app_state::load(app) {
-        Ok(state) => match state.backend {
+        Ok(state) => match &state.backend {
             None => (SMOKE_CONFIG_YAML.to_string(), std::collections::HashMap::new()),
-            Some(backend) => match collector::codegen::render(&backend) {
+            Some(backend) => match collector::codegen::render(backend) {
                 Ok(rendered) => {
                     let env: std::collections::HashMap<String, String> = rendered
                         .env
                         .into_iter()
                         .map(|(k, v)| (k, v.to_string()))
                         .collect();
-                    (rendered.yaml, env)
+                    // Apply opt-in identity overlay. Detection sweep
+                    // runs synchronously here so per-harness probes
+                    // (currently stubs) see the same harness state the
+                    // dashboard does. With identity disabled, the
+                    // overlay returns yaml unchanged.
+                    let harnesses = if state.identity.enabled {
+                        detect::detect_all()
+                    } else {
+                        Vec::new()
+                    };
+                    let resolved = identity::resolve(&state.identity, &harnesses);
+                    let yaml = if state.identity.enabled {
+                        collector::codegen::apply_identity_overlay(rendered.yaml, &resolved)
+                    } else {
+                        rendered.yaml
+                    };
+                    (yaml, env)
                 }
                 Err(e) => {
                     tracing::warn!(

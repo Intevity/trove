@@ -40,7 +40,7 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
   await installTauriMock(page, {
     // Seed a backend so the dashboard renders directly (no wizard step).
     appState: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       backend: {
         kind: 'signoz',
         endpoint: 'ingest.us.signoz.cloud:443',
@@ -48,6 +48,7 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
       },
       harnesses: [],
       autoUpdateEnabled: false,
+      identity: { enabled: false, source: 'auto', name: '', email: '' },
     },
     collectorStatus: {
       state: { kind: 'running', pid: 1234, restarts: 0 },
@@ -92,7 +93,7 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
 }) => {
   await installTauriMock(page, {
     appState: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       backend: {
         kind: 'signoz',
         endpoint: 'ingest.us.signoz.cloud:443',
@@ -100,6 +101,7 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
       },
       harnesses: [],
       autoUpdateEnabled: false,
+      identity: { enabled: false, source: 'auto', name: '', email: '' },
     },
     collectorStatus: {
       state: { kind: 'running', pid: 1234, restarts: 0 },

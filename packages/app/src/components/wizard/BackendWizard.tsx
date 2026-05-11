@@ -113,6 +113,7 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
         <TestExportStep
           busy={busy}
           result={testResult}
+          backendKind={draft?.kind ?? kind ?? undefined}
           onTest={() => void handleTest()}
           onSave={handleSave}
           onBack={handleBackToCreds}

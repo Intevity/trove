@@ -146,19 +146,55 @@ export const HarnessConfig = z.object({
 });
 export type HarnessConfig = z.infer<typeof HarnessConfig>;
 
+/** Identity attribution for outgoing telemetry. Opt-in; off by
+ *  default. When enabled, the collector pipeline tags every signal
+ *  with `user.name` and `user.email` resource attributes. Mirrors the
+ *  Rust `Identity` struct. */
+export const IdentitySource = z.enum(['auto', 'manual']);
+export type IdentitySource = z.infer<typeof IdentitySource>;
+
+export const Identity = z.object({
+  enabled: z.boolean().default(false),
+  source: IdentitySource.default('auto'),
+  name: z.string().default(''),
+  email: z.string().default(''),
+});
+export type Identity = z.infer<typeof Identity>;
+
+/** Source label returned by `resolve_identity_preview`. Mirrors the
+ *  Rust `ResolvedSource` enum. The `harness` case carries the
+ *  detected harness id; the other variants carry no payload. */
+export const ResolvedIdentitySource = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('manual') }),
+  z.object({ kind: z.literal('harness'), id: HarnessId }),
+  z.object({ kind: z.literal('git-config') }),
+  z.object({ kind: z.literal('none') }),
+]);
+export type ResolvedIdentitySource = z.infer<typeof ResolvedIdentitySource>;
+
+/** Outcome of `resolve_identity_preview`. Mirrors the Rust `Resolved`
+ *  struct. The `source` field reflects which step of the probe ladder
+ *  contributed the values. */
+export const ResolvedIdentity = z.object({
+  name: z.string(),
+  email: z.string(),
+  source: ResolvedIdentitySource,
+});
+export type ResolvedIdentity = z.infer<typeof ResolvedIdentity>;
+
 /** Persisted application state. Secrets are referenced via SecretRef only.
- *  Schema version bumped to 4 in Sprint 10 alongside the new
- *  `autoUpdateEnabled` flag that gates the background-on-launch update
- *  probe. Migrations are centralised in the Rust loader: v2/v3 documents
- *  load cleanly via `serde(default)` defaults (`""` for the patch
- *  payload, `false` for `autoUpdateEnabled`) and the loader re-stamps
- *  schemaVersion to 4 so the next save persists v4 to disk. Older
- *  consumers cannot read v4 files. */
+ *  Schema version bumped to 5 in Sprint 12 alongside the new
+ *  `identity` field that gates opt-in user.name/user.email tagging.
+ *  Migrations are centralised in the Rust loader: v2..=v4 documents
+ *  load cleanly via `serde(default)` defaults and the loader re-stamps
+ *  schemaVersion to 5 so the next save persists v5 to disk. Older
+ *  consumers cannot read v5 files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(4),
+  schemaVersion: z.literal(5),
   backend: Backend.nullable(),
   harnesses: z.array(HarnessConfig),
   autoUpdateEnabled: z.boolean(),
+  identity: Identity,
 });
 export type AppState = z.infer<typeof AppState>;
 

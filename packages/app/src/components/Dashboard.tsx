@@ -14,6 +14,7 @@ import { LogsPanel } from './LogsPanel.js';
 import { OverallHealthBadge } from './OverallHealthBadge.js';
 import { PatchPreviewModal } from './PatchPreviewModal.js';
 import { AutoUpdate } from './Settings/AutoUpdate.js';
+import { IdentityPanel } from './Settings/IdentityPanel.js';
 import { SidecarPanel } from './SidecarPanel.js';
 
 interface Props {
@@ -93,7 +94,7 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
         <BackendBanner backend={appState.backend} onChange={onChangeBackend} />
       ) : null}
 
-      <SidecarPanel state={status?.state ?? null} metrics={snapshot} />
+      <SidecarPanel state={status?.state ?? null} metrics={snapshot} backend={appState.backend} />
 
       {error ? (
         <p
@@ -109,6 +110,7 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
           onEnable={handleEnable}
           onDisable={(id) => void handleDisable(id)}
           busyIds={busyIds}
+          onRefresh={() => void refresh()}
         />
       )}
 
@@ -129,6 +131,14 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
           await setAutoUpdateEnabled(next);
           await onAppStateRefresh();
         }}
+      />
+
+      <IdentityPanel
+        enabled={appState.identity.enabled}
+        manualName={appState.identity.name}
+        manualEmail={appState.identity.email}
+        backend={appState.backend}
+        onChanged={() => void onAppStateRefresh()}
       />
 
       {previewing ? (

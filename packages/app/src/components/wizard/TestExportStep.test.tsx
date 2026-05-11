@@ -27,6 +27,24 @@ describe('TestExportStep', () => {
     expect(screen.queryByTestId('test-export-save-anyway')).toBeNull();
   });
 
+  it('renders the synthetic-span hints inside the ok banner', () => {
+    render(
+      <TestExportStep
+        {...baseProps}
+        result={{ status: 'ok', detail: 'all good' }}
+        backendKind="signoz"
+      />,
+    );
+    expect(screen.getByTestId('synthetic-span-hints')).toBeDefined();
+    expect(screen.getByTestId('hint-service-name').textContent).toBe('trove-test-export');
+    expect(screen.getByTestId('synthetic-span-hints').textContent).toContain('SigNoz Cloud');
+  });
+
+  it('does not render synthetic-span hints when the test failed', () => {
+    render(<TestExportStep {...baseProps} result={{ status: 'failed', detail: 'bad' }} />);
+    expect(screen.queryByTestId('synthetic-span-hints')).toBeNull();
+  });
+
   it('disables Save and shows Save anyway on failed', () => {
     render(
       <TestExportStep

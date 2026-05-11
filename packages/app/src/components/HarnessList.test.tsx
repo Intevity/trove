@@ -369,6 +369,38 @@ describe('HarnessList', () => {
     expect(advisory.title).toContain('shell-rc');
   });
 
+  it('renders a Refresh button in the header when onRefresh is provided, hidden otherwise', () => {
+    const onRefresh = vi.fn();
+    const { rerender } = render(
+      <HarnessList harnesses={[row({})]} loading={false} onRefresh={onRefresh} />,
+    );
+    expect(screen.getByTestId('harness-list-refresh')).toBeDefined();
+    rerender(<HarnessList harnesses={[row({})]} loading={false} />);
+    expect(screen.queryByTestId('harness-list-refresh')).toBeNull();
+  });
+
+  it('invokes onRefresh when the Refresh button is clicked', () => {
+    const onRefresh = vi.fn();
+    render(<HarnessList harnesses={[row({})]} loading={false} onRefresh={onRefresh} />);
+    fireEvent.click(screen.getByTestId('harness-list-refresh'));
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('disables and re-labels the Refresh button while a sweep is in flight', () => {
+    const onRefresh = vi.fn();
+    render(<HarnessList harnesses={[]} loading={true} onRefresh={onRefresh} />);
+    const btn = screen.getByTestId('harness-list-refresh') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toContain('Refreshing');
+  });
+
+  it('keeps the Refresh button visible while the empty state is shown', () => {
+    const onRefresh = vi.fn();
+    render(<HarnessList harnesses={[]} loading={false} onRefresh={onRefresh} />);
+    expect(screen.getByTestId('harness-list-empty')).toBeDefined();
+    expect(screen.getByTestId('harness-list-refresh')).toBeDefined();
+  });
+
   it('shows a best-effort advisory on the copilot-cli row that mentions the gh-copilot rename', () => {
     render(
       <HarnessList

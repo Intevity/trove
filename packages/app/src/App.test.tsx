@@ -18,18 +18,26 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 
-/** Default state.json shape: schemaVersion 4, no backend yet. App
+const DEFAULT_IDENTITY = {
+  enabled: false,
+  source: 'auto' as const,
+  name: '',
+  email: '',
+};
+
+/** Default state.json shape: schemaVersion 5, no backend yet. App
  *  swaps in the wizard for this case. The detection-related tests
  *  override `backend` to a SigNoz stub so the dashboard view renders. */
 const FRESH_APP_STATE = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   backend: null,
   harnesses: [],
   autoUpdateEnabled: false,
+  identity: DEFAULT_IDENTITY,
 };
 
 const SIGNOZ_STATE = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   backend: {
     kind: 'signoz' as const,
     endpoint: 'ingest.us.signoz.cloud:443',
@@ -37,6 +45,7 @@ const SIGNOZ_STATE = {
   },
   harnesses: [],
   autoUpdateEnabled: false,
+  identity: DEFAULT_IDENTITY,
 };
 
 /** Returns a mock implementation that maps Tauri command names to

@@ -88,10 +88,11 @@ fn save_then_load_is_byte_identical_for_each_backend_kind() {
     for backend in backends {
         let dir = tempdir().unwrap();
         let state = AppState {
-            schema_version: 4,
+            schema_version: trove_app::app_state::CURRENT_SCHEMA_VERSION,
             backend: Some(backend.clone()),
             harnesses: vec![sample_config(HarnessId::ClaudeCode)],
             auto_update_enabled: false,
+            identity: trove_app::app_state::Identity::default(),
         };
         save_to_dir(dir.path(), &state).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();

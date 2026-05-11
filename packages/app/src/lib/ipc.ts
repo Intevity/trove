@@ -12,9 +12,13 @@ import {
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
   ResolveConflictResponse,
+  ResolveIdentityPreviewResponse,
   RevertPatchResponse,
   SaveBackendResponse,
   SetAutoUpdateEnabledResponse,
+  SetIdentityAutoResponse,
+  SetIdentityEnabledResponse,
+  SetIdentityManualResponse,
   TestExportResponse,
   type AppState,
   type ApplyOptions,
@@ -28,6 +32,7 @@ import {
   type HarnessId,
   type MetricsSnapshotWire,
   type PatchPreview,
+  type ResolvedIdentity,
   type TestExportResult,
   type TrovePatch,
   type UpdateMetadata,
@@ -184,4 +189,35 @@ export async function setAutoUpdateEnabled(enabled: boolean): Promise<void> {
  *  `TroveIpcError` whose `cause.kind === 'updater-check-failed'`. */
 export async function checkForUpdates(): Promise<UpdateMetadata> {
   return invokeIpc(IpcCommandName.CheckForUpdates, undefined, CheckForUpdatesResponse);
+}
+
+/** Sprint 12 — flip the opt-in identity tagging flag and reload the
+ *  collector with the matching `resource/identity` overlay applied
+ *  (when a backend is configured). Off by default. */
+export async function setIdentityEnabled(enabled: boolean): Promise<void> {
+  await invokeIpc(IpcCommandName.SetIdentityEnabled, { enabled }, SetIdentityEnabledResponse);
+}
+
+/** Sprint 12 — persist a user-entered name/email override and pin the
+ *  source to `manual`. Empty strings are valid (mirrors the "clear
+ *  my override" affordance). */
+export async function setIdentityManual(name: string, email: string): Promise<void> {
+  await invokeIpc(IpcCommandName.SetIdentityManual, { name, email }, SetIdentityManualResponse);
+}
+
+/** Sprint 12 — pin the source back to `auto` without touching the
+ *  persisted name/email. Probe ladder runs on the next reload. */
+export async function setIdentityAuto(): Promise<void> {
+  await invokeIpc(IpcCommandName.SetIdentityAuto, undefined, SetIdentityAutoResponse);
+}
+
+/** Sprint 12 — preview the resolved identity (values + source label)
+ *  without persisting. The Identity panel calls this on mount and
+ *  after each mutation. */
+export async function resolveIdentityPreview(): Promise<ResolvedIdentity> {
+  return invokeIpc(
+    IpcCommandName.ResolveIdentityPreview,
+    undefined,
+    ResolveIdentityPreviewResponse,
+  );
 }

@@ -30,6 +30,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::app_state::{Backend, OtlpProtocol};
+use crate::identity::{Resolved, ResolvedSource};
 use crate::secrets;
 
 const SIGNOZ_TEMPLATE: &str =
@@ -301,6 +302,86 @@ fn render_otlp_generic_yaml(protocol: OtlpProtocol, header_lines: &str) -> Strin
     )
 }
 
+/// Inject an opt-in `resource/identity` processor into `yaml` when
+/// `resolved` carries non-empty values. Returns the input unchanged
+/// when [`crate::identity::ResolvedSource::None`] or when both name
+/// and email are empty — so disabled or "no signal" passes through
+/// byte-identical to the unmodified template (preserves the existing
+/// golden-file invariants).
+///
+/// The transform is two string substitutions:
+///
+/// 1. Add a `resource/identity:` block under the top-level
+///    `processors:` map.
+/// 2. Append `, resource/identity` to every pipeline's `processors:`
+///    list (the canonical `[batch, attributes/redact, resource/source]`
+///    line every template uses).
+///
+/// Both substitutions are anchored to verbatim strings that appear
+/// once at the top level (1) and exactly three times across pipelines
+/// (2). A unit test pins the invariant.
+#[must_use]
+pub fn apply_identity_overlay(yaml: String, resolved: &Resolved) -> String {
+    if matches!(resolved.source, ResolvedSource::None)
+        || (resolved.name.is_empty() && resolved.email.is_empty())
+    {
+        return yaml;
+    }
+
+    let mut attributes = String::new();
+    if !resolved.name.is_empty() {
+        let _ = writeln!(
+            attributes,
+            "      - {{ key: user.name, value: {}, action: upsert }}",
+            yaml_quote(&resolved.name)
+        );
+    }
+    if !resolved.email.is_empty() {
+        let _ = writeln!(
+            attributes,
+            "      - {{ key: user.email, value: {}, action: upsert }}",
+            yaml_quote(&resolved.email)
+        );
+    }
+
+    let processor_block = format!(
+        "  resource/identity:\n    attributes:\n{attributes}",
+    );
+
+    // (1) Inject the processor block after the top-level `processors:` key.
+    //     The pipeline lines use `processors: [...]` (value on same line),
+    //     so this verbatim match hits only the top-level occurrence.
+    let with_block = yaml.replacen(
+        "processors:\n",
+        &format!("processors:\n{processor_block}"),
+        1,
+    );
+
+    // (2) Append the new processor to every pipeline processors list.
+    with_block.replace(
+        "processors: [batch, attributes/redact, resource/source]",
+        "processors: [batch, attributes/redact, resource/source, resource/identity]",
+    )
+}
+
+/// Format `s` as a YAML double-quoted scalar. Escapes the two
+/// characters that matter inside a `"..."` scalar: backslash and
+/// double-quote. Everything else round-trips verbatim, including
+/// spaces and Unicode.
+fn yaml_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,5 +409,93 @@ mod tests {
     fn signoz_template_includes_ingestion_key_env_var() {
         assert!(SIGNOZ_TEMPLATE.contains("${env:TROVE_SIGNOZ_INGESTION_KEY}"));
         assert!(SIGNOZ_TEMPLATE.contains("${env:TROVE_SIGNOZ_ENDPOINT}"));
+    }
+
+    fn resolved(name: &str, email: &str) -> Resolved {
+        Resolved {
+            name: name.to_string(),
+            email: email.to_string(),
+            source: ResolvedSource::GitConfig,
+        }
+    }
+
+    #[test]
+    fn identity_overlay_is_a_noop_when_source_is_none() {
+        let original = SIGNOZ_TEMPLATE.to_string();
+        let r = Resolved {
+            name: String::new(),
+            email: String::new(),
+            source: ResolvedSource::None,
+        };
+        assert_eq!(apply_identity_overlay(original.clone(), &r), original);
+    }
+
+    #[test]
+    fn identity_overlay_is_a_noop_when_both_values_empty() {
+        let original = SIGNOZ_TEMPLATE.to_string();
+        let r = resolved("", "");
+        assert_eq!(apply_identity_overlay(original.clone(), &r), original);
+    }
+
+    #[test]
+    fn identity_overlay_injects_processor_and_appends_to_pipelines() {
+        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let baseline_pipeline_hits = yaml
+            .matches("processors: [batch, attributes/redact, resource/source]")
+            .count();
+        // Three pipeline lines (metrics/logs/traces) on every template.
+        assert_eq!(baseline_pipeline_hits, 3, "preset template invariant changed");
+
+        let r = resolved("Ada Lovelace", "ada@example.com");
+        let out = apply_identity_overlay(yaml, &r);
+
+        // Block injected once at the top-level processors map.
+        assert_eq!(out.matches("resource/identity:").count(), 1);
+        assert!(out.contains("- { key: user.name, value: \"Ada Lovelace\", action: upsert }"));
+        assert!(out.contains("- { key: user.email, value: \"ada@example.com\", action: upsert }"));
+
+        // Every pipeline line picks up the new processor.
+        let original_pipeline_line =
+            "processors: [batch, attributes/redact, resource/source]";
+        let new_pipeline_line =
+            "processors: [batch, attributes/redact, resource/source, resource/identity]";
+        assert_eq!(out.matches(original_pipeline_line).count(), 0);
+        assert_eq!(out.matches(new_pipeline_line).count(), 3);
+    }
+
+    #[test]
+    fn identity_overlay_handles_name_only_or_email_only() {
+        let yaml = HONEYCOMB_TEMPLATE.to_string();
+
+        let with_name = apply_identity_overlay(yaml.clone(), &resolved("Ada", ""));
+        assert!(with_name.contains("user.name"));
+        assert!(!with_name.contains("user.email"));
+
+        let with_email = apply_identity_overlay(yaml, &resolved("", "ada@example.com"));
+        assert!(with_email.contains("user.email"));
+        assert!(!with_email.contains("user.name"));
+    }
+
+    #[test]
+    fn identity_overlay_yaml_escapes_quotes_and_backslashes_in_values() {
+        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let r = resolved("o\"\\dd", "ada@example.com");
+        let out = apply_identity_overlay(yaml, &r);
+        // Backslash and quote are escaped inside the double-quoted YAML scalar.
+        assert!(out.contains(r#"value: "o\"\\dd", action: upsert"#));
+    }
+
+    #[test]
+    fn identity_overlay_does_not_touch_unrelated_template_bytes() {
+        // Smoke-test: the smoke-test/passthrough template lacks the
+        // canonical pipeline line, so the overlay must be a no-op
+        // beyond injecting the top-level block if pipelines are
+        // missing. Confirms we don't accidentally double-apply.
+        let custom = "extensions:\nprocessors:\n  noop:\nservice:\n  pipelines:\n    traces:\n      processors: [noop]\n".to_string();
+        let r = resolved("Ada", "ada@x");
+        let out = apply_identity_overlay(custom, &r);
+        assert!(out.contains("resource/identity:"));
+        // Pipeline line didn't match our verbatim anchor — left alone.
+        assert!(out.contains("processors: [noop]"));
     }
 }
