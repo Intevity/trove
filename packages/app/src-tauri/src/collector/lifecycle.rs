@@ -57,6 +57,16 @@ pub struct SupervisorOptions {
     /// passed via [`Command::envs`](tokio::process::Command::envs) —
     /// never argv — so secrets cannot leak via `ps`.
     pub env: HashMap<String, String>,
+    /// Path to a single-line file holding the most recent child PID.
+    /// On startup the supervisor checks this file and reaps any
+    /// surviving `trove-otelcol` process from a previous app session
+    /// (e.g., a force-quit or crash that bypassed `kill_on_drop`)
+    /// before spawning a new child. Without this, an orphan child
+    /// holding port 8888 (the otelcol Prometheus telemetry endpoint)
+    /// blocks every subsequent spawn with `bind: address already in
+    /// use`, producing a perpetual crashloop. `None` disables the
+    /// feature (only used by tests that don't need it).
+    pub pid_file_path: Option<PathBuf>,
 }
 
 impl SupervisorOptions {
@@ -74,7 +84,16 @@ impl SupervisorOptions {
             restart_healthy_threshold: Duration::from_secs(30),
             shutdown_grace: Duration::from_secs(5),
             env: HashMap::new(),
+            pid_file_path: None,
         }
+    }
+
+    /// Set the path where the supervisor records the spawned child's
+    /// PID. Enables orphan reaping at startup; see [`Self::pid_file_path`].
+    #[must_use]
+    pub fn with_pid_file_path(mut self, path: PathBuf) -> Self {
+        self.pid_file_path = Some(path);
+        self
     }
 
     /// Builder helper. Replaces any previous env map.
@@ -297,6 +316,25 @@ async fn supervise_loop(
     let mut backoff = opts.restart_initial_backoff;
     let mut restarts: u32 = 0;
 
+    // Reap any orphaned collector left behind by a prior app session
+    // (force-quit, crash, or installer replacing the bundle without a
+    // clean shutdown). If we skip this, the orphan still owns
+    // 127.0.0.1:8888 (the otelcol Prometheus telemetry endpoint) and
+    // every spawn here fails with `bind: address already in use`,
+    // producing a crashloop the user sees as "Sidecar down".
+    //
+    // Two reapers, defense in depth:
+    //   1. `reap_orphan_collector` reads <app_data>/collector.pid (the
+    //      authoritative record written after each successful spawn).
+    //   2. `reap_orphans_by_name` scans the process table for any
+    //      other process whose executable name matches the supervisor
+    //      binary. Catches orphans from pre-fix app versions (no
+    //      collector.pid existed yet) and corrupted pid files.
+    if let Some(pid_path) = opts.pid_file_path.as_deref() {
+        reap_orphan_collector(pid_path, &opts.binary_path).await;
+    }
+    reap_orphans_by_name(&opts.binary_path).await;
+
     loop {
         // Honor shutdown that arrived during a previous backoff window.
         match shutdown_rx.try_recv() {
@@ -321,6 +359,10 @@ async fn supervise_loop(
         let pid = child.id().unwrap_or(0);
         tracing::info!(pid, "trove-otelcol spawned");
         state_tx.send_replace(CollectorState::Starting { pid });
+
+        if let Some(pid_path) = opts.pid_file_path.as_deref() {
+            write_pid_file(pid_path, pid);
+        }
 
         spawn_log_tee(
             child.stdout.take(),
@@ -360,6 +402,9 @@ async fn supervise_loop(
                 health_join.abort();
                 state_tx.send_replace(CollectorState::Stopping);
                 terminate_child(&mut child, opts.shutdown_grace).await;
+                if let Some(pid_path) = opts.pid_file_path.as_deref() {
+                    let _ = std::fs::remove_file(pid_path);
+                }
                 state_tx.send_replace(CollectorState::Stopped);
                 return;
             }
@@ -437,6 +482,291 @@ fn spawn_health_probe(
     })
 }
 
+/// Persist `pid` to `path` via a temp-file + rename so a crash mid-write
+/// can't leave a half-written file the next reap step would parse
+/// incorrectly. Failures are logged but never propagated — the supervisor
+/// shouldn't refuse to start because the PID file is unwritable.
+fn write_pid_file(path: &std::path::Path, pid: u32) {
+    if let Err(e) = crate::safety::atomic::write_atomic(path, pid.to_string().as_bytes()) {
+        tracing::warn!(error = %e, ?path, "failed to write collector pid file");
+    }
+}
+
+/// If `pid_path` exists and references a still-alive `trove-otelcol`
+/// process from a previous app session, send SIGTERM (Unix) or
+/// `TerminateProcess` (Windows) and wait up to ~3s for it to exit, then
+/// escalate to SIGKILL / `taskkill /F`. Deletes the file on completion.
+///
+/// Defends against:
+/// - The parent (Trove app) being force-quit or crashing, leaving the
+///   `kill_on_drop` guarantee unfired so the child survives.
+/// - An installer replacing the bundle without a clean shutdown.
+///
+/// PID reuse is real: another process may have inherited the PID by the
+/// time we check. Mitigated by [`process_command_name`] — we only kill
+/// if the running process's argv0/`COMM` resolves to the supervisor's
+/// own binary name (e.g., `trove-otelcol`).
+async fn reap_orphan_collector(pid_path: &std::path::Path, binary_path: &std::path::Path) {
+    let Some(pid) = read_pid_file(pid_path) else {
+        return;
+    };
+    let expected = binary_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("trove-otelcol");
+    // Strip the .exe suffix on Windows so the comparison against
+    // tasklist's IMAGENAME (which keeps it) works either way.
+    let expected_stem = expected.trim_end_matches(".exe");
+
+    let observed = process_command_name(pid);
+    let matches = observed
+        .as_deref()
+        .map(|n| n.trim_end_matches(".exe"))
+        .is_some_and(|n| n == expected_stem || n.contains(expected_stem));
+
+    if !matches {
+        if observed.is_some() {
+            tracing::info!(
+                pid,
+                observed = ?observed,
+                expected = expected_stem,
+                "stale collector pid file refers to a different process; ignoring",
+            );
+        }
+        let _ = std::fs::remove_file(pid_path);
+        return;
+    }
+
+    tracing::warn!(
+        pid,
+        "found orphaned trove-otelcol from a previous session; reaping",
+    );
+    send_terminate_signal(pid);
+    // Wait up to ~3s for graceful exit, polling at 100ms.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        if !process_is_alive(pid) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    if process_is_alive(pid) {
+        tracing::warn!(pid, "orphan did not exit gracefully; force killing");
+        send_kill_signal(pid);
+    }
+    let _ = std::fs::remove_file(pid_path);
+}
+
+/// Find every running process whose executable name matches `binary`'s
+/// leaf name and reap it. Complements [`reap_orphan_collector`] for the
+/// case where a pre-fix app version (which didn't write a PID file)
+/// left an orphan behind, or where the PID file was corrupted.
+///
+/// Skips the current process so we never reach in and kill ourselves
+/// (defensive — the supervisor binary differs from the collector
+/// binary, but the check is cheap).
+async fn reap_orphans_by_name(binary: &std::path::Path) {
+    let Some(name) = binary
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let self_pid = std::process::id();
+    let mut survivors = Vec::new();
+    for pid in find_processes_by_name(&name) {
+        if pid == self_pid {
+            continue;
+        }
+        tracing::warn!(
+            pid,
+            binary = ?binary,
+            "found orphaned collector by name scan; reaping",
+        );
+        send_terminate_signal(pid);
+        survivors.push(pid);
+    }
+    if survivors.is_empty() {
+        return;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        survivors.retain(|p| process_is_alive(*p));
+        if survivors.is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    for pid in survivors {
+        tracing::warn!(pid, "name-scanned orphan did not exit; force killing");
+        send_kill_signal(pid);
+    }
+}
+
+/// List PIDs of running processes whose executable matches `name` (its
+/// leaf — `trove-otelcol` or `trove-otelcol.exe`). Returns an empty
+/// vec on any error so callers can treat it as "nothing to reap."
+fn find_processes_by_name(name: &str) -> Vec<u32> {
+    // Strip a trailing `.exe` so callers on Windows that pass
+    // `trove-otelcol.exe` still match the tasklist IMAGENAME column.
+    let stem = name.trim_end_matches(".exe");
+    #[cfg(unix)]
+    {
+        // `pgrep -x <name>` matches the executable name exactly. We
+        // pass the stem; macOS's process accounting truncates `comm`
+        // at 15 chars, so a longer binary name relies on the prefix
+        // match `pgrep` performs by default if `-x` finds nothing.
+        if let Ok(out) = std::process::Command::new("pgrep").args(["-x", stem]).output() {
+            if out.status.success() {
+                return String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|l| l.trim().parse::<u32>().ok())
+                    .filter(|p| *p > 0)
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+    #[cfg(windows)]
+    {
+        let filter = format!("IMAGENAME eq {stem}.exe");
+        if let Ok(out) = std::process::Command::new("tasklist")
+            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .output()
+        {
+            if out.status.success() {
+                return String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|line| {
+                        let cols: Vec<&str> = line.split(',').collect();
+                        cols.get(1)
+                            .and_then(|c| c.trim_matches('"').parse::<u32>().ok())
+                    })
+                    .filter(|p| *p > 0)
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = stem;
+        Vec::new()
+    }
+}
+
+fn read_pid_file(path: &std::path::Path) -> Option<u32> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    contents.trim().parse::<u32>().ok().filter(|p| *p > 0)
+}
+
+/// Resolve the executable name of `pid` if it is currently alive.
+/// Returns `None` for both "no such process" and "permission denied"
+/// — in both cases the reaper treats the entry as not-our-binary and
+/// leaves the process alone.
+fn process_command_name(pid: u32) -> Option<String> {
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if line.is_empty() {
+            None
+        } else {
+            // `ps -o comm=` prints the full executable path; we want the leaf.
+            Some(
+                std::path::Path::new(&line)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(String::from)
+                    .unwrap_or(line),
+            )
+        }
+    }
+    #[cfg(windows)]
+    {
+        // tasklist /FI "PID eq <pid>" /FO CSV /NH → "IMAGENAME","PID",…
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let line = String::from_utf8_lossy(&out.stdout);
+        let first = line.lines().next()?.trim();
+        if first.is_empty() || first.starts_with("INFO:") {
+            return None;
+        }
+        // CSV row: "IMAGENAME","PID",...
+        let name = first.split(',').next()?.trim_matches('"').to_string();
+        if name.is_empty() { None } else { Some(name) }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // `kill -0 <pid>` returns success iff the process exists and the
+        // caller has permission to signal it. We're killing our own
+        // children, so permission is implicit.
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+    #[cfg(not(unix))]
+    {
+        process_command_name(pid).is_some()
+    }
+}
+
+fn send_terminate_signal(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        // taskkill without /F sends WM_CLOSE (graceful for GUI apps) and
+        // falls back to a soft termination for console apps. For
+        // trove-otelcol (a console process) this is roughly equivalent
+        // to CTRL_BREAK_EVENT — enough for the otelcol shutdown handler
+        // to run.
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .status();
+    }
+}
+
+fn send_kill_signal(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .status();
+    }
+}
+
 async fn terminate_child(child: &mut Child, grace: Duration) {
     if let Err(e) = child.start_kill() {
         tracing::warn!(error = %e, "start_kill failed; child may already be gone");
@@ -451,6 +781,107 @@ async fn terminate_child(child: &mut Child, grace: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_pid_file_returns_none_when_path_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_pid_file(&dir.path().join("collector.pid")).is_none());
+    }
+
+    #[test]
+    fn read_pid_file_returns_none_on_garbage_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collector.pid");
+        std::fs::write(&path, b"not-a-number\n").unwrap();
+        assert!(read_pid_file(&path).is_none());
+    }
+
+    #[test]
+    fn read_pid_file_returns_zero_value_as_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collector.pid");
+        std::fs::write(&path, b"0\n").unwrap();
+        assert!(read_pid_file(&path).is_none());
+    }
+
+    #[test]
+    fn write_pid_file_round_trips_through_read_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collector.pid");
+        write_pid_file(&path, 12345);
+        assert_eq!(read_pid_file(&path), Some(12345));
+    }
+
+    #[test]
+    fn process_command_name_for_self_pid_resolves_to_something() {
+        // The test runner is alive while this test runs; we can't pin
+        // the exact name (cargo-test-runner-<hash>), but we can assert
+        // we got a non-empty answer back.
+        let me = std::process::id();
+        let name = process_command_name(me);
+        assert!(name.is_some(), "expected a name for self pid {me}");
+        assert!(!name.unwrap().is_empty());
+    }
+
+    #[test]
+    fn process_command_name_for_nonexistent_pid_is_none() {
+        // PIDs above 4_000_000 are not allocated by default on macOS or
+        // Linux. If something else is running with that PID at test
+        // time we just get false-positive — acceptable noise.
+        assert!(process_command_name(4_000_001).is_none());
+    }
+
+    #[test]
+    fn process_is_alive_for_self_pid_is_true() {
+        assert!(process_is_alive(std::process::id()));
+    }
+
+    #[test]
+    fn process_is_alive_for_high_pid_is_false() {
+        assert!(!process_is_alive(4_000_001));
+    }
+
+    #[tokio::test]
+    async fn reap_orphan_collector_is_noop_when_pid_file_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("collector.pid");
+        let binary = std::path::PathBuf::from("/usr/local/bin/trove-otelcol");
+        // Should not panic, should not create the file.
+        reap_orphan_collector(&pid_path, &binary).await;
+        assert!(!pid_path.exists());
+    }
+
+    #[test]
+    fn find_processes_by_name_returns_empty_for_nonsense_name() {
+        assert!(find_processes_by_name("trove-totally-not-a-real-binary-xyz").is_empty());
+    }
+
+    #[tokio::test]
+    async fn reap_orphans_by_name_is_safe_when_no_matches() {
+        let binary = std::path::PathBuf::from(
+            "/usr/local/bin/trove-totally-not-a-real-binary-xyz",
+        );
+        // Must complete without panicking and without affecting the
+        // test runner's own process.
+        reap_orphans_by_name(&binary).await;
+        assert!(process_is_alive(std::process::id()));
+    }
+
+    #[tokio::test]
+    async fn reap_orphan_collector_does_not_kill_unrelated_process() {
+        // Write our own pid to the file but claim the supervisor's
+        // binary is something unrelated. The reaper must refuse to
+        // kill, but should still clean up the stale file.
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("collector.pid");
+        write_pid_file(&pid_path, std::process::id());
+        let binary = std::path::PathBuf::from("/usr/local/bin/trove-otelcol");
+        reap_orphan_collector(&pid_path, &binary).await;
+        // Self-process must still be alive.
+        assert!(process_is_alive(std::process::id()));
+        // Stale entry removed so the next launch starts clean.
+        assert!(!pid_path.exists());
+    }
 
     #[tokio::test]
     async fn channels_seed_subscribers_with_idle() {
