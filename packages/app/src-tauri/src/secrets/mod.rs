@@ -1,6 +1,6 @@
 //! Per-user secrets store.
 //!
-//! Trove's backend credentials (SigNoz ingestion key, Honeycomb team
+//! Trove's backend credentials (`SigNoz` ingestion key, Honeycomb team
 //! key, Datadog API key, etc.) are kept in a per-user JSON file at
 //! `<app_config_dir>/secrets.json` with `0600` permissions on Unix
 //! (owner read/write only). Sprint 13 switched the store away from the
