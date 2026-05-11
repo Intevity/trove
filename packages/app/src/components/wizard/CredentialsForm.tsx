@@ -33,16 +33,20 @@ function emptyDraft(kind: Kind): BackendDraft {
 }
 
 /** Normalize fields that users commonly paste in inconvenient forms.
- *  SigNoz Cloud's docs sometimes show the ingestion endpoint as a full
- *  `https://...` URL, but the OTLP/gRPC exporter expects `host:port`.
- *  Strip the scheme and any trailing slashes here so a paste-and-go
- *  flow works. */
+ *  SigNoz Cloud's docs and UI show the ingestion endpoint in several
+ *  shapes (`https://ingest.us2.signoz.cloud`, `ingest.us.signoz.cloud:443`,
+ *  bare host), but the OTLP/gRPC exporter expects `host:port`. Strip the
+ *  scheme, drop trailing slashes, and default the port to 443 (SigNoz
+ *  Cloud gRPC TLS) when absent so paste-and-go works for any form. */
 function canonicalizeDraft(draft: BackendDraft): BackendDraft {
   if (draft.kind === 'signoz') {
-    const endpoint = draft.endpoint
+    let endpoint = draft.endpoint
       .trim()
       .replace(/^https?:\/\//i, '')
       .replace(/\/+$/, '');
+    if (endpoint && !/:\d+$/.test(endpoint)) {
+      endpoint = `${endpoint}:443`;
+    }
     return { ...draft, endpoint };
   }
   return draft;
@@ -169,7 +173,12 @@ function renderFields(
             onChange={(v) => setDraft({ ...draft, endpoint: v })}
             placeholder="ingest.us.signoz.cloud:443"
             testId="signoz-endpoint"
-            helper={<span>Copy this from SigNoz Cloud → Settings → Ingestion Settings.</span>}
+            helper={
+              <span>
+                Copy this from SigNoz Cloud → Settings → Ingestion Settings. Either
+                `https://ingest.us.signoz.cloud` or `ingest.us.signoz.cloud:443` works.
+              </span>
+            }
           />
           <PasswordField
             label="Ingestion key"

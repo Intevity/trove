@@ -40,11 +40,11 @@ describe('CredentialsForm', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('rejects a malformed SigNoz endpoint that lacks a port', () => {
+  it('rejects a malformed SigNoz endpoint that has a path segment', () => {
     const onSubmit = vi.fn();
     render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
     fireEvent.change(screen.getByTestId('signoz-endpoint'), {
-      target: { value: 'signoz.cloud' },
+      target: { value: 'signoz.cloud/some/path' },
     });
     fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
       target: { value: 'sk-ingest-test' },
@@ -69,6 +69,57 @@ describe('CredentialsForm', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       kind: 'signoz',
       endpoint: 'ingest.eu.signoz.cloud:443',
+      ingestionKey: 'sk-ingest-test',
+    });
+  });
+
+  it('defaults the port to 443 when a SigNoz URL omits one', () => {
+    const onSubmit = vi.fn();
+    render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('signoz-endpoint'), {
+      target: { value: 'https://ingest.us2.signoz.cloud' },
+    });
+    fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
+      target: { value: 'sk-ingest-test' },
+    });
+    fireEvent.click(screen.getByTestId('credentials-form-continue'));
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: 'signoz',
+      endpoint: 'ingest.us2.signoz.cloud:443',
+      ingestionKey: 'sk-ingest-test',
+    });
+  });
+
+  it('defaults the port to 443 when a bare SigNoz host is entered without scheme or port', () => {
+    const onSubmit = vi.fn();
+    render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('signoz-endpoint'), {
+      target: { value: 'ingest.in.signoz.cloud' },
+    });
+    fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
+      target: { value: 'sk-ingest-test' },
+    });
+    fireEvent.click(screen.getByTestId('credentials-form-continue'));
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: 'signoz',
+      endpoint: 'ingest.in.signoz.cloud:443',
+      ingestionKey: 'sk-ingest-test',
+    });
+  });
+
+  it('preserves an explicit non-default SigNoz port when provided', () => {
+    const onSubmit = vi.fn();
+    render(<CredentialsForm kind="signoz" onSubmit={onSubmit} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByTestId('signoz-endpoint'), {
+      target: { value: 'https://ingest.us2.signoz.cloud:4317' },
+    });
+    fireEvent.change(screen.getByTestId('signoz-ingestion-key'), {
+      target: { value: 'sk-ingest-test' },
+    });
+    fireEvent.click(screen.getByTestId('credentials-form-continue'));
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: 'signoz',
+      endpoint: 'ingest.us2.signoz.cloud:4317',
       ingestionKey: 'sk-ingest-test',
     });
   });
