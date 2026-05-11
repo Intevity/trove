@@ -1,21 +1,20 @@
 import { useCallback, useState } from 'react';
 
-import { presetMetadataFor } from '@trove/collector-presets';
-import type { AppState, Backend, HarnessId } from '@trove/shared';
+import type { AppState, HarnessId } from '@trove/shared';
 
 import { useCollectorStatus } from '../hooks/useCollectorStatus.js';
 import { useDetectedHarnesses } from '../hooks/useDetectedHarnesses.js';
 import { useMetricsSnapshot } from '../hooks/useMetricsSnapshot.js';
 import { deriveOverallHealth } from '../lib/health.js';
-import { TroveIpcError, revertPatch, setAutoUpdateEnabled } from '../lib/ipc.js';
-import { DiagnosticsPanel } from './Diagnostics/DiagnosticsPanel.js';
-import { HarnessList } from './HarnessList.js';
-import { LogsPanel } from './LogsPanel.js';
-import { OverallHealthBadge } from './OverallHealthBadge.js';
+import { TroveIpcError, revertPatch } from '../lib/ipc.js';
+import { AppHeader } from './AppHeader.js';
+import { Footer } from './Footer.js';
 import { PatchPreviewModal } from './PatchPreviewModal.js';
-import { AutoUpdate } from './Settings/AutoUpdate.js';
-import { IdentityPanel } from './Settings/IdentityPanel.js';
-import { SidecarPanel } from './SidecarPanel.js';
+import { TabNav, type TabId } from './TabNav.js';
+import { HarnessesTab } from './tabs/HarnessesTab.js';
+import { LogsTab } from './tabs/LogsTab.js';
+import { OverviewTab } from './tabs/OverviewTab.js';
+import { SettingsTab } from './tabs/SettingsTab.js';
 
 interface Props {
   appState: AppState;
@@ -26,28 +25,26 @@ interface Props {
   onAppStateRefresh: () => void | Promise<void>;
 }
 
-/** Sprint 6 PR 3 dashboard. Replaces the post-wizard App body.
- *  Sections:
- *  - `OverallHealthBadge` — green/amber/red mirroring the tray.
- *  - `BackendBanner` — currently-selected backend + Change link.
- *  - `SidecarPanel` — collector state, counts, Test Pipeline.
- *  - `HarnessList` — existing detected-harnesses list.
- *  - `LogsPanel` — live tail of collector.log. */
+/** Post-wizard dashboard. Owns the tray-app shell (header / tab nav /
+ *  scrolling pane / footer) and routes between four tabs:
+ *  - Overview — health, diagnostics, backend, sidecar/collector
+ *  - Harnesses — detected-harness list with enable/disable
+ *  - Logs — live collector log tail (fills available height)
+ *  - Settings — auto-update, identity tagging */
 export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Props): JSX.Element {
   const { status } = useCollectorStatus();
   const { snapshot } = useMetricsSnapshot();
   const { harnesses, loading, error, refresh } = useDetectedHarnesses();
 
+  const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [previewing, setPreviewing] = useState<HarnessId | null>(null);
   const [busyIds, setBusyIds] = useState<Set<HarnessId>>(() => new Set());
   const [revertError, setRevertError] = useState<TroveIpcError | null>(null);
 
   const enabledHarnessCount = appState.harnesses.filter((h) => h.enabled).length;
-  const health = deriveOverallHealth(
-    status?.state ?? { kind: 'idle' },
-    snapshot,
-    enabledHarnessCount,
-  );
+  const state = status?.state ?? null;
+  const metrics = snapshot ?? null;
+  const health = deriveOverallHealth(state ?? { kind: 'idle' }, metrics, enabledHarnessCount);
   const detail = badgeDetail(status, snapshot);
 
   const handleEnable = useCallback((id: HarnessId) => {
@@ -85,60 +82,40 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
   }, [refresh]);
 
   return (
-    <div data-testid="dashboard" className="flex flex-col gap-4">
-      <OverallHealthBadge health={health} detail={detail} />
+    <div data-testid="dashboard" className="flex h-full flex-col">
+      <AppHeader health={health} />
+      <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
-      <DiagnosticsPanel appState={appState} state={status?.state ?? null} metrics={snapshot} />
+      <main className="flex-1 min-h-0 overflow-auto">
+        {activeTab === 'overview' && (
+          <OverviewTab
+            appState={appState}
+            health={health}
+            detail={detail}
+            state={state}
+            metrics={metrics}
+            onChangeBackend={onChangeBackend}
+          />
+        )}
+        {activeTab === 'harnesses' && (
+          <HarnessesTab
+            harnesses={harnesses}
+            loading={loading}
+            detectionError={error}
+            busyIds={busyIds}
+            revertError={revertError}
+            onEnable={handleEnable}
+            onDisable={(id) => void handleDisable(id)}
+            onRefresh={() => void refresh()}
+          />
+        )}
+        {activeTab === 'logs' && <LogsTab />}
+        {activeTab === 'settings' && (
+          <SettingsTab appState={appState} onAppStateRefresh={onAppStateRefresh} />
+        )}
+      </main>
 
-      {appState.backend ? (
-        <BackendBanner backend={appState.backend} onChange={onChangeBackend} />
-      ) : null}
-
-      <SidecarPanel state={status?.state ?? null} metrics={snapshot} backend={appState.backend} />
-
-      {error ? (
-        <p
-          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-200"
-          data-testid="harness-list-error"
-        >
-          Detection failed: {error.cause.kind}
-        </p>
-      ) : (
-        <HarnessList
-          harnesses={harnesses}
-          loading={loading}
-          onEnable={handleEnable}
-          onDisable={(id) => void handleDisable(id)}
-          busyIds={busyIds}
-          onRefresh={() => void refresh()}
-        />
-      )}
-
-      {revertError ? (
-        <p
-          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-200"
-          data-testid="revert-error"
-        >
-          Revert failed: {revertError.cause.kind}
-        </p>
-      ) : null}
-
-      <LogsPanel />
-
-      <AutoUpdate
-        enabled={appState.autoUpdateEnabled}
-        onToggle={async (next) => {
-          await setAutoUpdateEnabled(next);
-          await onAppStateRefresh();
-        }}
-      />
-
-      <IdentityPanel
-        enabled={appState.identity.enabled}
-        manualName={appState.identity.name}
-        manualEmail={appState.identity.email}
-        onChanged={() => void onAppStateRefresh()}
-      />
+      <Footer />
 
       {previewing ? (
         <PatchPreviewModal
@@ -160,48 +137,4 @@ function badgeDetail(
   if (status.state.kind === 'failed') return status.state.reason;
   if (status.state.kind === 'crashed') return `${status.state.restarts} restart(s)`;
   return undefined;
-}
-
-function BackendBanner({
-  backend,
-  onChange,
-}: {
-  backend: Backend;
-  onChange: () => void;
-}): JSX.Element {
-  const meta = presetMetadataFor(backend.kind);
-  return (
-    <p
-      data-testid="backend-banner"
-      className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
-    >
-      <span>
-        Forwarding to <span className="font-medium">{meta.label}</span>
-        <BackendDetail backend={backend} />
-      </span>
-      <button
-        type="button"
-        onClick={onChange}
-        data-testid="backend-banner-change"
-        className="text-xs text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
-      >
-        Change
-      </button>
-    </p>
-  );
-}
-
-function BackendDetail({ backend }: { backend: Backend }): JSX.Element | null {
-  switch (backend.kind) {
-    case 'signoz':
-      return <span className="text-slate-500"> ({backend.endpoint})</span>;
-    case 'honeycomb':
-      return <span className="text-slate-500"> ({backend.dataset})</span>;
-    case 'datadog':
-      return <span className="text-slate-500"> ({backend.site})</span>;
-    case 'grafana-cloud':
-    case 'otlp-generic':
-    case 'otelcol-passthrough':
-      return null;
-  }
 }

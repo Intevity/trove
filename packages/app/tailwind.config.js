@@ -13,6 +13,12 @@ export default {
           red: '#ef4444',
           gray: '#94a3b8',
         },
+        // iOS system palette used by the shell chrome (header, tabs, footer).
+        'ios-blue': '#007AFF',
+        'ios-green': '#32D74B',
+        'ios-red': '#FF453A',
+        'ios-orange': '#FF9F0A',
+        'ios-gray': '#8E8E93',
       },
       fontFamily: {
         sans: [

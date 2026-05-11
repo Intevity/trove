@@ -5,6 +5,12 @@ import { defineConfig } from 'vitest/config';
 // (the bulk of Sprint 2's new code) is gated separately by
 // `cargo llvm-cov --fail-under-lines 95 --fail-under-functions 95` in CI.
 export default defineConfig({
+  // The app's Vite config injects __APP_VERSION__ at build time; mirror that
+  // here so test runs of the Footer / bugReport util don't crash on the
+  // dangling global.
+  define: {
+    __APP_VERSION__: JSON.stringify('dev'),
+  },
   test: {
     globals: true,
     environment: 'node',

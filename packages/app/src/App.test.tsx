@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from './App.js';
@@ -77,27 +77,39 @@ describe('App', () => {
       }),
     );
     render(<App />);
-    const header = screen.getByTestId('app-header');
-    expect(header.textContent).toBe('Trove');
+    await waitFor(() => {
+      expect(screen.getByTestId('app-header').textContent).toBe('Trove');
+    });
+    // Switch to Harnesses tab — the empty state lives there now.
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-harnesses')).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId('tab-harnesses'));
     await waitFor(() => {
       expect(screen.getByTestId('harness-list-empty')).toBeDefined();
     });
   });
 
   it('shows a loading state until detection completes', async () => {
+    let resolveHarnesses!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      resolveHarnesses = resolve;
+    });
     invokeMock.mockImplementation(
       dispatch({
         get_app_state: SIGNOZ_STATE,
-        list_detected_harnesses: () =>
-          new Promise((resolve) => {
-            setTimeout(() => resolve([]), 0);
-          }),
+        list_detected_harnesses: () => pending,
       }),
     );
     render(<App />);
     await waitFor(() => {
+      expect(screen.getByTestId('tab-harnesses')).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId('tab-harnesses'));
+    await waitFor(() => {
       expect(screen.getByTestId('harness-list-loading')).toBeDefined();
     });
+    resolveHarnesses([]);
     await waitFor(() => {
       expect(screen.getByTestId('harness-list-empty')).toBeDefined();
     });
@@ -122,6 +134,10 @@ describe('App', () => {
     );
     render(<App />);
     await waitFor(() => {
+      expect(screen.getByTestId('tab-harnesses')).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId('tab-harnesses'));
+    await waitFor(() => {
       expect(screen.getByTestId('harness-row-claude-code')).toBeDefined();
     });
   });
@@ -133,6 +149,10 @@ describe('App', () => {
       return Promise.reject({ kind: 'internal', reason: 'boom' });
     });
     render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-harnesses')).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId('tab-harnesses'));
     await waitFor(() => {
       expect(screen.getByTestId('harness-list-error')).toBeDefined();
     });
