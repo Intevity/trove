@@ -53,7 +53,8 @@
     ],
     "macOS": {
       "infoPlist": "Info.plist",
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "Trove Dev"
     }
   }
 }
