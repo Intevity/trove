@@ -181,7 +181,7 @@ fn start_collector(
     channels: SupervisorChannels,
 ) -> Result<SupervisorHandle, CollectorBootError> {
     let binary_path = sidecar_binary_path()?;
-    let config_path = ensure_collector_config(app)?;
+    let (config_path, env) = prepare_collector_runtime(app)?;
     let log_path = ensure_log_path(app)?;
     let pid_path = collector_pid_path(app)?;
 
@@ -190,11 +190,13 @@ fn start_collector(
         ?config_path,
         ?log_path,
         ?pid_path,
+        env_keys = ?env.keys().collect::<Vec<_>>(),
         "starting trove-otelcol supervisor",
     );
 
     let opts = SupervisorOptions::new(binary_path, config_path, log_path)
-        .with_pid_file_path(pid_path);
+        .with_pid_file_path(pid_path)
+        .with_env(env);
     let handle = Supervisor::start(opts, channels)?;
     Ok(handle)
 }
@@ -298,12 +300,60 @@ fn sidecar_binary_path() -> Result<PathBuf, CollectorBootError> {
     Ok(dir.join(name))
 }
 
-fn ensure_collector_config(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
-    let path = collector_config_path(app)?;
-    if !path.exists() {
-        std::fs::write(&path, SMOKE_CONFIG_YAML)?;
-    }
-    Ok(path)
+/// Reconcile `collector.yaml` and the env map the supervisor must
+/// set on the child against the user's saved `state.json` at boot
+/// time. Three branches:
+///
+/// - `state.json` carries a backend: re-render YAML + env via
+///   [`collector::codegen::render`] (resolving secrets from the
+///   keychain) and atomically write the YAML so the file on disk
+///   matches what the supervisor is about to spawn against.
+/// - `state.json` has no backend or fails to load: write the bundled
+///   smoke config and return an empty env map. The collector starts
+///   in pass-through mode while the wizard runs.
+///
+/// Without this, the supervisor at boot reads the previous session's
+/// `collector.yaml` (which references `${env:TROVE_SIGNOZ_*}`
+/// placeholders) but spawns the child with an empty env, so the
+/// `SigNoz` exporter fails initialization with `requires a non-empty
+/// "endpoint"` and the user sees "Sidecar down". The bug was masked
+/// until the orphan reaper started killing the previous session's
+/// long-lived child that held those env vars in-process.
+fn prepare_collector_runtime(
+    app: &AppHandle,
+) -> Result<(PathBuf, std::collections::HashMap<String, String>), CollectorBootError> {
+    let config_path = collector_config_path(app)?;
+    let (yaml, env) = match app_state::load(app) {
+        Ok(state) => match state.backend {
+            None => (SMOKE_CONFIG_YAML.to_string(), std::collections::HashMap::new()),
+            Some(backend) => match collector::codegen::render(&backend) {
+                Ok(rendered) => {
+                    let env: std::collections::HashMap<String, String> = rendered
+                        .env
+                        .into_iter()
+                        .map(|(k, v)| (k, v.to_string()))
+                        .collect();
+                    (rendered.yaml, env)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "could not render collector config from saved state; using smoke fallback",
+                    );
+                    (SMOKE_CONFIG_YAML.to_string(), std::collections::HashMap::new())
+                }
+            },
+        },
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "could not load app state at boot; using smoke collector config",
+            );
+            (SMOKE_CONFIG_YAML.to_string(), std::collections::HashMap::new())
+        }
+    };
+    safety::atomic::write_atomic(&config_path, yaml.as_bytes())?;
+    Ok((config_path, env))
 }
 
 /// Resolve `collector.yaml`'s absolute path, creating the parent
