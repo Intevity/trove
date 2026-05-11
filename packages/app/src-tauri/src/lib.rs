@@ -74,6 +74,17 @@ pub fn run() {
             ipc::collector_status::dev_set_tray_color,
         ])
         .setup(|app| {
+            // Resolve the per-user config dir (same dir that holds
+            // `state.json`) and hand it to the secrets module BEFORE any
+            // code that might `secrets::retrieve` / `secrets::store` runs.
+            // `prepare_collector_runtime` in `start_collector` below reads
+            // the saved backend's credentials via this path.
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .map_err(|e| std::io::Error::other(format!("app_config_dir: {e}")))?;
+            crate::secrets::init(config_dir);
+
             // SupervisorChannels lives outside the SupervisorHandle so
             // dashboard subscribers (tray, IPC) survive reload_collector:
             // every reload constructs a fresh handle but keeps publishing
