@@ -75,6 +75,10 @@ test('full first-run flow lands the dashboard in the green state', async ({ page
   await page.getByTestId('test-pipeline-button').click();
   await expect(page.getByTestId('test-pipeline-result')).toHaveAttribute('data-status', 'ok');
 
+  // The harness list lives behind the Harnesses tab in the new shell
+  // — switch to it before opening the diff modal.
+  await page.getByTestId('tab-harnesses').click();
+
   // The harness list is rendered with Claude Code marked as detected
   // (per the mock seed). Enable it via the diff modal.
   await page.getByLabel('toggle-claude-code').click();

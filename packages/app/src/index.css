@@ -7,3 +7,46 @@ body,
 #root {
   height: 100%;
 }
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #f2f2f7;
+  color: #1d1d1f;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #111111;
+    color: #f5f5f7;
+  }
+}
+
+/* Custom scrollbars — thin, dark-mode aware, transparent track so the
+ * gutter doesn't visually intrude. Mirrors claude-sentinel. */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+}

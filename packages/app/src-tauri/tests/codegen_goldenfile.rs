@@ -238,7 +238,7 @@ fn otelcol_passthrough_resolver_is_never_called() {
 }
 
 #[test]
-fn keychain_failure_propagates_as_render_error() {
+fn missing_secret_propagates_as_render_error() {
     let backend = Backend::Signoz {
         endpoint: "ingest.us.signoz.cloud:443".into(),
         ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
@@ -246,14 +246,14 @@ fn keychain_failure_propagates_as_render_error() {
     let result = render_with(&backend, &|account| {
         Err(RenderError::Keychain {
             account: account.to_string(),
-            source: trove_app::secrets::SecretsError::Keychain(keyring::Error::NoEntry),
+            source: trove_app::secrets::SecretsError::NotFound(account.to_string()),
         })
     });
     match result {
         Err(RenderError::Keychain { account, .. }) => {
             assert_eq!(account, "backend.signoz.ingestion-key");
         }
-        other => panic!("expected keychain error, got {other:?}"),
+        other => panic!("expected secrets-not-found error, got {other:?}"),
     }
 }
 

@@ -10,9 +10,9 @@ export function LogsPanel(): JSX.Element {
   return (
     <section
       data-testid="logs-panel"
-      className="rounded-md border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"
+      className="flex flex-col flex-1 min-h-0 rounded-md border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"
     >
-      <header className="mb-2 flex items-center justify-between">
+      <header className="mb-2 flex flex-shrink-0 items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Logs</h2>
         <span className="text-xs text-slate-500 dark:text-slate-400">
           {loading ? 'Loading…' : `${lines.length} lines`}
@@ -20,7 +20,7 @@ export function LogsPanel(): JSX.Element {
       </header>
       <pre
         data-testid="logs-output"
-        className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-50 px-2 py-1 font-mono text-xs leading-tight text-slate-800 dark:bg-slate-950 dark:text-slate-200"
+        className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-50 px-2 py-1 font-mono text-xs leading-tight text-slate-800 dark:bg-slate-950 dark:text-slate-200"
       >
         {lines.length === 0
           ? loading
