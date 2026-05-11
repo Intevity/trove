@@ -15,13 +15,17 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   'copilot-cli': 'GitHub Copilot CLI',
 };
 
-/** Per-harness mark rendered as an inline SVG to the left of each row.
- *  `bg` is the brand-aligned color of the rounded-square tile; `mark` is
- *  the 1–2 character monogram drawn in white at the centre. The SVG root
- *  carries no background, so the tile sits cleanly over either light or
- *  dark row backgrounds. We render an inline SVG (rather than shipping
- *  brand artwork) so each logo is recognizable without taking on
- *  third-party trademark obligations. */
+/** Per-harness mark rendered as an inline SVG fallback to the left of
+ *  each row. `bg` is the brand-aligned color of the rounded-square
+ *  tile; `mark` is the 1–2 character monogram drawn in white at the
+ *  centre. The SVG root carries no background, so the tile sits cleanly
+ *  over either light or dark row backgrounds.
+ *
+ *  This fallback renders only when no real brand artwork is present in
+ *  `packages/app/src/assets/harness-logos/<id>.svg`. To ship the real
+ *  brand mark for a harness, drop a transparent-background SVG file at
+ *  that path; Vite picks it up at build time via the `BRAND_LOGO_URLS`
+ *  glob below and the component switches to `<img>` rendering. */
 interface HarnessLogoSpec {
   bg: string;
   mark: string;
@@ -38,6 +42,22 @@ const HARNESS_LOGOS: Record<HarnessId, HarnessLogoSpec> = {
   aider: { bg: '#A855F7', mark: 'A' },
   'copilot-cli': { bg: '#24292E', mark: 'gh' },
 };
+
+/** Build-time map from `<id>.svg` filename to its bundled asset URL.
+ *  Empty until a contributor drops a file in
+ *  `packages/app/src/assets/harness-logos/`. `eager: true` so the
+ *  lookup is synchronous in the render path; `query: '?url'` returns
+ *  the bundled URL string (not the SVG markup) so we can render an
+ *  `<img>` against the user's chosen artwork. */
+const BRAND_LOGO_URLS = import.meta.glob<string>('../assets/harness-logos/*.svg', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+
+function brandLogoUrl(id: HarnessId): string | undefined {
+  return BRAND_LOGO_URLS[`../assets/harness-logos/${id}.svg`];
+}
 
 /** Per-harness coverage advisory surfaced as a badge next to the
  *  telemetry status. Cursor CLI carries one because its hook surface
@@ -149,11 +169,28 @@ export function HarnessList({
   );
 }
 
-/** Inline brand mark for a harness. SVG root has no background so the
- *  tile composites cleanly over either light or dark row surfaces.
- *  `dimmed` greys out the logo for undetected rows to mirror the row's
- *  muted styling. */
+/** Brand mark for a harness. Renders the user-supplied SVG from
+ *  `packages/app/src/assets/harness-logos/<id>.svg` when present;
+ *  otherwise falls back to the inline monogram tile. Either path
+ *  produces a 32x32 element with a transparent background that
+ *  composites cleanly over light and dark row surfaces. `dimmed` greys
+ *  out the logo for undetected rows to mirror the row's muted styling. */
 function HarnessLogo({ id, dimmed }: { id: HarnessId; dimmed: boolean }): JSX.Element {
+  const className = `shrink-0 ${dimmed ? 'opacity-40 grayscale' : ''}`;
+  const url = brandLogoUrl(id);
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={`${HARNESS_LABELS[id]} logo`}
+        width={32}
+        height={32}
+        data-testid={`harness-logo-${id}`}
+        className={className}
+      />
+    );
+  }
+
   const { bg, mark } = HARNESS_LOGOS[id];
   const fontSize = mark.length >= 2 ? 11 : 14;
   return (
@@ -165,7 +202,7 @@ function HarnessLogo({ id, dimmed }: { id: HarnessId; dimmed: boolean }): JSX.El
       role="img"
       aria-label={`${HARNESS_LABELS[id]} logo`}
       data-testid={`harness-logo-${id}`}
-      className={`shrink-0 ${dimmed ? 'opacity-40 grayscale' : ''}`}
+      className={className}
     >
       <rect x="0" y="0" width="32" height="32" rx="8" fill={bg} />
       <text
