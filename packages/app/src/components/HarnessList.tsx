@@ -74,11 +74,13 @@ for (const [path, raw] of Object.entries(BRAND_LOGO_SOURCES)) {
 function parseBrandLogo(raw: string): ParsedBrandLogo | null {
   const open = raw.match(/<svg\b([^>]*)>/i);
   const close = raw.lastIndexOf('</svg>');
-  if (!open || close === -1) return null;
-  const viewBoxMatch = open[1].match(/viewBox\s*=\s*"([^"]+)"/i);
-  if (!viewBoxMatch) return null;
-  const inner = raw.slice(open.index! + open[0].length, close).trim();
-  return { viewBox: viewBoxMatch[1], inner };
+  if (!open || open.index === undefined || close === -1) return null;
+  const openAttrs = open[1] ?? '';
+  const viewBoxMatch = openAttrs.match(/viewBox\s*=\s*"([^"]+)"/i);
+  const viewBox = viewBoxMatch?.[1];
+  if (!viewBox) return null;
+  const inner = raw.slice(open.index + open[0].length, close).trim();
+  return { viewBox, inner };
 }
 
 function brandLogo(id: HarnessId): ParsedBrandLogo | undefined {
