@@ -43,20 +43,46 @@ const HARNESS_LOGOS: Record<HarnessId, HarnessLogoSpec> = {
   'copilot-cli': { bg: '#24292E', mark: 'gh' },
 };
 
-/** Build-time map from `<id>.svg` filename to its bundled asset URL.
+/** Build-time map from `<id>.svg` filename to its raw markup.
  *  Empty until a contributor drops a file in
  *  `packages/app/src/assets/harness-logos/`. `eager: true` so the
- *  lookup is synchronous in the render path; `query: '?url'` returns
- *  the bundled URL string (not the SVG markup) so we can render an
- *  `<img>` against the user's chosen artwork. */
-const BRAND_LOGO_URLS = import.meta.glob<string>('../assets/harness-logos/*.svg', {
+ *  lookup is synchronous in the render path; `query: '?raw'` returns
+ *  the file contents as a string so we can inline the brand mark as
+ *  an actual `<svg>` element rather than an `<img>` wrapper. Inlining
+ *  matters because the row's `<svg>` itself must carry no `fill` (so
+ *  the tile background composites transparently against either light
+ *  or dark row surfaces) — we drop the source SVG's root attributes
+ *  and only forward its `viewBox`, leaving brand colors on the inner
+ *  paths to come through. */
+const BRAND_LOGO_SOURCES = import.meta.glob<string>('../assets/harness-logos/*.svg', {
   eager: true,
-  query: '?url',
+  query: '?raw',
   import: 'default',
 });
 
-function brandLogoUrl(id: HarnessId): string | undefined {
-  return BRAND_LOGO_URLS[`../assets/harness-logos/${id}.svg`];
+interface ParsedBrandLogo {
+  viewBox: string;
+  inner: string;
+}
+
+/** Cache so we parse each SVG once at module load instead of per render. */
+const PARSED_BRAND_LOGOS: Map<string, ParsedBrandLogo | null> = new Map();
+for (const [path, raw] of Object.entries(BRAND_LOGO_SOURCES)) {
+  PARSED_BRAND_LOGOS.set(path, parseBrandLogo(raw));
+}
+
+function parseBrandLogo(raw: string): ParsedBrandLogo | null {
+  const open = raw.match(/<svg\b([^>]*)>/i);
+  const close = raw.lastIndexOf('</svg>');
+  if (!open || close === -1) return null;
+  const viewBoxMatch = open[1].match(/viewBox\s*=\s*"([^"]+)"/i);
+  if (!viewBoxMatch) return null;
+  const inner = raw.slice(open.index! + open[0].length, close).trim();
+  return { viewBox: viewBoxMatch[1], inner };
+}
+
+function brandLogo(id: HarnessId): ParsedBrandLogo | undefined {
+  return PARSED_BRAND_LOGOS.get(`../assets/harness-logos/${id}.svg`) ?? undefined;
 }
 
 /** Per-harness coverage advisory surfaced as a badge next to the
@@ -177,16 +203,19 @@ export function HarnessList({
  *  out the logo for undetected rows to mirror the row's muted styling. */
 function HarnessLogo({ id, dimmed }: { id: HarnessId; dimmed: boolean }): JSX.Element {
   const className = `shrink-0 ${dimmed ? 'opacity-40 grayscale' : ''}`;
-  const url = brandLogoUrl(id);
-  if (url) {
+  const brand = brandLogo(id);
+  if (brand) {
     return (
-      <img
-        src={url}
-        alt={`${HARNESS_LABELS[id]} logo`}
-        width={32}
-        height={32}
+      <svg
+        width="32"
+        height="32"
+        viewBox={brand.viewBox}
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-label={`${HARNESS_LABELS[id]} logo`}
         data-testid={`harness-logo-${id}`}
         className={className}
+        dangerouslySetInnerHTML={{ __html: brand.inner }}
       />
     );
   }
