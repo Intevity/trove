@@ -185,19 +185,90 @@ export const ResolvedIdentity = z.object({
 });
 export type ResolvedIdentity = z.infer<typeof ResolvedIdentity>;
 
+// ---------------------------------------------------------------------------
+// Sprint 13 — Tier A mapping configuration
+// ---------------------------------------------------------------------------
+
+/** The five Tier A metrics. Literal values match the suffix after
+ *  `trove.harness.` on the wire. Mirrors the Rust `TierAMetric` enum
+ *  (which uses per-variant `#[serde(rename)]` to allow the dotted forms
+ *  `cost.usd` and `turn.duration`). */
+export const TierAMetric = z.enum(['events', 'tokens', 'cost.usd', 'turn.duration', 'errors']);
+export type TierAMetric = z.infer<typeof TierAMetric>;
+
+/** Per-model cost-rate override row. Both rates are USD per 1,000
+ *  tokens. Mirrors the Rust `CostOverride` struct. */
+export const CostOverride = z.object({
+  inputUsdPer1kTokens: z.number(),
+  outputUsdPer1kTokens: z.number(),
+});
+export type CostOverride = z.infer<typeof CostOverride>;
+
+/** Payload a `hook-rule` row tells its driver to emit when the rule's
+ *  `when` event fires. `null` (in `MappingSource.emit`) means "do not
+ *  emit anything" — used by before-event rules to avoid double-counting
+ *  against after-event rules. Mirrors the Rust `HookEmit` struct. */
+export const HookEmit = z.object({
+  metric: TierAMetric,
+  attributes: z.record(z.string(), z.string()),
+});
+export type HookEmit = z.infer<typeof HookEmit>;
+
+/** Where a Tier A signal comes from. Mirrors the Rust `MappingSource`
+ *  discriminated union (tag `kind`, kebab-case values). */
+export const MappingSource = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('hook-rule'),
+    when: z.string(),
+    emit: HookEmit.nullable(),
+  }),
+  z.object({
+    kind: z.literal('synthesize-from-native'),
+    nativeMetric: z.string(),
+    targetMetric: TierAMetric,
+    attributeMap: z.record(z.string(), z.string()),
+  }),
+]);
+export type MappingSource = z.infer<typeof MappingSource>;
+
+/** One harness's mapping rows plus its master enable flag and any
+ *  per-model cost-rate overrides. Mirrors the Rust `HarnessMapping`. */
+export const HarnessMapping = z.object({
+  harnessId: HarnessId,
+  enabled: z.boolean(),
+  sources: z.array(MappingSource),
+  costOverrides: z.record(z.string(), CostOverride).default({}),
+});
+export type HarnessMapping = z.infer<typeof HarnessMapping>;
+
+/** The whole mapping config, persisted under `AppState.mappings`. The
+ *  inner `schemaVersion` is independent of the outer `AppState`
+ *  schemaVersion — the inner one only moves when the mapping schema
+ *  itself changes. Mirrors the Rust `MappingState`. */
+export const MappingState = z.object({
+  schemaVersion: z.literal(1),
+  harnesses: z.array(HarnessMapping),
+});
+export type MappingState = z.infer<typeof MappingState>;
+
 /** Persisted application state. Secrets are referenced via SecretRef only.
- *  Schema version bumped to 5 in Sprint 12 alongside the new
- *  `identity` field that gates opt-in user.name/user.email tagging.
- *  Migrations are centralised in the Rust loader: v2..=v4 documents
+ *  Schema version bumped to 6 in Sprint 13 alongside the new
+ *  `mappings` field that holds per-harness Tier A configuration.
+ *  Migrations are centralised in the Rust loader: v2..=v5 documents
  *  load cleanly via `serde(default)` defaults and the loader re-stamps
- *  schemaVersion to 5 so the next save persists v5 to disk. Older
- *  consumers cannot read v5 files. */
+ *  schemaVersion to 6 so the next save persists v6 to disk. Older
+ *  consumers cannot read v6 files. The `mappings` field on the TS side
+ *  is `optional()` so an older AppState document validated through
+ *  this Zod schema doesn't reject — but the Rust loader auto-populates
+ *  it with per-harness defaults via `crate::mappings::default_state`,
+ *  so any state the IPC layer hands back already has it set. */
 export const AppState = z.object({
-  schemaVersion: z.literal(5),
+  schemaVersion: z.literal(6),
   backend: Backend.nullable(),
   harnesses: z.array(HarnessConfig),
   autoUpdateEnabled: z.boolean(),
   identity: Identity,
+  mappings: MappingState,
 });
 export type AppState = z.infer<typeof AppState>;
 

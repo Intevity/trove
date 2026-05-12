@@ -85,10 +85,26 @@ Trove emits two tiers of metrics through the local Collector:
   to the user's backend without renaming or reshaping. Drill-down
   dashboards live here.
 
-A future user-facing mapping system (planned in
-[`MAPPING_PLAN.md`](MAPPING_PLAN.md)) will let users synthesize Tier A
-data points from Tier B for native-OTel harnesses, and edit the
-per-harness defaults.
+A user-facing mapping system ships in Sprint 13 (see
+[`MAPPING_PLAN.md`](MAPPING_PLAN.md) — status: implemented). Every
+supported harness now contributes Tier A:
+
+- **Hook/watcher harnesses** (Cursor IDE/CLI, Cline, Aider,
+  Copilot-CLI) emit Tier A inline from their drivers. Cline's watcher
+  classifies each `ui_messages.json` entry by `say` type; the Aider
+  and Copilot-CLI wrappers each produce one `chat.turn` event +
+  duration histogram per invocation, plus an `errors` data point on a
+  non-zero exit.
+- **Native-OTel harnesses** (Claude Code, Codex CLI, Gemini CLI, Qwen
+  Code, OpenCode) synthesize Tier A via a collector
+  `metricstransform/tierA-<harness>` processor injected by Trove on
+  every reload. `action: insert` preserves the native Tier B metric on
+  the wire — synthesis is additive.
+
+The Mappings tab in the dashboard shows every harness's rows
+(read-only in v1) with a master enable toggle and a "reset to
+defaults" affordance. Editing individual rows lands in a follow-up
+PR.
 
 ### Tier A metrics
 

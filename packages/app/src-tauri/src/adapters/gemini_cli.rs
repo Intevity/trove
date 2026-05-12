@@ -53,10 +53,21 @@ pub fn revert(home: &Path) -> Result<(), IpcError> {
 ///
 /// `logPrompts` is pinned to `false`: Trove's pipeline is metrics-only
 /// by policy, so we never opt into upstream prompt-body capture.
+///
+/// `useCollector: true` and `otlpProtocol: "http"` are both required
+/// (Gemini CLI ≥0.41): without `useCollector`, Gemini collects
+/// telemetry but never forwards it to the configured endpoint; without
+/// `otlpProtocol`, Gemini defaults to gRPC and dials port 4317 even
+/// when the endpoint says `:4318`, so nothing reaches the collector.
 fn build_region(_opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     let mut telemetry = serde_json::Map::new();
     telemetry.insert("enabled".to_string(), Value::Bool(true));
     telemetry.insert("target".to_string(), Value::String("local".to_string()));
+    telemetry.insert("useCollector".to_string(), Value::Bool(true));
+    telemetry.insert(
+        "otlpProtocol".to_string(),
+        Value::String("http".to_string()),
+    );
     telemetry.insert(
         "otlpEndpoint".to_string(),
         Value::String("http://127.0.0.1:4318".to_string()),
@@ -93,6 +104,11 @@ mod tests {
         assert_eq!(telemetry["target"], "local");
         assert_eq!(telemetry["otlpEndpoint"], "http://127.0.0.1:4318");
         assert_eq!(telemetry["logPrompts"], false);
+        // Gemini CLI ≥0.41: useCollector + otlpProtocol are required
+        // for any signal to leave the harness process. The earlier
+        // shape (without these two keys) silently emitted nothing.
+        assert_eq!(telemetry["useCollector"], true);
+        assert_eq!(telemetry["otlpProtocol"], "http");
         assert!(parsed.get("_trove").is_some());
     }
 

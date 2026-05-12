@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
+  ApplyMappingsResponse,
   ApplyPatchResponse,
   CheckForUpdatesResponse,
   ClearBackendResponse,
@@ -11,6 +12,7 @@ import {
   IpcError,
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
+  ResetMappingsToDefaultsResponse,
   ResolveConflictResponse,
   ResolveIdentityPreviewResponse,
   RevertPatchResponse,
@@ -30,6 +32,7 @@ import {
   type ConflictResolutionOutcome,
   type DetectedHarness,
   type HarnessId,
+  type MappingState,
   type MetricsSnapshotWire,
   type PatchPreview,
   type ResolvedIdentity,
@@ -219,5 +222,23 @@ export async function resolveIdentityPreview(): Promise<ResolvedIdentity> {
     IpcCommandName.ResolveIdentityPreview,
     undefined,
     ResolveIdentityPreviewResponse,
+  );
+}
+
+/** Sprint 13 — replace the persisted Tier A mapping table. When a
+ *  backend is configured, this also recycles the collector so the new
+ *  `transform/harness-tag` and `metricstransform/tierA-*` processors
+ *  take effect immediately. */
+export async function applyMappings(mappings: MappingState): Promise<void> {
+  await invokeIpc(IpcCommandName.ApplyMappings, { mappings }, ApplyMappingsResponse);
+}
+
+/** Sprint 13 — reset every harness's mapping rows to Trove's shipped
+ *  defaults. Same restart semantics as {@link applyMappings}. */
+export async function resetMappingsToDefaults(): Promise<void> {
+  await invokeIpc(
+    IpcCommandName.ResetMappingsToDefaults,
+    undefined,
+    ResetMappingsToDefaultsResponse,
   );
 }

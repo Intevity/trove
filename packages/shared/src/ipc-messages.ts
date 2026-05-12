@@ -7,6 +7,7 @@ import {
   CollectorStatus,
   ConflictResolutionOutcome,
   DetectedHarness,
+  MappingState,
   MetricsSnapshotWire,
   PatchPreview,
   ResolvedIdentity,
@@ -136,6 +137,22 @@ export type SetIdentityAutoResponse = z.infer<typeof SetIdentityAutoResponse>;
 export const ResolveIdentityPreviewResponse = ResolvedIdentity;
 export type ResolveIdentityPreviewResponse = z.infer<typeof ResolveIdentityPreviewResponse>;
 
+/** Sprint 13 — `apply_mappings`. Replaces the persisted Tier A mapping
+ *  table and (when a backend is configured) reloads the collector so
+ *  the new `transform/harness-tag` + `metricstransform/tierA-*`
+ *  processors take effect. Validation errors come back as an
+ *  `IpcError.internal` with a human-readable reason. */
+export const ApplyMappingsRequest = z.object({ mappings: MappingState });
+export type ApplyMappingsRequest = z.infer<typeof ApplyMappingsRequest>;
+export const ApplyMappingsResponse = z.null();
+export type ApplyMappingsResponse = z.infer<typeof ApplyMappingsResponse>;
+
+/** Sprint 13 — `reset_mappings_to_defaults`. Shorthand for
+ *  `apply_mappings(default_state)` so the React layer doesn't have to
+ *  keep the defaults in sync. */
+export const ResetMappingsToDefaultsResponse = z.null();
+export type ResetMappingsToDefaultsResponse = z.infer<typeof ResetMappingsToDefaultsResponse>;
+
 /** Canonical Tauri command names, kept here so the IPC client wrapper
  *  and tests share a single source of truth. The Rust side registers
  *  these in `tauri::generate_handler!` in lib.rs; renames must update
@@ -159,6 +176,8 @@ export const IpcCommandName = {
   SetIdentityManual: 'set_identity_manual',
   SetIdentityAuto: 'set_identity_auto',
   ResolveIdentityPreview: 'resolve_identity_preview',
+  ApplyMappings: 'apply_mappings',
+  ResetMappingsToDefaults: 'reset_mappings_to_defaults',
 } as const;
 export type IpcCommandName = (typeof IpcCommandName)[keyof typeof IpcCommandName];
 

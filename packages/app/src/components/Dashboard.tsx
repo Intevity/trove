@@ -14,6 +14,7 @@ import { PatchPreviewModal } from './PatchPreviewModal.js';
 import { Toast } from './Toast.js';
 import { HarnessesTab } from './tabs/HarnessesTab.js';
 import { LogsTab } from './tabs/LogsTab.js';
+import { MappingsTab } from './tabs/MappingsTab.js';
 import { OverviewTab } from './tabs/OverviewTab.js';
 import { SettingsTab } from './tabs/SettingsTab.js';
 
@@ -115,6 +116,9 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
             onDisable={(id) => void handleDisable(id)}
             onRefresh={() => void refresh()}
           />
+        )}
+        {activeTab === 'mappings' && (
+          <MappingsTab appState={appState} onAppStateRefresh={onAppStateRefresh} />
         )}
         {activeTab === 'logs' && <LogsTab />}
         {activeTab === 'settings' && (

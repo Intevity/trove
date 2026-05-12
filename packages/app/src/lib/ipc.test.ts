@@ -183,11 +183,15 @@ describe('getAppState', () => {
 
   it('returns the parsed AppState on success', async () => {
     const expected = {
-      schemaVersion: 5 as const,
+      schemaVersion: 6 as const,
       backend: null,
       harnesses: [],
       autoUpdateEnabled: false,
       identity: { enabled: false, source: 'auto' as const, name: '', email: '' },
+      mappings: {
+        schemaVersion: 1 as const,
+        harnesses: [],
+      },
     };
     invokeMock.mockResolvedValueOnce(expected);
     const result = await getAppState();

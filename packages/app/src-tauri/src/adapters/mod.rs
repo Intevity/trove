@@ -25,6 +25,7 @@ pub mod gemini_cli;
 pub mod opencode;
 pub mod qwen_code;
 pub mod wrapper_common;
+pub mod wrapper_common_metrics;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

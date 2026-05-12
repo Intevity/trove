@@ -135,6 +135,33 @@ pub fn parse_event_line(line: &str, opts: &ApplyOptions) -> Option<Value> {
     }))
 }
 
+/// Parse one wrapper line into a Tier A metric payload covering the
+/// invocation it represents:
+///
+/// - `trove.harness.events` with `event.kind = chat.turn`, count = 1.
+/// - `trove.harness.turn.duration` (histogram) with one observation at
+///   `duration_ms / 1000` seconds.
+/// - `trove.harness.errors` with `error.kind = unknown`, count = 1, when
+///   the wrapper reports a non-zero `exit_code`.
+///
+/// Token and cost are intentionally absent — the wrapper has no
+/// visibility into Aider's tokenizer or upstream rate table, so
+/// fabricating those numbers would be worse than skipping.
+#[must_use]
+pub fn parse_event_metric_payload(line: &str, opts: &ApplyOptions) -> Option<Value> {
+    super::wrapper_common_metrics::build_invocation_metrics(
+        line,
+        opts,
+        super::wrapper_common_metrics::WrapperMetricsSpec {
+            expected_tool: "aider",
+            service_name: "aider",
+            harness_id: "aider",
+            harness_name: "Aider",
+            scope_name: "trove.adapters.aider",
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

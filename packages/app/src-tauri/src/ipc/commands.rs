@@ -597,7 +597,7 @@ pub fn save_backend(app: tauri::AppHandle, draft: BackendDraft) -> Result<Backen
 
     let rendered = codegen::render(&backend).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
-    let yaml = render_with_identity(rendered.yaml, &state);
+    let yaml = render_with_overlays(rendered.yaml, &state);
     crate::reload_collector(&app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
 
     Ok(backend)
@@ -609,13 +609,23 @@ pub fn save_backend(app: tauri::AppHandle, draft: BackendDraft) -> Result<Backen
 /// callers because the identity probe ladder reads the current
 /// detection set, and the IPC layer is where the detection sweep
 /// already runs.
-fn render_with_identity(yaml: String, state: &AppState) -> String {
-    if !state.identity.enabled {
-        return yaml;
-    }
-    let harnesses = crate::detect::detect_all();
-    let resolved = crate::identity::resolve(&state.identity, &harnesses);
-    crate::collector::codegen::apply_identity_overlay(yaml, &resolved)
+///
+/// Layers Sprint 13's Tier A mapping overlay on top of the identity
+/// overlay so every reload (backend save, identity toggle, mapping
+/// apply) regenerates the active collector config with both overlays
+/// in their canonical order: identity first (so `resource/identity`
+/// sits at the tail of the pipeline list), then mapping (which slots
+/// `transform/harness-tag` and the `metricstransform/tierA-*` blocks
+/// in *before* identity, preserving identity-tags-everything semantics).
+fn render_with_overlays(yaml: String, state: &AppState) -> String {
+    let with_identity = if state.identity.enabled {
+        let harnesses = crate::detect::detect_all();
+        let resolved = crate::identity::resolve(&state.identity, &harnesses);
+        crate::collector::codegen::apply_identity_overlay(yaml, &resolved)
+    } else {
+        yaml
+    };
+    crate::collector::codegen::apply_mapping_overlay(with_identity, &state.mappings)
 }
 
 /// Send a synthetic OTLP/HTTP traces payload through the local
@@ -757,8 +767,53 @@ fn reload_collector_for_identity(
     };
     let rendered = codegen::render(backend).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
-    let yaml = render_with_identity(rendered.yaml, state);
+    let yaml = render_with_overlays(rendered.yaml, state);
     crate::reload_collector(app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))
+}
+
+/// Sprint 13 — replace the persisted per-harness Tier A mapping table
+/// with `mappings` and recycle the collector so the new YAML's
+/// `transform/harness-tag` and `metricstransform/tierA-*` blocks take
+/// effect. Validates the mapping graph first so invariants
+/// (double-emit, out-of-domain attribute values, unknown schema
+/// version) surface at the IPC boundary rather than as a confused
+/// collector restart.
+///
+/// When no backend is saved yet, mapping changes are persisted but no
+/// collector reload is needed — the smoke config doesn't carry the
+/// overlay anyway.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn apply_mappings(
+    app: tauri::AppHandle,
+    mappings: crate::mappings::MappingState,
+) -> Result<(), IpcError> {
+    crate::mappings::validate(&mappings).map_err(|e| IpcError::Internal {
+        reason: format!("invalid mapping state: {e}"),
+    })?;
+    let mut state = app_state::load(&app)?;
+    if state.mappings == mappings {
+        // No-op: a noisy UI may call apply on every mount; bail before
+        // touching the supervisor.
+        return Ok(());
+    }
+    state.mappings = mappings;
+    app_state::save(&app, &state)?;
+    let Some(backend) = state.backend.as_ref() else {
+        return Ok(());
+    };
+    let rendered = codegen::render(backend).map_err(render_error_to_ipc)?;
+    let env = unwrap_env(rendered.env);
+    let yaml = render_with_overlays(rendered.yaml, &state);
+    crate::reload_collector(&app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))
+}
+
+/// Sprint 13 — reset the per-harness Tier A mapping table to Trove's
+/// shipped defaults. Same restart semantics as [`apply_mappings`].
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn reset_mappings_to_defaults(app: tauri::AppHandle) -> Result<(), IpcError> {
+    apply_mappings(app, crate::mappings::default_state())
 }
 
 /// Sprint 10 — outcome of `check_for_updates`. The React Settings
@@ -928,9 +983,10 @@ fn ensure_log_parent(log: &Path) {
     }
 }
 
-/// Tail `log_path` and emit one OTLP log per parseable line. Returns
-/// a `WatcherHandle` whose `abort()` halts the chain (it owns the
-/// inner tail watcher's handle so dropping cancels both).
+/// Tail `log_path` and emit one OTLP log + one Tier A metrics payload
+/// per parseable line. Returns a `WatcherHandle` whose `abort()` halts
+/// the chain (it owns the inner tail watcher's handle so dropping
+/// cancels both).
 fn spawn_wrapper_log_watcher(
     log_path: PathBuf,
     options: ApplyOptions,
@@ -944,14 +1000,27 @@ fn spawn_wrapper_log_watcher(
         // task drops it (and so cancels the inner watcher).
         let _tail = tail;
         while let Some(line) = rx.recv().await {
-            let payload = match id {
+            let log_payload = match id {
                 HarnessId::Aider => aider::parse_event_line(&line, &options),
                 HarnessId::CopilotCli => copilot_cli::parse_event_line(&line, &options),
                 _ => None,
             };
-            let Some(payload) = payload else { continue };
-            if let Err(e) = crate::otlp_emit::post_logs_json(&payload).await {
-                tracing::warn!(error = %e, ?id, "wrapper log watcher OTLP emit failed");
+            let metric_payload = match id {
+                HarnessId::Aider => aider::parse_event_metric_payload(&line, &options),
+                HarnessId::CopilotCli => {
+                    copilot_cli::parse_event_metric_payload(&line, &options)
+                }
+                _ => None,
+            };
+            if let Some(payload) = log_payload {
+                if let Err(e) = crate::otlp_emit::post_logs_json(&payload).await {
+                    tracing::warn!(error = %e, ?id, "wrapper log watcher OTLP log emit failed");
+                }
+            }
+            if let Some(payload) = metric_payload {
+                if let Err(e) = crate::otlp_emit::post_metrics_json(&payload).await {
+                    tracing::warn!(error = %e, ?id, "wrapper log watcher OTLP metric emit failed");
+                }
             }
         }
     });

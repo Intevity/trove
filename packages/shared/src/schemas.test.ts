@@ -17,8 +17,11 @@ import {
   DetectionMethod,
   HarnessConfig,
   HarnessId,
+  HarnessMapping,
   IpcError,
+  MappingSource,
   MetricsSnapshotWire,
+  TierAMetric,
   OverallHealth,
   PatchFormat,
   PatchPreview,
@@ -296,25 +299,32 @@ describe('AppState', () => {
     email: '',
   };
 
-  it('parses a minimal v5 state with default identity off', () => {
+  const emptyMappings = {
+    schemaVersion: 1 as const,
+    harnesses: [],
+  };
+
+  it('parses a minimal v6 state with default identity off and empty mappings', () => {
     const parsed = AppState.parse({
-      schemaVersion: 5,
+      schemaVersion: 6,
       backend: null,
       harnesses: [],
       autoUpdateEnabled: false,
       identity: defaultIdentity,
+      mappings: emptyMappings,
     });
-    expect(parsed.schemaVersion).toBe(5);
+    expect(parsed.schemaVersion).toBe(6);
     expect(parsed.backend).toBeNull();
     expect(parsed.harnesses).toEqual([]);
     expect(parsed.autoUpdateEnabled).toBe(false);
     expect(parsed.identity.enabled).toBe(false);
     expect(parsed.identity.source).toBe('auto');
+    expect(parsed.mappings.harnesses).toEqual([]);
   });
 
-  it('parses a v5 state with autoUpdateEnabled true and identity tagging on', () => {
+  it('parses a v6 state with autoUpdateEnabled true and identity tagging on', () => {
     const parsed = AppState.parse({
-      schemaVersion: 5,
+      schemaVersion: 6,
       backend: null,
       harnesses: [],
       autoUpdateEnabled: true,
@@ -324,6 +334,7 @@ describe('AppState', () => {
         name: 'Ada Lovelace',
         email: 'ada@example.com',
       },
+      mappings: emptyMappings,
     });
     expect(parsed.autoUpdateEnabled).toBe(true);
     expect(parsed.identity.enabled).toBe(true);
@@ -332,12 +343,60 @@ describe('AppState', () => {
     expect(parsed.identity.email).toBe('ada@example.com');
   });
 
+  it('parses a v6 state with populated mapping rows', () => {
+    const parsed = AppState.parse({
+      schemaVersion: 6,
+      backend: null,
+      harnesses: [],
+      autoUpdateEnabled: false,
+      identity: defaultIdentity,
+      mappings: {
+        schemaVersion: 1,
+        harnesses: [
+          {
+            harnessId: 'gemini-cli',
+            enabled: true,
+            sources: [
+              {
+                kind: 'synthesize-from-native',
+                nativeMetric: 'gemini_cli.session.count',
+                targetMetric: 'events',
+                attributeMap: {},
+              },
+            ],
+            costOverrides: {},
+          },
+        ],
+      },
+    });
+    expect(parsed.mappings.harnesses).toHaveLength(1);
+    expect(parsed.mappings.harnesses[0].harnessId).toBe('gemini-cli');
+    expect(parsed.mappings.harnesses[0].sources[0].kind).toBe('synthesize-from-native');
+  });
+
   it('rejects when autoUpdateEnabled is missing', () => {
     expect(() =>
       AppState.parse({
-        schemaVersion: 5,
+        schemaVersion: 6,
         backend: null,
         harnesses: [],
+        identity: defaultIdentity,
+        mappings: emptyMappings,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects when mappings is missing', () => {
+    // The Rust loader auto-populates mappings on the wire via
+    // serde(default = default_mapping_state). At the IPC boundary,
+    // every payload from Rust includes the field — Zod enforcing it
+    // catches accidental new-codepath omissions early.
+    expect(() =>
+      AppState.parse({
+        schemaVersion: 6,
+        backend: null,
+        harnesses: [],
+        autoUpdateEnabled: false,
         identity: defaultIdentity,
       }),
     ).toThrow();
@@ -351,15 +410,16 @@ describe('AppState', () => {
         harnesses: [],
         autoUpdateEnabled: false,
         identity: defaultIdentity,
+        mappings: emptyMappings,
       }),
     ).toThrow();
   });
 
-  it('rejects v2/v3/v4 wire payloads (Rust loader migrates them to v5 before IPC return)', () => {
-    // Sprint 12 bumped the on-the-wire schema to v5. Earlier payloads are
+  it('rejects v2/v3/v4/v5 wire payloads (Rust loader migrates them to v6 before IPC return)', () => {
+    // Sprint 13 bumped the on-the-wire schema to v6. Earlier payloads are
     // an internal concern of `app_state::load_from_dir`; they should never
     // appear at the IPC boundary, so the Zod literal rejects them outright.
-    for (const schemaVersion of [2, 3, 4]) {
+    for (const schemaVersion of [2, 3, 4, 5]) {
       expect(() =>
         AppState.parse({
           schemaVersion,
@@ -367,9 +427,57 @@ describe('AppState', () => {
           harnesses: [],
           autoUpdateEnabled: false,
           identity: defaultIdentity,
+          mappings: emptyMappings,
         }),
       ).toThrow();
     }
+  });
+});
+
+describe('TierAMetric and MappingState', () => {
+  it('TierAMetric accepts every Tier A bucket name', () => {
+    for (const m of ['events', 'tokens', 'cost.usd', 'turn.duration', 'errors']) {
+      expect(TierAMetric.parse(m)).toBe(m);
+    }
+  });
+
+  it('TierAMetric rejects unknown bucket names', () => {
+    expect(() => TierAMetric.parse('throughput')).toThrow();
+  });
+
+  it('MappingSource round-trips a hook-rule row with null emit', () => {
+    const parsed = MappingSource.parse({
+      kind: 'hook-rule',
+      when: 'beforeSubmitPrompt',
+      emit: null,
+    });
+    expect(parsed.kind).toBe('hook-rule');
+    if (parsed.kind === 'hook-rule') {
+      expect(parsed.emit).toBeNull();
+    }
+  });
+
+  it('MappingSource round-trips a synthesize-from-native row', () => {
+    const parsed = MappingSource.parse({
+      kind: 'synthesize-from-native',
+      nativeMetric: 'claude_code.token.usage',
+      targetMetric: 'tokens',
+      attributeMap: { type: 'direction' },
+    });
+    expect(parsed.kind).toBe('synthesize-from-native');
+    if (parsed.kind === 'synthesize-from-native') {
+      expect(parsed.nativeMetric).toBe('claude_code.token.usage');
+      expect(parsed.targetMetric).toBe('tokens');
+    }
+  });
+
+  it('HarnessMapping fills costOverrides with empty default when missing', () => {
+    const parsed = HarnessMapping.parse({
+      harnessId: 'aider',
+      enabled: true,
+      sources: [],
+    });
+    expect(parsed.costOverrides).toEqual({});
   });
 });
 

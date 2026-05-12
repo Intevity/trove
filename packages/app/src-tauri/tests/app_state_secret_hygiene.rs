@@ -45,6 +45,7 @@ fn signoz_ingestion_key_does_not_land_in_state_json() {
         harnesses: Vec::new(),
         auto_update_enabled: false,
         identity: trove_app::app_state::Identity::default(),
+        mappings: trove_app::mappings::default_state(),
     };
     let on_disk = save_and_read(&state);
     assert!(
@@ -66,6 +67,7 @@ fn honeycomb_team_does_not_land_in_state_json() {
         harnesses: Vec::new(),
         auto_update_enabled: false,
         identity: trove_app::app_state::Identity::default(),
+        mappings: trove_app::mappings::default_state(),
     };
     assert!(!save_and_read(&state).contains(CANARY));
 }
@@ -83,6 +85,7 @@ fn datadog_api_key_does_not_land_in_state_json() {
         harnesses: Vec::new(),
         auto_update_enabled: false,
         identity: trove_app::app_state::Identity::default(),
+        mappings: trove_app::mappings::default_state(),
     };
     assert!(!save_and_read(&state).contains(CANARY));
 }
@@ -100,6 +103,7 @@ fn grafana_cloud_auth_does_not_land_in_state_json() {
         harnesses: Vec::new(),
         auto_update_enabled: false,
         identity: trove_app::app_state::Identity::default(),
+        mappings: trove_app::mappings::default_state(),
     };
     assert!(!save_and_read(&state).contains(CANARY));
 }
@@ -126,6 +130,7 @@ fn otlp_generic_header_values_do_not_land_in_state_json() {
         harnesses: Vec::new(),
         auto_update_enabled: false,
         identity: trove_app::app_state::Identity::default(),
+        mappings: trove_app::mappings::default_state(),
     };
     let on_disk = save_and_read(&state);
     assert!(!on_disk.contains(CANARY));

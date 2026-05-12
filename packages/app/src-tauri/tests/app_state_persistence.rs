@@ -93,6 +93,7 @@ fn save_then_load_is_byte_identical_for_each_backend_kind() {
             harnesses: vec![sample_config(HarnessId::ClaudeCode)],
             auto_update_enabled: false,
             identity: trove_app::app_state::Identity::default(),
+            mappings: trove_app::mappings::default_state(),
         };
         save_to_dir(dir.path(), &state).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();
