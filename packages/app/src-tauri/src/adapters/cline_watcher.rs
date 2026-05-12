@@ -164,6 +164,8 @@ pub fn parse_task_log_payload(
             "resource": {
                 "attributes": [
                     {"key": "service.name", "value": {"stringValue": "cline"}},
+                    {"key": "harness.id", "value": {"stringValue": "cline"}},
+                    {"key": "harness.name", "value": {"stringValue": "Cline"}},
                     {"key": "trove.source", "value": {"stringValue": "cline"}},
                 ]
             },

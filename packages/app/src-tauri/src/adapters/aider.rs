@@ -116,6 +116,8 @@ pub fn parse_event_line(line: &str, opts: &ApplyOptions) -> Option<Value> {
             "resource": {
                 "attributes": [
                     {"key": "service.name", "value": {"stringValue": "aider"}},
+                    {"key": "harness.id", "value": {"stringValue": "aider"}},
+                    {"key": "harness.name", "value": {"stringValue": "Aider"}},
                     {"key": "trove.source", "value": {"stringValue": "aider"}},
                 ]
             },

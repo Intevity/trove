@@ -7,10 +7,9 @@ import { useDetectedHarnesses } from '../hooks/useDetectedHarnesses.js';
 import { useMetricsSnapshot } from '../hooks/useMetricsSnapshot.js';
 import { deriveOverallHealth } from '../lib/health.js';
 import { TroveIpcError, revertPatch } from '../lib/ipc.js';
-import { AppHeader } from './AppHeader.js';
+import { AppHeader, type TabId } from './AppHeader.js';
 import { Footer } from './Footer.js';
 import { PatchPreviewModal } from './PatchPreviewModal.js';
-import { TabNav, type TabId } from './TabNav.js';
 import { HarnessesTab } from './tabs/HarnessesTab.js';
 import { LogsTab } from './tabs/LogsTab.js';
 import { OverviewTab } from './tabs/OverviewTab.js';
@@ -83,15 +82,12 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
 
   return (
     <div data-testid="dashboard" className="flex h-full flex-col">
-      <AppHeader health={health} />
-      <TabNav activeTab={activeTab} onChange={setActiveTab} />
+      <AppHeader health={health} detail={detail} activeTab={activeTab} onTabChange={setActiveTab} />
 
       <main className="flex-1 min-h-0 overflow-auto">
         {activeTab === 'overview' && (
           <OverviewTab
             appState={appState}
-            health={health}
-            detail={detail}
             state={state}
             metrics={metrics}
             onChangeBackend={onChangeBackend}

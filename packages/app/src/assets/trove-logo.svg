@@ -1,0 +1,5 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Trove logo">
+  <rect x="100" y="100" width="824" height="824" rx="180" fill="#C2410C"/>
+  <rect x="212" y="212" width="600" height="160" rx="16" fill="#FFF7ED"/>
+  <rect x="432" y="212" width="160" height="600" rx="16" fill="#FFF7ED"/>
+</svg>

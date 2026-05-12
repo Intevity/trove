@@ -74,20 +74,27 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
             Value::String("true".to_string()),
         );
     }
-    if !opts.custom_attributes.is_empty() {
-        // Use a stable comma-separated form so the hash is deterministic
-        // (BTreeMap iteration is already sorted).
-        let attrs = opts
-            .custom_attributes
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        env.insert(
-            "OTEL_RESOURCE_ATTRIBUTES".to_string(),
-            Value::String(attrs),
-        );
+    // Always tag emissions with a stable harness identifier so backends
+    // can filter Claude Code's signals out of a mixed-harness pipeline.
+    // The pair is intentionally pinned in code (not user-configurable);
+    // any per-install custom attributes append after them.
+    let mut attr_pairs: Vec<(String, String)> = vec![
+        ("harness.id".to_string(), "claude-code".to_string()),
+        ("harness.name".to_string(), "Claude Code".to_string()),
+    ];
+    // BTreeMap iteration is already sorted, so the hash is deterministic.
+    for (k, v) in &opts.custom_attributes {
+        attr_pairs.push((k.clone(), v.clone()));
     }
+    let attrs = attr_pairs
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    env.insert(
+        "OTEL_RESOURCE_ATTRIBUTES".to_string(),
+        Value::String(attrs),
+    );
 
     let mut top = serde_json::Map::new();
     top.insert("env".to_string(), Value::Object(env));
@@ -329,7 +336,24 @@ mod tests {
         let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
         let env = parsed.get("env").and_then(Value::as_object).unwrap();
         let attrs = env["OTEL_RESOURCE_ATTRIBUTES"].as_str().unwrap();
-        assert_eq!(attrs, "env=prod,team=platform");
+        assert_eq!(
+            attrs,
+            "harness.id=claude-code,harness.name=Claude Code,env=prod,team=platform"
+        );
+    }
+
+    #[test]
+    fn harness_id_is_always_emitted_even_without_custom_attributes() {
+        // Telemetry attribution: every Claude Code apply must include
+        // the harness.id/harness.name pair so SigNoz can filter Claude
+        // Code activity out of a mixed-harness pipeline.
+        let home = tempdir().unwrap();
+        apply(home.path(), &ApplyOptions::default()).unwrap();
+
+        let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
+        let env = parsed.get("env").and_then(Value::as_object).unwrap();
+        let attrs = env["OTEL_RESOURCE_ATTRIBUTES"].as_str().unwrap();
+        assert_eq!(attrs, "harness.id=claude-code,harness.name=Claude Code");
     }
 
     #[test]
@@ -372,7 +396,7 @@ mod tests {
         let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
         assert_eq!(
             parsed["env"]["OTEL_RESOURCE_ATTRIBUTES"],
-            "team=platform"
+            "harness.id=claude-code,harness.name=Claude Code,team=platform"
         );
     }
 }
