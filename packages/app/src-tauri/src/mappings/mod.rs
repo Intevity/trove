@@ -123,12 +123,26 @@ pub enum MappingSource {
         native_metric: String,
         /// Tier A bucket the native metric copies into.
         target_metric: TierAMetric,
-        /// Per-attribute mapping: raw key → Tier A key (e.g.
+        /// Per-attribute *rename* map: raw key → Tier A key (e.g.
         /// `"gen_ai.token.type" → "direction"`). Empty map means
         /// "carry every attribute over unchanged". Resulting attribute
         /// values must still fall within the Tier A enum domain;
         /// validation catches mismatches.
+        ///
+        /// Wired through `metricstransform`'s `update_label` operation.
+        /// Pre-existing attributes on the source metric are preserved
+        /// on the synthesized copy; this only renames the listed keys.
         attribute_map: BTreeMap<String, String>,
+        /// Per-attribute *injection* map: key → constant value to add.
+        /// Used to set required Tier A attributes like `event.kind` and
+        /// `error.kind` that the native metric doesn't carry. Without
+        /// these, dashboards filtering on those attributes see empty
+        /// results even when the synthesized metric is flowing.
+        ///
+        /// Wired through `metricstransform`'s `add_label` operation.
+        /// Empty map = no injections.
+        #[serde(default)]
+        inject_attributes: BTreeMap<String, String>,
     },
 }
 
@@ -283,6 +297,7 @@ mod tests {
             native_metric: "claude_code.token.usage".into(),
             target_metric: TierAMetric::Tokens,
             attribute_map: BTreeMap::from([("type".into(), "direction".into())]),
+            inject_attributes: BTreeMap::new(),
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"kind\":\"synthesize-from-native\""));
@@ -290,6 +305,37 @@ mod tests {
         assert!(json.contains("\"targetMetric\":\"tokens\""));
         let back: MappingSource = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn mapping_source_synthesize_with_inject_attributes_round_trips() {
+        let s = MappingSource::SynthesizeFromNative {
+            native_metric: "gemini_cli.api.request.count".into(),
+            target_metric: TierAMetric::Events,
+            attribute_map: BTreeMap::new(),
+            inject_attributes: BTreeMap::from([
+                ("event.kind".into(), "chat.turn".into()),
+            ]),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"injectAttributes\""));
+        assert!(json.contains("\"event.kind\":\"chat.turn\""));
+        let back: MappingSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn mapping_source_synthesize_defaults_inject_attributes_to_empty() {
+        // Round-trip from a wire payload that omits injectAttributes — older
+        // clients / saved state files won't carry the field; default is "".
+        let wire = r#"{"kind":"synthesize-from-native","nativeMetric":"x","targetMetric":"events","attributeMap":{}}"#;
+        let parsed: MappingSource = serde_json::from_str(wire).unwrap();
+        match parsed {
+            MappingSource::SynthesizeFromNative { inject_attributes, .. } => {
+                assert!(inject_attributes.is_empty());
+            }
+            MappingSource::HookRule { .. } => panic!("expected synthesize"),
+        }
     }
 
     #[test]

@@ -227,6 +227,11 @@ export const MappingSource = z.discriminatedUnion('kind', [
     nativeMetric: z.string(),
     targetMetric: TierAMetric,
     attributeMap: z.record(z.string(), z.string()),
+    /** Static labels injected on the synthesized metric via
+     *  metricstransform's `add_label`. Use for required Tier A
+     *  attributes the native source doesn't carry (e.g. event.kind,
+     *  error.kind). Defaults to empty map. */
+    injectAttributes: z.record(z.string(), z.string()).default({}),
   }),
 ]);
 export type MappingSource = z.infer<typeof MappingSource>;

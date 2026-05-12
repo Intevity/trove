@@ -75,6 +75,11 @@ fn attr(k: &str, v: &str) -> BTreeMap<String, String> {
 /// Claude Code emits `claude_code.*` natively. Synthesis maps the
 /// session/tool counters onto `events` and the token-usage gauge onto
 /// `tokens`. Cost is left to the user to opt into (open question #2).
+///
+/// Note on `event.kind`: dashboards filter `trove.harness.events` by
+/// `event.kind`. `metricstransform action: insert` carries the source
+/// metric's attributes over, but none of Claude Code's counters expose
+/// a Tier A `event.kind` natively, so we inject the literal here.
 fn claude_code_defaults() -> HarnessMapping {
     HarnessMapping {
         harness_id: HarnessId::ClaudeCode,
@@ -84,11 +89,17 @@ fn claude_code_defaults() -> HarnessMapping {
                 native_metric: "claude_code.session.count".into(),
                 target_metric: TierAMetric::Events,
                 attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "chat.turn".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "claude_code.tool.decision.count".into(),
                 target_metric: TierAMetric::Events,
                 attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "tool.call".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "claude_code.token.usage".into(),
@@ -97,6 +108,7 @@ fn claude_code_defaults() -> HarnessMapping {
                 // Tier A wants `direction`. The collector transform
                 // rewrites the attribute key inline.
                 attribute_map: BTreeMap::from([("type".into(), "direction".into())]),
+                inject_attributes: BTreeMap::new(),
             },
         ],
         cost_overrides: BTreeMap::new(),
@@ -105,11 +117,18 @@ fn claude_code_defaults() -> HarnessMapping {
 
 /// Gemini CLI ≥0.41 emits `gemini_cli.api.request.count` per chat
 /// turn (confirmed against a live capture). Token usage rides under
-/// the OTel-semconv `gen_ai.client.token.usage` gauge with
+/// the OTel-semconv `gen_ai.client.token.usage` histogram with
 /// `gen_ai.token.type=input|output`; tool use lands in
-/// `gemini_cli.tool.call.count`. The earlier defaults' `session.count`
-/// name doesn't match what upstream actually emits — leave it out so
-/// no rule shadow-matches and silently emits nothing.
+/// `gemini_cli.tool.call.count`. Turn duration comes from
+/// `gen_ai.client.operation.duration` (seconds, matches Tier A unit).
+/// Failure counters synthesize into `trove.harness.errors`.
+///
+/// **Cost is not synthesized here** — `metricstransform` cannot do
+/// per-model rate × token-count arithmetic. Cost (and the more
+/// reliable tokens/duration emission with `model` and `user.email`
+/// labels attached) comes from the dedicated Gemini chat-log watcher
+/// in `crate::adapters::gemini_watcher`, which reads
+/// `~/.gemini/tmp/<proj>/chats/session-*.jsonl`.
 fn gemini_cli_defaults() -> HarnessMapping {
     HarnessMapping {
         harness_id: HarnessId::GeminiCli,
@@ -118,20 +137,58 @@ fn gemini_cli_defaults() -> HarnessMapping {
             MappingSource::SynthesizeFromNative {
                 native_metric: "gemini_cli.api.request.count".into(),
                 target_metric: TierAMetric::Events,
-                attribute_map: BTreeMap::new(),
+                attribute_map: BTreeMap::from([
+                    // The dashboard groups by `model`; Gemini's native
+                    // attribute is `gen_ai.request.model`. Rename it
+                    // here so the synthesized metric carries `model`.
+                    ("gen_ai.request.model".into(), "model".into()),
+                ]),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "chat.turn".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gemini_cli.tool.call.count".into(),
                 target_metric: TierAMetric::Events,
                 attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "tool.call".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gen_ai.client.token.usage".into(),
                 target_metric: TierAMetric::Tokens,
-                attribute_map: BTreeMap::from([(
-                    "gen_ai.token.type".into(),
-                    "direction".into(),
-                )]),
+                attribute_map: BTreeMap::from([
+                    ("gen_ai.token.type".into(), "direction".into()),
+                    ("gen_ai.request.model".into(), "model".into()),
+                ]),
+                inject_attributes: BTreeMap::new(),
+            },
+            MappingSource::SynthesizeFromNative {
+                native_metric: "gen_ai.client.operation.duration".into(),
+                target_metric: TierAMetric::TurnDuration,
+                attribute_map: BTreeMap::from([
+                    ("gen_ai.request.model".into(), "model".into()),
+                ]),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "chat.turn".into()),
+                ]),
+            },
+            MappingSource::SynthesizeFromNative {
+                native_metric: "gemini_cli.model_routing.failure.count".into(),
+                target_metric: TierAMetric::Errors,
+                attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("error.kind".into(), "routing".into()),
+                ]),
+            },
+            MappingSource::SynthesizeFromNative {
+                native_metric: "gemini_cli.chat.content_retry_failure.count".into(),
+                target_metric: TierAMetric::Errors,
+                attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("error.kind".into(), "retry".into()),
+                ]),
             },
         ],
         cost_overrides: BTreeMap::new(),
@@ -153,19 +210,36 @@ fn codex_cli_defaults() -> HarnessMapping {
                 native_metric: "codex.session.count".into(),
                 target_metric: TierAMetric::Events,
                 attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "chat.turn".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "codex.tool.count".into(),
                 target_metric: TierAMetric::Events,
                 attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "tool.call".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gen_ai.client.token.usage".into(),
                 target_metric: TierAMetric::Tokens,
-                attribute_map: BTreeMap::from([(
-                    "gen_ai.token.type".into(),
-                    "direction".into(),
-                )]),
+                attribute_map: BTreeMap::from([
+                    ("gen_ai.token.type".into(), "direction".into()),
+                    ("gen_ai.request.model".into(), "model".into()),
+                ]),
+                inject_attributes: BTreeMap::new(),
+            },
+            MappingSource::SynthesizeFromNative {
+                native_metric: "gen_ai.client.operation.duration".into(),
+                target_metric: TierAMetric::TurnDuration,
+                attribute_map: BTreeMap::from([
+                    ("gen_ai.request.model".into(), "model".into()),
+                ]),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "chat.turn".into()),
+                ]),
             },
         ],
         cost_overrides: BTreeMap::new(),
@@ -189,19 +263,25 @@ fn qwen_code_defaults() -> HarnessMapping {
                 native_metric: "qwen_code.api.request.count".into(),
                 target_metric: TierAMetric::Events,
                 attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "chat.turn".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "qwen_code.tool.call.count".into(),
                 target_metric: TierAMetric::Events,
                 attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".into(), "tool.call".into()),
+                ]),
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "qwen_code.token.usage".into(),
                 target_metric: TierAMetric::Tokens,
-                attribute_map: BTreeMap::from([(
-                    "type".into(),
-                    "direction".into(),
-                )]),
+                attribute_map: BTreeMap::from([
+                    ("type".into(), "direction".into()),
+                ]),
+                inject_attributes: BTreeMap::new(),
             },
         ],
         cost_overrides: BTreeMap::new(),

@@ -614,6 +614,7 @@ fn build_tier_a_block(harness: &HarnessMapping) -> Option<String> {
             native_metric,
             target_metric,
             attribute_map,
+            inject_attributes,
         } = source
         else {
             continue;
@@ -626,7 +627,7 @@ fn build_tier_a_block(harness: &HarnessMapping) -> Option<String> {
             "        new_name: {}",
             target_metric.full_name()
         );
-        if !attribute_map.is_empty() {
+        if !attribute_map.is_empty() || !inject_attributes.is_empty() {
             let _ = writeln!(transforms, "        operations:");
             // BTreeMap iteration is sorted, so YAML order is stable
             // across re-renders (golden-file friendly).
@@ -634,6 +635,11 @@ fn build_tier_a_block(harness: &HarnessMapping) -> Option<String> {
                 let _ = writeln!(transforms, "          - action: update_label");
                 let _ = writeln!(transforms, "            label: {raw}");
                 let _ = writeln!(transforms, "            new_label: {tier_a}");
+            }
+            for (label, value) in inject_attributes {
+                let _ = writeln!(transforms, "          - action: add_label");
+                let _ = writeln!(transforms, "            new_label: {label}");
+                let _ = writeln!(transforms, "            new_value: {value}");
             }
         }
     }

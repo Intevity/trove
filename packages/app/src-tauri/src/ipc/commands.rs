@@ -17,7 +17,8 @@ use std::collections::HashMap;
 
 use crate::adapters::{
     ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, cline,
-    cline_watcher, codex_cli, copilot_cli, cursor_cli, cursor_ide, gemini_cli, opencode,
+    cline_watcher, codex_cli, copilot_cli, cursor_cli, cursor_ide, gemini_cli,
+    gemini_watcher, opencode,
     qwen_code,
 };
 use crate::app_state::{
@@ -963,7 +964,22 @@ fn spawn_tier3_watcher(
             ensure_log_parent(&log);
             Some(spawn_wrapper_log_watcher(log, options.clone(), id))
         }
-        _ => None,
+        // Gemini emits Tier B natively, but the chat-log watcher fills
+        // the gaps: per-turn `cost.usd` (metricstransform can't do
+        // per-model rate × token-count math) and reliable
+        // `tokens` / `turn.duration` with `model` labels, sourced from
+        // `~/.gemini/tmp/<proj>/chats/session-*.jsonl`.
+        HarnessId::GeminiCli => Some(gemini_watcher::spawn(
+            home.join(".gemini").join("tmp"),
+            options.clone(),
+            gemini_watcher::DEFAULT_POLL_INTERVAL,
+        )),
+        HarnessId::ClaudeCode
+        | HarnessId::CodexCli
+        | HarnessId::CursorIde
+        | HarnessId::CursorCli
+        | HarnessId::QwenCode
+        | HarnessId::Opencode => None,
     };
     let Some(handle) = handle else { return };
     if let Some(registry) = app.try_state::<TierThreeWatchers>() {
