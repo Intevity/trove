@@ -22,7 +22,7 @@
 //!
 //! Mirrors the Zod schemas in `packages/shared/src/schemas.ts`:
 //! `TierAMetric`, `MappingSource`, `HarnessMapping`, `MappingState`.
-//! Wire format is camelCase (matches the existing AppState convention).
+//! Wire format is camelCase (matches the existing `AppState` convention).
 
 use std::collections::BTreeMap;
 
@@ -47,7 +47,7 @@ pub const MAPPING_SCHEMA_VERSION: u32 = 1;
 ///
 /// The dotted forms (`cost.usd`, `turn.duration`) are intentional —
 /// they correspond to the literal metric names a user would see in
-/// SignOz when filtering. Rust's enum variant names can't carry dots,
+/// `SignOz` when filtering. Rust's enum variant names can't carry dots,
 /// so each is `#[serde(rename = ...)]`'d to the literal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum TierAMetric {
@@ -85,10 +85,9 @@ impl TierAMetric {
     #[must_use]
     pub fn required_attributes(self) -> &'static [&'static str] {
         match self {
-            Self::Events => &["event.kind"],
+            Self::Events | Self::TurnDuration => &["event.kind"],
             Self::Tokens => &["direction"],
             Self::CostUsd => &["cost.method"],
-            Self::TurnDuration => &["event.kind"],
             Self::Errors => &["error.kind"],
         }
     }
@@ -188,7 +187,7 @@ impl Eq for CostOverride {}
 pub struct MappingState {
     /// Pinned to [`MAPPING_SCHEMA_VERSION`]. Independent of
     /// [`crate::app_state::CURRENT_SCHEMA_VERSION`] — the outer state
-    /// migration handles older AppState shapes; this inner version
+    /// migration handles older `AppState` shapes; this inner version
     /// only moves when [`MappingState`] itself changes incompatibly.
     pub schema_version: u32,
     pub harnesses: Vec<HarnessMapping>,

@@ -13,7 +13,7 @@
 //!   on each entry call out where verification is partial; treat them as
 //!   conservative starting points refined by running each harness against
 //!   a local OTLP capture during integration testing.
-//! - **Open question #2 in MAPPING_PLAN.md**: default ON for `events` and
+//! - **Open question #2 in `MAPPING_PLAN.md`**: default ON for `events` and
 //!   `tokens` synthesis, OFF for `cost.usd` (cost double-count is the most
 //!   confusing failure mode). Cost rows therefore are not seeded here; the
 //!   UI lets users add them per harness.
@@ -142,7 +142,7 @@ fn gemini_cli_defaults() -> HarnessMapping {
 /// upstream uses `codex.*` for session and tool counters and emits
 /// token-usage as a gauge. These names need verification against a
 /// real Codex run with telemetry enabled — they're the documented
-/// shape but the prefix may differ ("codex_cli", "codex", or
+/// shape but the prefix may differ (`codex_cli`, `codex`, or
 /// straight-up `gen_ai.*` only).
 fn codex_cli_defaults() -> HarnessMapping {
     HarnessMapping {
@@ -208,7 +208,7 @@ fn qwen_code_defaults() -> HarnessMapping {
     }
 }
 
-/// Opencode ships its OTel emission through the upstream
+/// Opencode ships its `OTel` emission through the upstream
 /// `@devtheops/opencode-plugin-otel` package. The plugin's metric names
 /// haven't been canonicalized in Trove docs — defaults are intentionally
 /// empty; the user can populate them via the Mappings UI once a real
@@ -400,7 +400,7 @@ mod tests {
             .iter()
             .filter_map(|s| match s {
                 MappingSource::HookRule { when, .. } => Some(when.clone()),
-                _ => None,
+                MappingSource::SynthesizeFromNative { .. } => None,
             })
             .collect();
         let cli_whens: Vec<_> = cli
@@ -408,7 +408,7 @@ mod tests {
             .iter()
             .filter_map(|s| match s {
                 MappingSource::HookRule { when, .. } => Some(when.clone()),
-                _ => None,
+                MappingSource::SynthesizeFromNative { .. } => None,
             })
             .collect();
         assert_eq!(ide_whens, cli_whens);
@@ -425,7 +425,7 @@ mod tests {
             .unwrap();
         match before_prompt {
             MappingSource::HookRule { emit, .. } => assert!(emit.is_none()),
-            _ => panic!("expected HookRule"),
+            MappingSource::SynthesizeFromNative { .. } => panic!("expected HookRule"),
         }
     }
 

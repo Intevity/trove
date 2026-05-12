@@ -58,7 +58,7 @@ const HISTOGRAM_BOUNDS: &[f64] = &[
 pub fn build_invocation_metrics(
     line: &str,
     opts: &ApplyOptions,
-    spec: WrapperMetricsSpec,
+    spec: &WrapperMetricsSpec,
 ) -> Option<Value> {
     let event: Value = serde_json::from_str(line.trim()).ok()?;
     let tool = event.get("tool").and_then(Value::as_str)?;
@@ -66,8 +66,9 @@ pub fn build_invocation_metrics(
         return None;
     }
     let exit = event.get("exit_code").and_then(Value::as_i64).unwrap_or(0);
-    let duration_ms = event.get("duration_ms").and_then(Value::as_i64).unwrap_or(0);
-    let duration_s = (duration_ms.max(0) as f64) / 1000.0;
+    let elapsed_ms = event.get("duration_ms").and_then(Value::as_i64).unwrap_or(0);
+    #[allow(clippy::cast_precision_loss)]
+    let duration_s = (elapsed_ms.max(0) as f64) / 1000.0;
 
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -194,20 +195,20 @@ mod tests {
     #[test]
     fn returns_none_for_non_json() {
         assert!(
-            build_invocation_metrics("not json", &ApplyOptions::default(), aider_spec()).is_none()
+            build_invocation_metrics("not json", &ApplyOptions::default(), &aider_spec()).is_none()
         );
     }
 
     #[test]
     fn returns_none_for_mismatched_tool() {
         let line = r#"{"tool":"notaider","exit_code":0,"duration_ms":50}"#;
-        assert!(build_invocation_metrics(line, &ApplyOptions::default(), aider_spec()).is_none());
+        assert!(build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).is_none());
     }
 
     #[test]
     fn emits_events_and_duration_for_a_successful_invocation() {
         let line = r#"{"tool":"aider","argc":1,"exit_code":0,"duration_ms":2500,"ts":"2026-05-09T00:00:00Z"}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
         let names: Vec<&str> = p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
             .unwrap()
@@ -223,7 +224,7 @@ mod tests {
     #[test]
     fn emits_errors_for_a_nonzero_exit_code() {
         let line = r#"{"tool":"aider","argc":1,"exit_code":1,"duration_ms":100,"ts":""}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
         let names: Vec<&str> = p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
             .unwrap()
@@ -241,7 +242,7 @@ mod tests {
         // with b[-1] = -∞. So 2.5 lands in bucket index 3 (value of
         // bound 5).
         let line = r#"{"tool":"aider","exit_code":0,"duration_ms":2500,"ts":""}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
         let histogram = p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
             .unwrap()
@@ -262,7 +263,7 @@ mod tests {
         let mut opts = ApplyOptions::default();
         opts.custom_attributes
             .insert("env".into(), "prod".into());
-        let p = build_invocation_metrics(line, &opts, aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &opts, &aider_spec()).unwrap();
         let resource_attrs = p["resourceMetrics"][0]["resource"]["attributes"]
             .as_array()
             .unwrap();
@@ -274,7 +275,7 @@ mod tests {
     #[test]
     fn resource_attributes_match_the_spec() {
         let line = r#"{"tool":"aider","exit_code":0,"duration_ms":50,"ts":""}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
         let attrs = p["resourceMetrics"][0]["resource"]["attributes"].as_array().unwrap();
         assert!(attrs
             .iter()

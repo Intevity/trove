@@ -2,7 +2,7 @@
 //! count into `trove.harness.cost.usd`.
 //!
 //! The defaults below are conservative and intended to be refreshed at
-//! each Trove release (MAPPING_PLAN.md open question #1). Users override
+//! each Trove release (`MAPPING_PLAN.md` open question #1). Users override
 //! per-model via the `costOverrides` field on their
 //! [`crate::mappings::HarnessMapping`].
 //!
@@ -75,10 +75,11 @@ pub fn lookup_rate(
     None
 }
 
-/// Convenience wrapper for converting a (input_tokens, output_tokens)
+/// Convenience wrapper for converting an (`input_tokens`, `output_tokens`)
 /// pair into a USD figure using `lookup_rate`. Returns `None` when the
 /// model is unrecognized.
 #[must_use]
+#[allow(clippy::cast_precision_loss)]
 pub fn estimate_cost_usd(
     model_name: &str,
     input_tokens: u64,

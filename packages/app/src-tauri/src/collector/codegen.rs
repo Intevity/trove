@@ -602,7 +602,7 @@ fn build_harness_tag_block(synth: &[&HarnessMapping]) -> String {
 ///
 /// `action: insert` preserves the original Tier B metric — the new
 /// Tier A row is an additional metric on the wire, not a rename. This
-/// honors MAPPING_PLAN.md §"Defaults": "All Tier B passes through;
+/// honors `MAPPING_PLAN.md` §"Defaults": "All Tier B passes through;
 /// synthesis is additive."
 fn build_tier_a_block(harness: &HarnessMapping) -> Option<String> {
     if !harness.enabled {
@@ -922,8 +922,7 @@ mod tests {
 
         let metrics_line = out
             .lines()
-            .filter(|l| l.contains("processors: ["))
-            .nth(0)
+            .find(|l| l.contains("processors: ["))
             .expect("at least one pipeline processors line");
         assert!(
             metrics_line.contains("metricstransform/tierA-claude-code"),

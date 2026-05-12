@@ -152,7 +152,7 @@ pub fn parse_event_metric_payload(line: &str, opts: &ApplyOptions) -> Option<Val
     super::wrapper_common_metrics::build_invocation_metrics(
         line,
         opts,
-        super::wrapper_common_metrics::WrapperMetricsSpec {
+        &super::wrapper_common_metrics::WrapperMetricsSpec {
             expected_tool: "aider",
             service_name: "aider",
             harness_id: "aider",
