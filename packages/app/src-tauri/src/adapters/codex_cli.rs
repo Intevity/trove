@@ -74,21 +74,16 @@ pub fn revert(home: &Path) -> Result<(), IpcError> {
 // (whose `for_json_patches` is fallible) so the shared `HarnessSpec`
 // can use a single `fn` pointer type for `build_region`.
 #[allow(clippy::unnecessary_wraps)]
-fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
+fn build_region(_opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     use std::fmt::Write as _;
 
     let mut payload = String::new();
 
-    // Only emit the bare [otel] table when there's a top-level key to
-    // place under it. Otherwise the sub-tables [otel.exporter] etc.
-    // implicitly establish the namespace, and we avoid colliding with
-    // any user-written [otel] section elsewhere in the file (TOML
-    // rejects duplicate top-level table definitions).
-    if opts.log_user_prompts {
-        payload.push_str("[otel]\n");
-        payload.push_str("log_user_prompt = true\n\n");
-    }
-
+    // The sub-tables [otel.exporter] etc. implicitly establish the
+    // [otel] namespace, so the bare [otel] table is never emitted —
+    // that avoids colliding with any user-written [otel] section
+    // elsewhere in the file (TOML rejects duplicate top-level table
+    // definitions).
     payload.push_str("[otel.exporter]\n");
     payload.push_str("kind = \"otlp-http\"\n");
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/logs\"");
@@ -104,14 +99,11 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/metrics\"");
     payload.push_str("protocol = \"binary\"\n");
 
-    let mut keys = vec![
+    let keys = vec![
         "otel.exporter".to_string(),
         "otel.trace_exporter".to_string(),
         "otel.metrics_exporter".to_string(),
     ];
-    if opts.log_user_prompts {
-        keys.insert(0, "otel.log_user_prompt".to_string());
-    }
 
     Ok(ManagedRegion::for_text_block(payload, keys))
 }
@@ -348,34 +340,19 @@ mod tests {
         assert_eq!(preview.status, PreviewStatus::Conflict);
     }
 
-    // --- log_user_prompts toggle --------------------------------------------
+    // --- Metrics-only policy ------------------------------------------------
 
     #[test]
-    fn log_user_prompts_propagates_to_log_user_prompt_when_true() {
-        let home = tempdir().unwrap();
-        let opts = ApplyOptions {
-            log_user_prompts: true,
-            ..Default::default()
-        };
-        apply(home.path(), &opts).unwrap();
-
-        let written = read_config(home.path());
-        let doc: toml_edit::DocumentMut = written.parse().unwrap();
-        assert_eq!(
-            doc["otel"]["log_user_prompt"].as_bool(),
-            Some(true),
-            "expected otel.log_user_prompt = true; got {written}"
-        );
-    }
-
-    #[test]
-    fn log_user_prompts_default_omits_the_key() {
+    fn log_user_prompt_key_is_never_written() {
+        // Trove's pipeline is metrics-only; the codex `[otel]
+        // log_user_prompt` switch must never appear in the managed
+        // region, even though Codex's schema would accept it.
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let written = read_config(home.path());
         assert!(
             !written.contains("log_user_prompt"),
-            "log_user_prompt should be omitted by default; got {written}"
+            "log_user_prompt should never be written; got {written}"
         );
     }
 
@@ -399,22 +376,21 @@ mod tests {
     // --- Conflict surfacing when changing options ---------------------------
 
     #[test]
-    fn changing_options_between_applies_yields_conflict_until_reverted() {
+    fn changing_custom_attributes_between_applies_yields_conflict_until_reverted() {
+        // Custom attributes are a no-op for Codex (see
+        // `custom_attributes_are_a_noop_for_codex`), so a change in
+        // them must not cause conflict — re-apply with a different
+        // attributes set is byte-identical and should be idempotent.
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
 
-        let opts2 = ApplyOptions {
-            log_user_prompts: true,
-            ..Default::default()
-        };
-        let err = apply(home.path(), &opts2).unwrap_err();
-        assert!(matches!(err, IpcError::RegionConflict { .. }));
-
-        revert(home.path()).unwrap();
+        let mut opts2 = ApplyOptions::default();
+        opts2
+            .custom_attributes
+            .insert("team".into(), "platform".into());
+        // Idempotent because custom attributes don't change the
+        // emitted payload.
         apply(home.path(), &opts2).unwrap();
-        let written = read_config(home.path());
-        let doc: toml_edit::DocumentMut = written.parse().unwrap();
-        assert_eq!(doc["otel"]["log_user_prompt"].as_bool(), Some(true));
     }
 
     // --- Pre-existing user-managed [otel.exporter] section conflicts -------

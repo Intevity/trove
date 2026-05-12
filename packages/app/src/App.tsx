@@ -24,8 +24,8 @@ export function App(): JSX.Element {
 
   if (showWizard) {
     return (
-      <main className="min-h-screen text-slate-900 antialiased dark:text-slate-100">
-        <div className="mx-auto flex min-h-screen max-w-3xl flex-col items-stretch gap-6 px-8 py-12">
+      <main className="h-full overflow-y-auto text-slate-900 antialiased dark:text-slate-100">
+        <div className="mx-auto flex max-w-3xl flex-col items-stretch gap-6 px-8 py-12">
           <header>
             <h1 data-testid="app-header" className="text-3xl font-semibold tracking-tight">
               Trove

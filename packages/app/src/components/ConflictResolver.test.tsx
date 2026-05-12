@@ -11,7 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-const SAMPLE_OPTIONS: ApplyOptions = { logUserPrompts: false, customAttributes: {} };
+const SAMPLE_OPTIONS: ApplyOptions = { customAttributes: {} };
 
 const SAMPLE_PAYLOAD: ConflictPayload = {
   configPath: '/home/me/.claude/settings.json',

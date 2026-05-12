@@ -44,9 +44,7 @@ export function PatchPreviewModal({
   // resolver UI without leaving the modal lifecycle.
   const [conflict, setConflict] = useState<ConflictPayload | null>(null);
 
-  // Sprint 3 wires both knobs to their defaults — the wizard for
-  // tuning custom_attributes / log_user_prompts arrives in Sprint 5.
-  const options: ApplyOptions = { logUserPrompts: false, customAttributes: {} };
+  const options: ApplyOptions = { customAttributes: {} };
 
   useEffect(() => {
     let cancelled = false;

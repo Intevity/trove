@@ -249,7 +249,7 @@ describe('HarnessConfig', () => {
       format: 'json',
       lastWrittenRegionPayload: '{"env":{"OTEL_FOO":"bar"}}',
     },
-    options: { logUserPrompts: false, customAttributes: {} },
+    options: { customAttributes: {} },
   };
 
   it('parses a complete config with explicit options', () => {
@@ -258,12 +258,27 @@ describe('HarnessConfig', () => {
 
   it('applies defaults to options when fields are omitted', () => {
     const parsed = HarnessConfig.parse({ ...valid, options: {} });
-    expect(parsed.options.logUserPrompts).toBe(false);
     expect(parsed.options.customAttributes).toEqual({});
   });
 
   it('rejects an invalid lastPatchedAt timestamp', () => {
     expect(() => HarnessConfig.parse({ ...valid, lastPatchedAt: 'yesterday' })).toThrow();
+  });
+
+  it('accepts RFC 3339 timestamps with explicit offset (Rust chrono::to_rfc3339 format)', () => {
+    // chrono::Utc::now().to_rfc3339() emits e.g. "2026-05-12T02:35:56.049769+00:00"
+    // — with an explicit +00:00, not the Z suffix. The schema must accept it.
+    const offsetForm: HarnessConfig = {
+      ...valid,
+      lastPatchedAt: '2026-05-12T02:35:56.049769+00:00',
+    };
+    expect(() => HarnessConfig.parse(offsetForm)).not.toThrow();
+
+    const easternForm: HarnessConfig = {
+      ...valid,
+      lastPatchedAt: '2026-05-12T02:35:56.049-04:00',
+    };
+    expect(() => HarnessConfig.parse(easternForm)).not.toThrow();
   });
 
   it('rejects a missing trovePatch', () => {
@@ -440,16 +455,13 @@ describe('DetectedHarness', () => {
 describe('ApplyOptions', () => {
   it('parses an empty object using defaults', () => {
     const parsed = ApplyOptions.parse({});
-    expect(parsed.logUserPrompts).toBe(false);
     expect(parsed.customAttributes).toEqual({});
   });
 
   it('parses an explicit options object', () => {
     const parsed = ApplyOptions.parse({
-      logUserPrompts: true,
       customAttributes: { team: 'platform' },
     });
-    expect(parsed.logUserPrompts).toBe(true);
     expect(parsed.customAttributes).toEqual({ team: 'platform' });
   });
 
@@ -628,7 +640,7 @@ describe('ConflictAction', () => {
   it('parses a take-theirs action carrying ApplyOptions', () => {
     const action = {
       kind: 'take-theirs' as const,
-      options: { logUserPrompts: false, customAttributes: {} },
+      options: { customAttributes: {} },
     };
     expect(ConflictAction.parse(action)).toEqual(action);
   });
@@ -636,7 +648,7 @@ describe('ConflictAction', () => {
   it('parses a merge-manually action carrying ApplyOptions', () => {
     const action = {
       kind: 'merge-manually' as const,
-      options: { logUserPrompts: true, customAttributes: { team: 'platform' } },
+      options: { customAttributes: { team: 'platform' } },
     };
     expect(ConflictAction.parse(action)).toEqual(action);
   });

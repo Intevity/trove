@@ -5,11 +5,13 @@ import type { AppState, HarnessId } from '@trove/shared';
 import { useCollectorStatus } from '../hooks/useCollectorStatus.js';
 import { useDetectedHarnesses } from '../hooks/useDetectedHarnesses.js';
 import { useMetricsSnapshot } from '../hooks/useMetricsSnapshot.js';
+import { POST_ENABLE_ADVISORIES } from '../lib/harnessAdvisories.js';
 import { deriveOverallHealth } from '../lib/health.js';
 import { TroveIpcError, revertPatch } from '../lib/ipc.js';
 import { AppHeader, type TabId } from './AppHeader.js';
 import { Footer } from './Footer.js';
 import { PatchPreviewModal } from './PatchPreviewModal.js';
+import { Toast } from './Toast.js';
 import { HarnessesTab } from './tabs/HarnessesTab.js';
 import { LogsTab } from './tabs/LogsTab.js';
 import { OverviewTab } from './tabs/OverviewTab.js';
@@ -39,6 +41,10 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
   const [previewing, setPreviewing] = useState<HarnessId | null>(null);
   const [busyIds, setBusyIds] = useState<Set<HarnessId>>(() => new Set());
   const [revertError, setRevertError] = useState<TroveIpcError | null>(null);
+  // Post-enable advisory toast (e.g. "restart Cursor"). The PatchPreviewModal
+  // doesn't know which harness it patched, so we capture the id from
+  // `previewing` at the moment `onApplied` fires and stash it here.
+  const [toast, setToast] = useState<string | null>(null);
 
   const enabledHarnessCount = appState.harnesses.filter((h) => h.enabled).length;
   const state = status?.state ?? null;
@@ -75,10 +81,15 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
     [refresh],
   );
 
-  const handleApplied = useCallback(async () => {
-    setPreviewing(null);
-    await refresh();
-  }, [refresh]);
+  const handleApplied = useCallback(
+    async (id: HarnessId) => {
+      setPreviewing(null);
+      const advisory = POST_ENABLE_ADVISORIES[id];
+      if (advisory) setToast(advisory);
+      await refresh();
+    },
+    [refresh],
+  );
 
   return (
     <div data-testid="dashboard" className="flex h-full flex-col">
@@ -117,9 +128,11 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
         <PatchPreviewModal
           harnessId={previewing}
           onClose={() => setPreviewing(null)}
-          onApplied={() => void handleApplied()}
+          onApplied={() => void handleApplied(previewing)}
         />
       ) : null}
+
+      {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
     </div>
   );
 }

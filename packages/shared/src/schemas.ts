@@ -137,10 +137,13 @@ export const HarnessConfig = z.object({
   id: HarnessId,
   enabled: z.boolean(),
   configPath: z.string().min(1),
-  lastPatchedAt: z.string().datetime(),
+  // Rust writes RFC 3339 with explicit offset (chrono::DateTime::to_rfc3339()
+  // emits `+00:00`, never `Z`). Zod 3.20+'s default datetime() rejects
+  // non-Z offsets, so without `{ offset: true }` getAppState silently
+  // fails validation and the wizard never dismisses.
+  lastPatchedAt: z.string().datetime({ offset: true }),
   trovePatch: TrovePatch,
   options: z.object({
-    logUserPrompts: z.boolean().default(false),
     customAttributes: z.record(z.string(), z.string()).default({}),
   }),
 });
@@ -230,12 +233,11 @@ export const DetectedHarness = z.object({
 export type DetectedHarness = z.infer<typeof DetectedHarness>;
 
 /** Per-apply options chosen by the user in the UI. Mirrors the Rust
- *  `adapters::ApplyOptions` struct. `logUserPrompts` defaults to false;
- *  the wizard requires an explicit acknowledgement before flipping it
- *  on. `customAttributes` is forwarded to the harness as
- *  `OTEL_RESOURCE_ATTRIBUTES=key1=val1,…`. */
+ *  `adapters::ApplyOptions` struct. Trove is metrics-only by policy —
+ *  no prompt or response bodies cross the wire — so there's no toggle
+ *  to gate body capture. `customAttributes` is forwarded to the harness
+ *  as `OTEL_RESOURCE_ATTRIBUTES=key1=val1,…`. */
 export const ApplyOptions = z.object({
-  logUserPrompts: z.boolean().default(false),
   customAttributes: z.record(z.string(), z.string()).default({}),
 });
 export type ApplyOptions = z.infer<typeof ApplyOptions>;

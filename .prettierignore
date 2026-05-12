@@ -11,3 +11,8 @@ pnpm-lock.yaml
 
 # Authored plan document — preserve intentional markdown style.
 documentation/MVP_PLAN.md
+
+# Cursor hook wrapper carries a .cjs extension (the path is baked into
+# existing ~/.cursor/hooks.json patches) but is actually a /bin/sh script.
+# Prettier's JS parser chokes on the shell syntax.
+resources/hooks/cursor-otel-hook.cjs

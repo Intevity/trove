@@ -94,7 +94,7 @@ async fn cline_watcher_emits_otlp_log_for_a_fixture_task() {
         .expect("cline.task_id attribute present");
     assert_eq!(task_id["value"]["stringValue"], "task-fixture-1");
 
-    // log_user_prompts is false by default — body must be empty.
+    // Trove is metrics-only: prompt bodies are never captured.
     assert_eq!(log["body"]["stringValue"].as_str().unwrap(), "");
 }
 

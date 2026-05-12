@@ -117,13 +117,12 @@ describe('previewPatch', () => {
     };
     invokeMock.mockResolvedValueOnce(expected);
     const result = await previewPatch('claude-code', {
-      logUserPrompts: false,
       customAttributes: {},
     });
     expect(result).toEqual(expected);
     expect(invokeMock).toHaveBeenCalledWith('preview_patch', {
       harnessId: 'claude-code',
-      options: { logUserPrompts: false, customAttributes: {} },
+      options: { customAttributes: {} },
     });
   });
 
@@ -132,9 +131,9 @@ describe('previewPatch', () => {
       kind: 'region-conflict',
       path: '/home/me/.claude/settings.json',
     });
-    await expect(
-      previewPatch('claude-code', { logUserPrompts: false, customAttributes: {} }),
-    ).rejects.toBeInstanceOf(TroveIpcError);
+    await expect(previewPatch('claude-code', { customAttributes: {} })).rejects.toBeInstanceOf(
+      TroveIpcError,
+    );
   });
 });
 
@@ -152,7 +151,6 @@ describe('applyPatch', () => {
     };
     invokeMock.mockResolvedValueOnce(expected);
     const result = await applyPatch('claude-code', {
-      logUserPrompts: false,
       customAttributes: {},
     });
     expect(result).toEqual(expected);
@@ -289,7 +287,7 @@ describe('resolveConflict', () => {
     invokeMock.mockReset();
   });
 
-  const sampleApplyOptions = { logUserPrompts: false, customAttributes: {} };
+  const sampleApplyOptions = { customAttributes: {} };
   const samplePatch = {
     managedBlockHash: 'a'.repeat(64),
     fileHashAtLastWrite: 'b'.repeat(64),
