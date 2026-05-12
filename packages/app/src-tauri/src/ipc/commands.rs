@@ -939,6 +939,35 @@ fn external_resource_path(app: &tauri::AppHandle, id: HarnessId) -> Result<PathB
     Ok(p)
 }
 
+/// Walk every harness in the persisted [`AppState`] and respawn its
+/// supplementary watcher (if any). Called once during app setup so
+/// previously applied harnesses get their watchers back after a
+/// relaunch — without this, watchers only run from the moment the user
+/// re-applies, which is wrong for emissions sourced from on-disk logs
+/// the harness keeps writing across restarts.
+///
+/// Non-fatal: `state.json` errors and missing-id arms are logged at
+/// `warn!`; setup continues.
+pub fn respawn_persisted_watchers(app: &tauri::AppHandle) {
+    let state = match app_state::load(app) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "respawn_persisted_watchers: state.json load failed");
+            return;
+        }
+    };
+    let Ok(home) = home_dir() else {
+        tracing::warn!("respawn_persisted_watchers: HOME unresolvable");
+        return;
+    };
+    for harness in &state.harnesses {
+        if !harness.enabled {
+            continue;
+        }
+        spawn_tier3_watcher(app, harness.id, &home, &harness.options);
+    }
+}
+
 /// Spawn the appropriate Tier 3 watcher and register it in the
 /// long-lived `TierThreeWatchers` slot. No-op for non-tier-3 ids.
 fn spawn_tier3_watcher(

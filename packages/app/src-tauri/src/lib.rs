@@ -131,6 +131,16 @@ pub fn run() {
             // from inside `tray::setup` without a deferred lookup.
             tray::setup(app.handle())?;
 
+            // Rehydrate supplementary watchers (Cline, Aider, Copilot-CLI,
+            // Gemini) for every harness already in state.json. Without
+            // this, watchers only run from the moment the user re-applies
+            // the harness through the UI — which means a Gemini turn
+            // written to ~/.gemini/tmp/<proj>/chats/session-*.jsonl after
+            // an app relaunch produces no Tier A emission and the
+            // SignOz dashboard panels stay empty until the user clicks
+            // Apply again.
+            ipc::commands::respawn_persisted_watchers(app.handle());
+
             Ok(())
         })
         // Intercept the close button (red-X / Cmd+W) on the tray window: hide
