@@ -144,7 +144,7 @@ export async function installTauriMock(
                 lastWrittenRegionPayload:
                   '{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:4318"}}',
               },
-              options: { logUserPrompts: false, customAttributes: {} },
+              options: { customAttributes: {} },
             },
           ],
         };

@@ -54,7 +54,6 @@ pub struct WrapperSpec {
 /// → same hash → idempotent re-apply.
 #[must_use]
 pub fn build_managed_block(spec: &WrapperSpec, opts: &ApplyOptions) -> String {
-    let log_user_prompts = if opts.log_user_prompts { "1" } else { "0" };
     let path = spec.wrapper_path.display();
     let mut attrs = String::new();
     for (k, v) in &opts.custom_attributes {
@@ -69,11 +68,10 @@ pub fn build_managed_block(spec: &WrapperSpec, opts: &ApplyOptions) -> String {
     }
 
     format!(
-        "{label}() {{ TROVE_LOG_USER_PROMPTS={log_user_prompts} \"{path}\" \"$@\"; }}\n\
+        "{label}() {{ \"{path}\" \"$@\"; }}\n\
 {attrs}\
 ",
         label = spec.function_name,
-        log_user_prompts = log_user_prompts,
         path = path,
         attrs = attrs,
     )
@@ -394,23 +392,15 @@ mod tests {
     }
 
     #[test]
-    fn build_managed_block_includes_function_definition_and_log_user_prompts_default_off() {
+    fn build_managed_block_includes_function_definition_with_wrapper_path() {
         let spec = fixture_spec();
         let block = build_managed_block(&spec, &ApplyOptions::default());
         assert!(block.contains("aider() {"));
-        assert!(block.contains("TROVE_LOG_USER_PROMPTS=0"));
         assert!(block.contains("/opt/trove/wrappers/trove-aider"));
-    }
-
-    #[test]
-    fn build_managed_block_with_log_user_prompts_on() {
-        let spec = fixture_spec();
-        let opts = ApplyOptions {
-            log_user_prompts: true,
-            ..ApplyOptions::default()
-        };
-        let block = build_managed_block(&spec, &opts);
-        assert!(block.contains("TROVE_LOG_USER_PROMPTS=1"));
+        assert!(
+            !block.contains("TROVE_LOG_USER_PROMPTS"),
+            "the log-user-prompts toggle was removed; the env var must not appear"
+        );
     }
 
     #[test]

@@ -20,8 +20,7 @@ use super::common::{self, HarnessSpec};
 use super::{ApplyOptions, PatchPreview, TrovePatch};
 
 /// The base set of `OTel` env vars Trove writes into `env`. Custom
-/// attributes and the prompt-logging toggle are appended at apply time
-/// based on [`ApplyOptions`].
+/// attributes are appended at apply time based on [`ApplyOptions`].
 const MANAGED_ENV_KEYS: &[(&str, &str)] = &[
     ("CLAUDE_CODE_ENABLE_TELEMETRY", "1"),
     ("OTEL_METRICS_EXPORTER", "otlp"),
@@ -67,12 +66,6 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     let mut env = serde_json::Map::new();
     for (k, v) in MANAGED_ENV_KEYS {
         env.insert((*k).to_string(), Value::String((*v).to_string()));
-    }
-    if opts.log_user_prompts {
-        env.insert(
-            "OTEL_LOG_USER_PROMPTS".to_string(),
-            Value::String("true".to_string()),
-        );
     }
     // Always tag emissions with a stable harness identifier so backends
     // can filter Claude Code's signals out of a mixed-harness pipeline.
@@ -321,7 +314,7 @@ mod tests {
         assert_eq!(preview.status, PreviewStatus::Conflict);
     }
 
-    // --- Custom attributes & log_user_prompts -------------------------------
+    // --- Custom attributes --------------------------------------------------
 
     #[test]
     fn custom_attributes_render_in_otel_resource_attributes() {
@@ -354,29 +347,6 @@ mod tests {
         let env = parsed.get("env").and_then(Value::as_object).unwrap();
         let attrs = env["OTEL_RESOURCE_ATTRIBUTES"].as_str().unwrap();
         assert_eq!(attrs, "harness.id=claude-code,harness.name=Claude Code");
-    }
-
-    #[test]
-    fn log_user_prompts_adds_dedicated_env_var_when_true() {
-        let home = tempdir().unwrap();
-        let opts = ApplyOptions {
-            log_user_prompts: true,
-            ..Default::default()
-        };
-        apply(home.path(), &opts).unwrap();
-
-        let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
-        let env = parsed.get("env").and_then(Value::as_object).unwrap();
-        assert_eq!(env["OTEL_LOG_USER_PROMPTS"], "true");
-    }
-
-    #[test]
-    fn log_user_prompts_default_omits_env_var() {
-        let home = tempdir().unwrap();
-        apply(home.path(), &ApplyOptions::default()).unwrap();
-        let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
-        let env = parsed.get("env").and_then(Value::as_object).unwrap();
-        assert!(env.get("OTEL_LOG_USER_PROMPTS").is_none());
     }
 
     #[test]

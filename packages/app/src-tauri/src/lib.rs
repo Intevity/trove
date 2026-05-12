@@ -28,8 +28,8 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use std::sync::Mutex;
 
 use crate::collector::{
-    MetricsTap, MetricsTapHandle, MetricsTapOptions, Supervisor, SupervisorChannels,
-    SupervisorHandle, SupervisorOptions, SupervisorState,
+    CollectorState, MetricsTap, MetricsTapHandle, MetricsTapOptions, Supervisor,
+    SupervisorChannels, SupervisorHandle, SupervisorOptions, SupervisorState,
 };
 use crate::tier3_watchers::TierThreeWatchers;
 
@@ -272,12 +272,58 @@ pub fn reload_collector<S: std::hash::BuildHasher>(
     // dashboard hooks) keep observing transitions across the reload.
     let channels = app.state::<SupervisorChannels>().inner().clone();
     let new_handle = Supervisor::start(opts, channels)?;
+    // Wait for the new child to bind its OTLP ports before returning so
+    // a follow-up call (notably `test_export` from the wizard) doesn't
+    // race the spawn and hit a connection-refused on 127.0.0.1:4318.
+    // The supervise_loop publishes Running once the health probe sees a
+    // 200 on `:13133/health`; Failed/Crashed are also terminal here.
+    tauri::async_runtime::block_on(wait_until_ready(
+        new_handle.subscribe(),
+        READY_WAIT_TIMEOUT,
+    ))?;
     {
         let state = app.state::<SupervisorState>();
         let mut guard = state.lock().expect("supervisor state poisoned");
         *guard = Some(new_handle);
     }
     Ok(())
+}
+
+/// How long [`reload_collector`] blocks waiting for the new child to
+/// pass its health probe before giving up. 10s is comfortably above the
+/// observed spawn-to-bind cost on macOS/Linux (~400ms cold, <100ms warm)
+/// and below the wizard's test-export budget so the user never sees a
+/// confused two-error stack.
+const READY_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+async fn wait_until_ready(
+    mut rx: tokio::sync::watch::Receiver<CollectorState>,
+    timeout: std::time::Duration,
+) -> Result<(), CollectorBootError> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        match &*rx.borrow_and_update() {
+            CollectorState::Running { .. } => return Ok(()),
+            CollectorState::Failed { reason } => {
+                return Err(CollectorBootError::ReadyFailed(reason.clone()));
+            }
+            CollectorState::Crashed { restarts } => {
+                return Err(CollectorBootError::ReadyFailed(format!(
+                    "collector exited during startup (restarts={restarts})",
+                )));
+            }
+            CollectorState::Stopped => {
+                return Err(CollectorBootError::ReadyFailed(
+                    "collector supervisor stopped before reaching running state".to_string(),
+                ));
+            }
+            CollectorState::Idle | CollectorState::Starting { .. } | CollectorState::Stopping => {}
+        }
+        match tokio::time::timeout_at(deadline, rx.changed()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) | Err(_) => return Err(CollectorBootError::ReadyTimeout(timeout)),
+        }
+    }
 }
 
 /// The bytes of the smoke configuration the supervisor falls back to
@@ -436,6 +482,18 @@ pub enum CollectorBootError {
     Tauri(#[from] tauri::Error),
     #[error(transparent)]
     Start(#[from] crate::collector::StartError),
+    /// The supervisor spawned successfully but did not reach
+    /// `CollectorState::Running` within the deadline. Returned by
+    /// [`reload_collector`] so callers (notably `save_backend`) don't
+    /// hand control back to the UI while the new child is still binding
+    /// its OTLP ports.
+    #[error("collector did not become ready within {0:?}")]
+    ReadyTimeout(std::time::Duration),
+    /// The supervisor transitioned to `Failed`, `Crashed`, or `Stopped`
+    /// while we were waiting for `Running`. `reason` captures the
+    /// supervise-loop's own explanation when available.
+    #[error("collector failed to reach a ready state: {0}")]
+    ReadyFailed(String),
 }
 
 #[cfg(test)]

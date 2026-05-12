@@ -44,7 +44,7 @@ export function DiagnosticsPanel({ appState, state, metrics }: Props): JSX.Eleme
 
   const enabledHarnessCount = appState.harnesses.filter((h) => h.enabled).length;
   const passiveRows = derivePassiveDiagnostics(state, metrics, enabledHarnessCount);
-  const backendRow = deriveBackendRow(appState, backendResult, busy);
+  const backendRow = deriveBackendRow(appState, backendResult, busy, metrics);
 
   async function handleRunBackendCheck(): Promise<void> {
     setBusy(true);
@@ -320,11 +320,20 @@ function deriveSignalRow(
   };
 }
 
-/** Pure derivation for the backend row — exported for testing. */
+/** Pure derivation for the backend row — exported for testing.
+ *
+ *  Backend health is derived passively from the collector's exporter
+ *  counters when possible: any `otelcol_exporter_sent_*` increment
+ *  proves the backend accepted at least one record (the OTel
+ *  exporter counts SENT, not ATTEMPTED — see metrics_tap.rs comments).
+ *  We fall back to the manual `Run backend check` result when no live
+ *  data has flowed yet, so a fresh install can still confirm its
+ *  credentials without waiting on real harness activity. */
 export function deriveBackendRow(
   appState: AppState,
   result: TestExportResult | null,
   busy: boolean,
+  metrics: MetricsSnapshotWire | null,
 ): DiagnosticRow {
   const fix = 'backend-banner';
   if (!appState.backend) {
@@ -345,16 +354,26 @@ export function deriveBackendRow(
       fixTargetTestid: null,
     };
   }
-  if (!result) {
+  const sentTotal = metrics
+    ? metrics.sent.spans + metrics.sent.metricPoints + metrics.sent.logRecords
+    : 0;
+  // Auto-green when the exporter has successfully delivered ≥1 record
+  // since the collector started. This supersedes a stale failed
+  // result, because live successful exports are stronger evidence
+  // than an old manual check. The `unreachable` guard skips this when
+  // we can't read the telemetry endpoint at all.
+  if (metrics && !metrics.unreachable && sentTotal > 0) {
     return {
       id: 'backend',
       label: 'Backend',
-      status: 'amber',
-      detail: `${appState.backend.kind} configured — run check to verify`,
+      status: 'green',
+      detail: `${appState.backend.kind} — exporting (${sentTotal} record${
+        sentTotal === 1 ? '' : 's'
+      } sent)`,
       fixTargetTestid: null,
     };
   }
-  if (result.status === 'ok') {
+  if (result?.status === 'ok') {
     return {
       id: 'backend',
       label: 'Backend',
@@ -363,11 +382,20 @@ export function deriveBackendRow(
       fixTargetTestid: null,
     };
   }
+  if (result) {
+    return {
+      id: 'backend',
+      label: 'Backend',
+      status: 'red',
+      detail: `${result.status}: ${result.detail}`,
+      fixTargetTestid: fix,
+    };
+  }
   return {
     id: 'backend',
     label: 'Backend',
-    status: 'red',
-    detail: `${result.status}: ${result.detail}`,
-    fixTargetTestid: fix,
+    status: 'amber',
+    detail: `${appState.backend.kind} configured — awaiting first export to verify`,
+    fixTargetTestid: null,
   };
 }

@@ -34,15 +34,13 @@ use serde::{Deserialize, Serialize};
 use crate::safety::sentinels::Format;
 
 /// Per-apply options chosen by the user in the UI. Mirrors the Zod
-/// `ApplyOptions` schema in `@trove/shared`.
+/// `ApplyOptions` schema in `@trove/shared`. Trove emits metrics-only
+/// telemetry by policy — no prompt or response bodies cross the wire —
+/// so there's no toggle here to gate body capture. Adapters that wrap
+/// a harness with native prompt-logging config pin it to `false`.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyOptions {
-    /// When true, the adapter installs the harness's prompt-logging
-    /// toggle in the patched config. Default false; the wizard requires
-    /// an explicit acknowledgement before the user can flip it on.
-    #[serde(default)]
-    pub log_user_prompts: bool,
     /// Free-form `OTel` resource attributes the user wants attached to
     /// every emitted signal (e.g. `team=platform`).
     #[serde(default)]
@@ -103,9 +101,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn apply_options_default_is_off_with_empty_attrs() {
+    fn apply_options_default_has_empty_attrs() {
         let opts = ApplyOptions::default();
-        assert!(!opts.log_user_prompts);
         assert!(opts.custom_attributes.is_empty());
     }
 
@@ -114,9 +111,8 @@ mod tests {
         let mut opts = ApplyOptions::default();
         opts.custom_attributes.insert("team".into(), "platform".into());
         let json = serde_json::to_string(&opts).unwrap();
-        assert!(json.contains("\"logUserPrompts\""));
         assert!(json.contains("\"customAttributes\""));
-        assert!(!json.contains("\"log_user_prompts\""));
+        assert!(!json.contains("\"custom_attributes\""));
     }
 
     #[test]

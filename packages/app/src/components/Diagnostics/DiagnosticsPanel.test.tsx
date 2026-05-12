@@ -35,7 +35,7 @@ function harnessConfig(id: HarnessId, enabled: boolean): HarnessConfig {
       format: 'json',
       lastWrittenRegionPayload: '{}',
     },
-    options: { logUserPrompts: false, customAttributes: {} },
+    options: { customAttributes: {} },
   };
 }
 
@@ -158,41 +158,84 @@ describe('derivePassiveDiagnostics', () => {
 
 describe('deriveBackendRow', () => {
   it('reports red when backend is not configured', () => {
-    const row = deriveBackendRow(appState({ backend: null }), null, false);
+    const row = deriveBackendRow(appState({ backend: null }), null, false, null);
     expect(row.status).toBe('red');
     expect(row.detail).toContain('no backend configured');
     expect(row.fixTargetTestid).toBe('backend-banner');
   });
 
   it('reports amber while a check is in flight', () => {
-    const row = deriveBackendRow(appState(), null, true);
+    const row = deriveBackendRow(appState(), null, true, null);
     expect(row.status).toBe('amber');
     expect(row.detail).toBe('checking…');
   });
 
-  it('reports amber when backend is configured but no result yet', () => {
-    const row = deriveBackendRow(appState(), null, false);
+  it('reports amber when backend is configured but no data has flowed', () => {
+    const row = deriveBackendRow(appState(), null, false, null);
     expect(row.status).toBe('amber');
     expect(row.detail).toContain('signoz configured');
+    expect(row.detail).toContain('awaiting first export');
   });
 
-  it('reports green when the test export came back ok', () => {
-    const row = deriveBackendRow(appState(), { status: 'ok', detail: 'received' }, false);
+  it('auto-greens when the exporter has delivered records', () => {
+    // No manual check ever ran — derive from the live counters alone.
+    const metrics = snapshot({
+      sent: { spans: 0, metricPoints: 7, logRecords: 5 },
+    });
+    const row = deriveBackendRow(appState(), null, false, metrics);
+    expect(row.status).toBe('green');
+    expect(row.detail).toContain('exporting');
+    expect(row.detail).toContain('12 records sent');
+  });
+
+  it('auto-green wins over a stale failed manual result when data is now flowing', () => {
+    const metrics = snapshot({ sent: { spans: 0, metricPoints: 3, logRecords: 0 } });
+    const row = deriveBackendRow(
+      appState(),
+      { status: 'failed', detail: 'old 401' },
+      false,
+      metrics,
+    );
+    expect(row.status).toBe('green');
+    expect(row.detail).toContain('exporting');
+  });
+
+  it('falls back to manual ok result when no live exports yet', () => {
+    const metrics = snapshot({ sent: { spans: 0, metricPoints: 0, logRecords: 0 } });
+    const row = deriveBackendRow(appState(), { status: 'ok', detail: 'received' }, false, metrics);
     expect(row.status).toBe('green');
     expect(row.detail).toBe('received');
   });
 
-  it('reports red when the test export failed', () => {
-    const row = deriveBackendRow(appState(), { status: 'failed', detail: '401' }, false);
+  it('reports red when the test export failed and no live data is flowing', () => {
+    const row = deriveBackendRow(appState(), { status: 'failed', detail: '401' }, false, null);
     expect(row.status).toBe('red');
     expect(row.detail).toContain('failed');
     expect(row.fixTargetTestid).toBe('backend-banner');
   });
 
-  it('reports red when the test export timed out', () => {
-    const row = deriveBackendRow(appState(), { status: 'timeout', detail: '5s' }, false);
+  it('reports red when the test export timed out and no live data is flowing', () => {
+    const row = deriveBackendRow(appState(), { status: 'timeout', detail: '5s' }, false, null);
     expect(row.status).toBe('red');
     expect(row.detail).toContain('timeout');
+  });
+
+  it('does not auto-green when the telemetry endpoint is unreachable', () => {
+    // Counters might be stale; can't trust them. Surface the manual
+    // path instead.
+    const metrics = snapshot({
+      sent: { spans: 0, metricPoints: 5, logRecords: 5 },
+      unreachable: true,
+    });
+    const row = deriveBackendRow(appState(), null, false, metrics);
+    expect(row.status).toBe('amber');
+  });
+
+  it('uses singular "record" wording when only one has been sent', () => {
+    const metrics = snapshot({ sent: { spans: 1, metricPoints: 0, logRecords: 0 } });
+    const row = deriveBackendRow(appState(), null, false, metrics);
+    expect(row.detail).toContain('1 record sent');
+    expect(row.detail).not.toContain('records');
   });
 });
 

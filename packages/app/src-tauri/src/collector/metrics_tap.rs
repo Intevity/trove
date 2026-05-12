@@ -323,6 +323,12 @@ pub fn parse_signal_counts(body: &str) -> (SignalCounts, SignalCounts) {
         // the float→counter mapping the OTel collector emits.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let count = if value < 0.0 { 0u64 } else { value.floor() as u64 };
+        // OTel collector v0.151+ exposes counters with the standard
+        // Prometheus `_total` suffix (e.g.
+        // `otelcol_receiver_accepted_metric_points_total`). Older
+        // collector builds used the bare name. Strip the suffix so we
+        // match both conventions without listing every variant.
+        let name = name.strip_suffix("_total").unwrap_or(name);
         match name {
             "otelcol_receiver_accepted_spans" => {
                 received.spans = received.spans.saturating_add(count);
@@ -422,6 +428,29 @@ otelcol_exporter_sent_log_records{exporter=\"otlp/signoz\"} 9\n\
         assert_eq!(received.log_records, 9);
         assert_eq!(sent.metric_points, 4);
         assert_eq!(sent.log_records, 9);
+    }
+
+    #[test]
+    fn parses_counter_names_with_total_suffix() {
+        // OTel collector v0.151+ exposes counters with the standard
+        // Prometheus `_total` suffix. The parser must match both the
+        // suffixed form and the bare form so the dashboard's "Recent
+        // signal" indicator works across collector versions.
+        let body = "\
+otelcol_receiver_accepted_metric_points_total{receiver=\"otlp\",transport=\"http\"} 11\n\
+otelcol_receiver_accepted_log_records_total{receiver=\"otlp\",transport=\"http\"} 8\n\
+otelcol_receiver_accepted_spans_total{receiver=\"otlp\",transport=\"http\"} 1\n\
+otelcol_exporter_sent_metric_points_total{exporter=\"otlp/signoz\"} 11\n\
+otelcol_exporter_sent_log_records_total{exporter=\"otlp/signoz\"} 8\n\
+otelcol_exporter_sent_spans_total{exporter=\"otlp/signoz\"} 1\n\
+";
+        let (received, sent) = parse_signal_counts(body);
+        assert_eq!(received.metric_points, 11);
+        assert_eq!(received.log_records, 8);
+        assert_eq!(received.spans, 1);
+        assert_eq!(sent.metric_points, 11);
+        assert_eq!(sent.log_records, 8);
+        assert_eq!(sent.spans, 1);
     }
 
     #[test]

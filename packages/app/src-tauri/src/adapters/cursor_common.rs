@@ -105,10 +105,9 @@ pub fn build_region(
     opts: &ApplyOptions,
     hook_script_path: &Path,
 ) -> Result<ManagedRegion, SentinelError> {
-    // ApplyOptions has no Cursor-specific fields today: log_user_prompts
-    // doesn't apply (Cursor hooks don't see prompt text directly), and
-    // custom_attributes are the Collector's job once Sprint 8's resource
-    // processor lands. Touching `_opts` keeps the signature future-proof
+    // ApplyOptions carries no Cursor-specific fields today. custom_attributes
+    // are the Collector's job (handled by the resource processor pipeline),
+    // not the hook payload. Touching `_opts` keeps the signature future-proof
     // and silences the unused-arg lint cleanly.
     let _ = opts;
 
@@ -120,9 +119,19 @@ pub fn build_region(
         entry
     })]);
 
+    // Four Cursor hook events drive Trove's telemetry:
+    //   - beforeShellExecution / afterShellExecution capture every terminal
+    //     command the agent runs (gate + post-execution pair).
+    //   - beforeSubmitPrompt   / afterAgentResponse  capture every chat
+    //     round-trip — Trove records the *metadata* (event, conversation/
+    //     generation ids, byte lengths, model) but never the textual body.
+    // The JS impl in cursor-otel-hook-impl.cjs branches on hook_event_name;
+    // every entry points at the same wrapper script.
     let mut hooks = Map::new();
     hooks.insert("beforeShellExecution".to_string(), entry.clone());
-    hooks.insert("afterShellExecution".to_string(), entry);
+    hooks.insert("afterShellExecution".to_string(), entry.clone());
+    hooks.insert("beforeSubmitPrompt".to_string(), entry.clone());
+    hooks.insert("afterAgentResponse".to_string(), entry);
 
     let mut top = Map::new();
     top.insert("version".to_string(), Value::Number(1.into()));
@@ -176,21 +185,26 @@ mod tests {
 
         assert_eq!(parsed["version"], 1);
         let hooks = parsed.get("hooks").and_then(Value::as_object).unwrap();
-        let before = hooks
-            .get("beforeShellExecution")
-            .and_then(Value::as_array)
-            .unwrap();
-        let after_arr = hooks
-            .get("afterShellExecution")
-            .and_then(Value::as_array)
-            .unwrap();
-        assert_eq!(before.len(), 1);
-        assert_eq!(after_arr.len(), 1);
-        assert_eq!(before[0]["type"], "command");
-        assert_eq!(
-            before[0]["command"],
-            "/opt/trove/resources/hooks/cursor-otel-hook.cjs"
-        );
+        // Trove registers four event hooks: the two shell-execution
+        // ones (gate + post) and the two chat ones (prompt-submit gate +
+        // agent-response). All four point at the same wrapper script.
+        for event in [
+            "beforeShellExecution",
+            "afterShellExecution",
+            "beforeSubmitPrompt",
+            "afterAgentResponse",
+        ] {
+            let arr = hooks
+                .get(event)
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("missing hook entry for {event}"));
+            assert_eq!(arr.len(), 1, "hook entry for {event} should have one command");
+            assert_eq!(arr[0]["type"], "command");
+            assert_eq!(
+                arr[0]["command"],
+                "/opt/trove/resources/hooks/cursor-otel-hook.cjs"
+            );
+        }
         assert!(parsed.get("_trove").is_some());
 
         assert_eq!(patch.managed_block_hash.len(), 64);

@@ -51,7 +51,10 @@ pub fn revert(home: &Path) -> Result<(), IpcError> {
 /// Gemini CLI fork and the upstream schema is byte-identical for this
 /// block. `customAttributes` is a no-op for Qwen for the same reason
 /// it's a no-op for Gemini.
-fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
+///
+/// `logPrompts` is pinned to `false`: Trove's pipeline is metrics-only
+/// by policy, so we never opt into upstream prompt-body capture.
+fn build_region(_opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     let mut telemetry = serde_json::Map::new();
     telemetry.insert("enabled".to_string(), Value::Bool(true));
     telemetry.insert("target".to_string(), Value::String("local".to_string()));
@@ -59,7 +62,7 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
         "otlpEndpoint".to_string(),
         Value::String("http://127.0.0.1:4318".to_string()),
     );
-    telemetry.insert("logPrompts".to_string(), Value::Bool(opts.log_user_prompts));
+    telemetry.insert("logPrompts".to_string(), Value::Bool(false));
 
     let mut top = serde_json::Map::new();
     top.insert("telemetry".to_string(), Value::Object(telemetry));
@@ -218,18 +221,16 @@ mod tests {
         assert_eq!(read_config(home.path()), user_only);
     }
 
-    // --- log_user_prompts toggle -------------------------------------------
+    // --- Metrics-only policy -----------------------------------------------
 
     #[test]
-    fn log_user_prompts_propagates_to_telemetry_log_prompts() {
+    fn log_prompts_is_always_false() {
+        // Trove's pipeline is metrics-only; never opt into upstream
+        // prompt-body capture even if the user toggles something later.
         let home = tempdir().unwrap();
-        let opts = ApplyOptions {
-            log_user_prompts: true,
-            ..Default::default()
-        };
-        apply(home.path(), &opts).unwrap();
+        apply(home.path(), &ApplyOptions::default()).unwrap();
         let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
-        assert_eq!(parsed["telemetry"]["logPrompts"], true);
+        assert_eq!(parsed["telemetry"]["logPrompts"], false);
     }
 
     #[test]

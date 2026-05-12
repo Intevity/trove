@@ -240,10 +240,7 @@ fn options_round_trip_through_state_json() {
     let home = tempdir().unwrap();
     let cfg = tempdir().unwrap();
 
-    let mut options = ApplyOptions {
-        log_user_prompts: true,
-        ..Default::default()
-    };
+    let mut options = ApplyOptions::default();
     options
         .custom_attributes
         .insert("team".into(), "platform".into());
@@ -254,7 +251,6 @@ fn options_round_trip_through_state_json() {
     let state = load_from_dir(cfg.path()).unwrap();
     let entry = &state.harnesses[0];
     assert_eq!(entry.options, options);
-    assert!(entry.options.log_user_prompts);
     assert_eq!(entry.options.custom_attributes.len(), 2);
 }
 

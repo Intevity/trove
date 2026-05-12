@@ -99,14 +99,9 @@ pub fn preview(home: &Path, opts: &ApplyOptions) -> Result<PatchPreview, IpcErro
     let after = format!(
         "Cline: enable best-effort log watching at {}\n\
          Token counts and turn metadata will be emitted as OTLP logs.\n\
-         Prompt bodies are {} (gated by log_user_prompts).\n\
+         Prompt bodies are never captured (Trove is metrics-only).\n\
          Custom attributes: {} entries.\n",
         path.display(),
-        if opts.log_user_prompts {
-            "logged"
-        } else {
-            "redacted"
-        },
         opts.custom_attributes.len(),
     );
     Ok(PatchPreview {
@@ -152,7 +147,6 @@ pub fn revert(_home: &Path) -> Result<(), IpcError> {
 fn build_payload(opts: &ApplyOptions) -> String {
     let value = json!({
         "harness": "cline",
-        "logUserPrompts": opts.log_user_prompts,
         "customAttributes": opts.custom_attributes,
     });
     serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())
@@ -229,21 +223,10 @@ mod tests {
     }
 
     #[test]
-    fn preview_after_text_says_redacted_when_log_user_prompts_is_false() {
+    fn preview_after_text_says_prompt_bodies_are_never_captured() {
         let home = PathBuf::from("/home/dev");
         let preview = preview(&home, &ApplyOptions::default()).unwrap();
-        assert!(preview.after.contains("redacted"));
-    }
-
-    #[test]
-    fn preview_after_text_says_logged_when_log_user_prompts_is_true() {
-        let home = PathBuf::from("/home/dev");
-        let opts = ApplyOptions {
-            log_user_prompts: true,
-            ..ApplyOptions::default()
-        };
-        let preview = preview(&home, &opts).unwrap();
-        assert!(preview.after.contains("logged"));
+        assert!(preview.after.contains("never captured"));
     }
 
     #[test]
@@ -291,15 +274,11 @@ mod tests {
     }
 
     #[test]
-    fn apply_with_log_user_prompts_records_flag() {
+    fn apply_payload_omits_log_user_prompts_field() {
+        // The toggle was removed; the persisted snapshot must not
+        // contain any logUserPrompts key so v3 records stay clean.
         let home = PathBuf::from("/home/dev");
-        let opts = ApplyOptions {
-            log_user_prompts: true,
-            ..ApplyOptions::default()
-        };
-        let patch = apply(&home, &opts).unwrap();
-        assert!(patch
-            .last_written_region_payload
-            .contains("\"logUserPrompts\":true"));
+        let patch = apply(&home, &ApplyOptions::default()).unwrap();
+        assert!(!patch.last_written_region_payload.contains("logUserPrompts"));
     }
 }

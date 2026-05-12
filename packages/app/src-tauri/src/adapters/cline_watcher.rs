@@ -135,10 +135,6 @@ pub fn parse_task_log_payload(
     let messages: Value = serde_json::from_slice(ui_messages_bytes).ok()?;
     let arr = messages.as_array()?;
     let message_count = arr.len();
-    let last_text = arr
-        .iter()
-        .rev()
-        .find_map(|m| m.get("text").and_then(Value::as_str));
 
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -153,11 +149,10 @@ pub fn parse_task_log_payload(
         attributes.push(json!({"key": k, "value": {"stringValue": v}}));
     }
 
-    let body_value = if opts.log_user_prompts {
-        json!({"stringValue": last_text.unwrap_or("")})
-    } else {
-        json!({"stringValue": ""})
-    };
+    // Metrics-only policy: never capture user prompt bodies — emit an
+    // empty body so the OTLP record is structurally well-formed but
+    // carries only metadata (counts + task id).
+    let body_value = json!({"stringValue": ""});
 
     Some(json!({
         "resourceLogs": [{
@@ -256,24 +251,23 @@ mod tests {
         assert!(attrs
             .iter()
             .any(|(k, v)| k == "cline.message_count" && v == "2"));
-        // log_user_prompts default false → body is empty string
+        // Trove is metrics-only — the log body is always empty.
         assert_eq!(log["body"]["stringValue"].as_str().unwrap(), "");
     }
 
     #[test]
-    fn parser_includes_last_text_when_log_user_prompts_is_true() {
+    fn parser_body_is_always_empty_even_with_messages() {
+        // Metrics-only policy: even when the task file has rich text,
+        // the emitted OTLP body stays empty. Counts and ids ride on
+        // attributes; bodies never cross the wire.
         let messages = serde_json::to_vec(&json!([
             {"type": "say", "text": "first"},
             {"type": "say", "text": "second"},
         ]))
         .unwrap();
-        let opts = ApplyOptions {
-            log_user_prompts: true,
-            ..ApplyOptions::default()
-        };
-        let payload = parse_task_log_payload("t", &messages, &opts).unwrap();
+        let payload = parse_task_log_payload("t", &messages, &ApplyOptions::default()).unwrap();
         let log = &payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
-        assert_eq!(log["body"]["stringValue"].as_str().unwrap(), "second");
+        assert_eq!(log["body"]["stringValue"].as_str().unwrap(), "");
     }
 
     #[test]
