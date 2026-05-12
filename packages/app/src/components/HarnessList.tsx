@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { Search, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
 
 import type { DetectedHarness, HarnessId } from '@trove/shared';
 
@@ -156,18 +157,29 @@ export function HarnessList({
   busyIds,
   onRefresh,
 }: HarnessListProps): JSX.Element {
-  // Detected harnesses are the actionable ones — surface them first so a
-  // user scanning the list lands on the rows they can toggle without
-  // hunting. Stable partition preserves the parent's relative order
-  // inside each group.
+  const [query, setQuery] = useState('');
+
+  // Filter first (by name/id, case-insensitive), then partition detected
+  // ahead of undetected so a user scanning the list lands on the rows
+  // they can toggle without hunting. Stable partition preserves the
+  // parent's relative order inside each group.
   const sorted = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matches = q
+      ? harnesses.filter(
+          (h) => HARNESS_LABELS[h.id].toLowerCase().includes(q) || h.id.toLowerCase().includes(q),
+        )
+      : harnesses;
     const detected: DetectedHarness[] = [];
     const undetected: DetectedHarness[] = [];
-    for (const h of harnesses) {
+    for (const h of matches) {
       (h.detected ? detected : undetected).push(h);
     }
     return [...detected, ...undetected];
-  }, [harnesses]);
+  }, [harnesses, query]);
+
+  const hasQuery = query.trim().length > 0;
+  const showSearch = !loading && harnesses.length > 0;
 
   return (
     <section data-testid="harness-list-section">
@@ -206,6 +218,37 @@ export function HarnessList({
         ) : null}
       </header>
 
+      {showSearch ? (
+        <div className="relative mb-2">
+          <Search
+            size={13}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <input
+            type="text"
+            role="searchbox"
+            data-testid="harness-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter harnesses by name…"
+            aria-label="Filter harnesses by name"
+            className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-8 text-xs text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+          />
+          {hasQuery ? (
+            <button
+              type="button"
+              data-testid="harness-search-clear"
+              aria-label="Clear search"
+              onClick={() => setQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {loading ? (
         <p
           className="text-sm text-slate-500 dark:text-slate-400"
@@ -216,6 +259,13 @@ export function HarnessList({
       ) : harnesses.length === 0 ? (
         <p className="text-sm text-slate-500 dark:text-slate-400" data-testid="harness-list-empty">
           No supported harnesses detected on this machine.
+        </p>
+      ) : sorted.length === 0 ? (
+        <p
+          className="text-sm text-slate-500 dark:text-slate-400"
+          data-testid="harness-list-no-matches"
+        >
+          No harnesses match “{query.trim()}”.
         </p>
       ) : (
         <ul

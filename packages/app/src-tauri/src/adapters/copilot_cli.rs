@@ -114,6 +114,8 @@ pub fn parse_event_line(line: &str, opts: &ApplyOptions) -> Option<Value> {
             "resource": {
                 "attributes": [
                     {"key": "service.name", "value": {"stringValue": "copilot-cli"}},
+                    {"key": "harness.id", "value": {"stringValue": "copilot-cli"}},
+                    {"key": "harness.name", "value": {"stringValue": "GitHub Copilot CLI"}},
                     {"key": "trove.source", "value": {"stringValue": "copilot-cli"}},
                 ]
             },

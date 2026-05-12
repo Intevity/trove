@@ -1,37 +1,19 @@
 import { presetMetadataFor } from '@trove/collector-presets';
-import type {
-  AppState,
-  Backend,
-  CollectorRunState,
-  MetricsSnapshotWire,
-  OverallHealth,
-} from '@trove/shared';
+import type { AppState, Backend, CollectorRunState, MetricsSnapshotWire } from '@trove/shared';
 
 import { DiagnosticsPanel } from '../Diagnostics/DiagnosticsPanel.js';
-import { OverallHealthBadge } from '../OverallHealthBadge.js';
 import { SidecarPanel } from '../SidecarPanel.js';
 
 interface Props {
   appState: AppState;
-  health: OverallHealth;
-  detail: string | undefined;
   state: CollectorRunState | null;
   metrics: MetricsSnapshotWire | null;
   onChangeBackend: () => void;
 }
 
-export function OverviewTab({
-  appState,
-  health,
-  detail,
-  state,
-  metrics,
-  onChangeBackend,
-}: Props): JSX.Element {
+export function OverviewTab({ appState, state, metrics, onChangeBackend }: Props): JSX.Element {
   return (
     <div className="flex flex-col gap-4 px-4 py-3">
-      <OverallHealthBadge health={health} detail={detail} />
-
       <DiagnosticsPanel appState={appState} state={state} metrics={metrics} />
 
       {appState.backend ? (

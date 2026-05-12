@@ -4,10 +4,17 @@
 //
 // Cursor invokes this script for each registered hook event (currently
 // `beforeShellExecution` and `afterShellExecution` per the Sprint 7 MVP).
-// We read one JSON event from stdin, transform it into an OTLP HTTP/JSON
-// payload, and POST it to the local Trove collector on 127.0.0.1:4318.
-// On any failure we exit 0 and produce no output — the hook must never
-// block Cursor or surface an error to the user.
+// We read one JSON event from stdin, transform it into OTLP HTTP/JSON
+// payloads (one log record + one metric data point), and POST them to
+// the local Trove collector on 127.0.0.1:4318. On any failure we exit 0
+// and produce no output — the hook must never block Cursor or surface
+// an error to the user.
+//
+// Why both logs AND metrics: the log carries the structured per-event
+// detail (command, exit code, conversation IDs) for raw inspection;
+// the metric is a delta counter with `harness.id` + `cursor.event`
+// attributes so backend dashboards can plot Cursor activity in their
+// metrics views without resorting to log-aggregation queries.
 //
 // The matching cursor_common.rs adapter writes the absolute path of this
 // file into ~/.cursor/hooks.json so Cursor knows to invoke it. The script
@@ -25,6 +32,15 @@ const { URL } = require('node:url');
 
 const ENDPOINT = 'http://127.0.0.1:4318';
 const TIMEOUT_MS = 1500;
+
+/** Stable harness identifier surfaced on every emission. Cursor IDE and
+ *  Cursor CLI share this hook script and a single ~/.cursor/hooks.json
+ *  managed region, so the umbrella `cursor` id intentionally collapses
+ *  the two — a finer-grained IDE vs. CLI split would need separate
+ *  hook commands and breaks the shared-region idempotency invariant
+ *  documented in cursor_common.rs. */
+const HARNESS_ID = 'cursor';
+const HARNESS_NAME = 'Cursor';
 
 if (process.argv.includes('--health')) {
   process.stdout.write('ok\n');
@@ -68,18 +84,20 @@ async function main(input) {
 
   const nowNanos = Date.now() * 1_000_000;
 
-  const attributes = [
+  const logAttributes = [
     stringAttr('cursor.event', eventName),
     stringAttr('cursor.conversation.id', conversationId),
     stringAttr('cursor.generation.id', generationId),
   ];
-  if (cursorVersion !== '') attributes.push(stringAttr('cursor.version', cursorVersion));
-  if (command !== null) attributes.push(stringAttr('cursor.shell.command', command));
-  if (cwd !== null) attributes.push(stringAttr('cursor.shell.cwd', cwd));
-  if (exitCode !== null) attributes.push(intAttr('cursor.shell.exit_code', exitCode));
+  if (cursorVersion !== '') logAttributes.push(stringAttr('cursor.version', cursorVersion));
+  if (command !== null) logAttributes.push(stringAttr('cursor.shell.command', command));
+  if (cwd !== null) logAttributes.push(stringAttr('cursor.shell.cwd', cwd));
+  if (exitCode !== null) logAttributes.push(intAttr('cursor.shell.exit_code', exitCode));
 
   const resourceAttributes = [
     stringAttr('service.name', 'cursor'),
+    stringAttr('harness.id', HARNESS_ID),
+    stringAttr('harness.name', HARNESS_NAME),
     stringAttr('telemetry.sdk.name', 'trove-cursor-hook'),
     stringAttr('trove.source', 'cursor'),
   ];
@@ -98,7 +116,7 @@ async function main(input) {
                 severityNumber: 9,
                 severityText: 'INFO',
                 body: { stringValue: `cursor.${eventName}` },
-                attributes,
+                attributes: logAttributes,
               },
             ],
           },
@@ -107,7 +125,53 @@ async function main(input) {
     ],
   };
 
-  await postJson(`${ENDPOINT}/v1/logs`, logsBody);
+  // Metric data-point attributes mirror the log's per-event tags so
+  // dashboards can slice on `cursor.event` (before/after) and on the
+  // shell exit code when present. We keep them tight — high-cardinality
+  // values like conversation/generation ids stay on the log signal.
+  const metricAttributes = [stringAttr('cursor.event', eventName)];
+  if (exitCode !== null) metricAttributes.push(intAttr('cursor.shell.exit_code', exitCode));
+
+  const metricsBody = {
+    resourceMetrics: [
+      {
+        resource: { attributes: resourceAttributes },
+        scopeMetrics: [
+          {
+            scope: { name: 'trove-cursor-hook' },
+            metrics: [
+              {
+                name: 'trove.harness.events',
+                unit: '1',
+                description:
+                  'Count of harness hook events processed by Trove (one per Cursor shell-hook invocation).',
+                sum: {
+                  // DELTA temporality — the hook is one-shot, so each
+                  // invocation contributes exactly one event. isMonotonic
+                  // because the counter only ever increases.
+                  aggregationTemporality: 1,
+                  isMonotonic: true,
+                  dataPoints: [
+                    {
+                      startTimeUnixNano: String(nowNanos),
+                      timeUnixNano: String(nowNanos),
+                      asInt: '1',
+                      attributes: metricAttributes,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  await Promise.all([
+    postJson(`${ENDPOINT}/v1/logs`, logsBody),
+    postJson(`${ENDPOINT}/v1/metrics`, metricsBody),
+  ]);
 
   // Cursor expects an empty/permissive response on stdout. Echo `allow`
   // for the gate-style events; emit nothing for the post-execution ones.
