@@ -22,9 +22,11 @@ pub mod cursor_cli;
 pub mod cursor_common;
 pub mod cursor_ide;
 pub mod gemini_cli;
+pub mod gemini_watcher;
 pub mod opencode;
 pub mod qwen_code;
 pub mod wrapper_common;
+pub mod wrapper_common_metrics;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

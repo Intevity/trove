@@ -45,20 +45,22 @@ async fn cline_watcher_emits_otlp_log_for_a_fixture_task() {
 
     let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
-    let emit = move |p: Value| {
+    let emit_log = move |p: Value| {
         let captured = captured_clone.clone();
         async move {
             captured.lock().await.push(p);
             Ok::<_, OtlpEmitError>(())
         }
     };
+    let emit_metric = |_p: Value| async { Ok::<_, OtlpEmitError>(()) };
 
     let task = tokio::spawn(async move {
         cline_watcher::run(
             tasks_dir,
             ApplyOptions::default(),
             Duration::from_millis(50),
-            emit,
+            emit_log,
+            emit_metric,
         )
         .await;
     });
@@ -106,20 +108,22 @@ async fn cline_watcher_emits_only_once_per_unchanged_task() {
 
     let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
-    let emit = move |p: Value| {
+    let emit_log = move |p: Value| {
         let captured = captured_clone.clone();
         async move {
             captured.lock().await.push(p);
             Ok::<_, OtlpEmitError>(())
         }
     };
+    let emit_metric = |_p: Value| async { Ok::<_, OtlpEmitError>(()) };
 
     let task = tokio::spawn(async move {
         cline_watcher::run(
             tasks_dir,
             ApplyOptions::default(),
             Duration::from_millis(50),
-            emit,
+            emit_log,
+            emit_metric,
         )
         .await;
     });

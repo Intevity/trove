@@ -16,20 +16,28 @@
 //! ## Migration scaffold
 //!
 //! [`load_from_dir`] reads only `schemaVersion` from the file before
-//! parsing the rest. The current schema is version `5`. Older versions
+//! parsing the rest. The current schema is version `6`. Older versions
 //! are migrated in-place by relying on `#[serde(default)]` for fields
 //! introduced in later schemas:
-//! - v2 → v5: `TrovePatch.lastWrittenRegionPayload` (Sprint 8) defaults
+//! - v2 → v6: `TrovePatch.lastWrittenRegionPayload` (Sprint 8) defaults
 //!   to `""`; `AppState.autoUpdateEnabled` (Sprint 10) defaults to
 //!   `false`; `AppState.identity` (Sprint 12) defaults to its
-//!   `Identity::default()` (off, auto, empty strings).
-//! - v3 → v5: `AppState.autoUpdateEnabled` defaults to `false`;
-//!   `AppState.identity` defaults to off.
-//! - v4 → v5: `AppState.identity` defaults to off.
+//!   `Identity::default()` (off, auto, empty strings);
+//!   `AppState.mappings` (Sprint 13) defaults to the per-harness Tier A
+//!   defaults via [`crate::mappings::default_state`].
+//! - v3 → v6: `AppState.autoUpdateEnabled` defaults to `false`;
+//!   `AppState.identity` defaults to off; `AppState.mappings` defaults
+//!   to per-harness Tier A defaults.
+//! - v4 → v6: `AppState.identity` defaults to off; `AppState.mappings`
+//!   defaults to per-harness Tier A defaults.
+//! - v5 → v6: `AppState.mappings` defaults to per-harness Tier A
+//!   defaults. v5 docs in the wild come from before the Mappings UI
+//!   shipped; auto-populating means the user immediately sees Tier A
+//!   coverage rather than an empty mapping table on first relaunch.
 //!
 //! After parse, the loader re-stamps
 //! `schema_version = CURRENT_SCHEMA_VERSION` on the in-memory value so
-//! the next save persists v5 to disk. v1 was never written in the wild
+//! the next save persists v6 to disk. v1 was never written in the wild
 //! and remains an explicit error.
 
 use std::collections::BTreeMap;
@@ -41,6 +49,7 @@ use thiserror::Error;
 
 use crate::adapters::{ApplyOptions, TrovePatch};
 use crate::harness::HarnessId;
+use crate::mappings::{default_state as default_mapping_state, MappingState};
 use crate::safety::atomic::write_atomic;
 
 /// Filename inside the app config directory.
@@ -48,7 +57,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 5;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 /// Opaque keychain handle. The actual secret never leaves the OS
 /// keychain. Mirrors `SecretRef` in `packages/shared/src/schemas.ts`.
@@ -211,7 +220,7 @@ pub enum IdentitySource {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {
-    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `5`). Older or
+    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `6`). Older or
     /// newer values surface as [`AppStateError::UnknownSchemaVersion`].
     pub schema_version: u32,
     pub backend: Option<Backend>,
@@ -230,6 +239,13 @@ pub struct AppState {
     /// [`Identity`].
     #[serde(default)]
     pub identity: Identity,
+    /// Sprint 13 — per-harness Tier A mapping rows. Auto-populated with
+    /// [`crate::mappings::default_state`] when missing, so v5 documents
+    /// migrate forward with full Tier A coverage rather than an empty
+    /// mapping table the user would otherwise have to populate by hand.
+    /// See [`crate::mappings`] for the schema and per-harness defaults.
+    #[serde(default = "default_mapping_state")]
+    pub mappings: MappingState,
 }
 
 impl Default for AppState {
@@ -241,6 +257,7 @@ impl Default for AppState {
             harnesses: Vec::new(),
             auto_update_enabled: false,
             identity: Identity::default(),
+            mappings: default_mapping_state(),
         }
     }
 }
@@ -295,16 +312,17 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2..=v5 migration. Sprint 8 added
+        // v2..=v6 migration. Sprint 8 added
         // `TrovePatch.lastWrittenRegionPayload` (defaults to ""); Sprint
         // 10 added `AppState.autoUpdateEnabled` (defaults to false);
-        // Sprint 12 added `AppState.identity` (defaults to off). All use
-        // `#[serde(default)]`, so older documents deserialize cleanly
-        // into the v5 in-memory shape with sensible defaults. We re-stamp
-        // schema_version on the returned struct so the next save persists
-        // v5 to disk and the matching loader hits the v5 branch from then
-        // on.
-        2..=5 => {
+        // Sprint 12 added `AppState.identity` (defaults to off); Sprint
+        // 13 added `AppState.mappings` (defaults to per-harness Tier A
+        // defaults). All use `#[serde(default)]`, so older documents
+        // deserialize cleanly into the current in-memory shape with
+        // sensible defaults. We re-stamp schema_version on the returned
+        // struct so the next save persists the current version to disk
+        // and the matching loader hits the current branch from then on.
+        2..=6 => {
             // Field-shape migration: SigNoz `region` → `endpoint`. The
             // wizard used to ask for a region code and codegen built
             // `ingest.{region}.signoz.cloud:443`. SigNoz Cloud actually
@@ -608,7 +626,7 @@ mod tests {
     fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 5);
+        assert_eq!(s.schema_version, 6);
         assert!(s.backend.is_none());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
@@ -616,6 +634,9 @@ mod tests {
         assert_eq!(s.identity.source, IdentitySource::Auto);
         assert!(s.identity.name.is_empty());
         assert!(s.identity.email.is_empty());
+        // Mappings auto-populated with per-harness defaults so users
+        // see Tier A signals on first launch.
+        assert!(!s.mappings.harnesses.is_empty());
     }
 
     #[test]
@@ -662,6 +683,7 @@ mod tests {
             harnesses: vec![sample_harness(HarnessId::ClaudeCode)],
             auto_update_enabled: false,
             identity: Identity::default(),
+            mappings: default_mapping_state(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let revived: AppState = serde_json::from_str(&json).unwrap();
@@ -676,6 +698,7 @@ mod tests {
             harnesses: Vec::new(),
             auto_update_enabled: true,
             identity: Identity::default(),
+            mappings: default_mapping_state(),
         };
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"autoUpdateEnabled\":true"));
@@ -699,6 +722,7 @@ mod tests {
             harnesses: vec![sample_harness(HarnessId::GeminiCli)],
             auto_update_enabled: false,
             identity: Identity::default(),
+            mappings: default_mapping_state(),
         };
         save_to_dir(dir.path(), &original).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();
@@ -774,7 +798,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 5"));
+        assert!(on_disk.contains("\"schemaVersion\": 6"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -809,7 +833,7 @@ mod tests {
         }"#;
         std::fs::write(dir.path().join("state.json"), v3_doc).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
-        assert_eq!(state.schema_version, 5);
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
         assert!(!state.auto_update_enabled);
         assert_eq!(state.harnesses.len(), 1);
         // Field carried through migration unchanged.
@@ -831,7 +855,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 5"));
+        assert!(on_disk.contains("\"schemaVersion\": 6"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -846,16 +870,16 @@ mod tests {
         }"#;
         std::fs::write(dir.path().join("state.json"), v4_doc).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
-        assert_eq!(state.schema_version, 5);
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
         assert!(state.auto_update_enabled);
     }
 
     #[test]
-    fn v4_state_migrates_to_v5_with_identity_off() {
+    fn v4_state_migrates_to_current_with_identity_off() {
         // Sprint 12 added AppState.identity. v4 documents lack the
         // field — serde(default) backfills `Identity::default()` (off,
         // auto, empty strings) and the loader re-stamps schema_version
-        // to v5.
+        // to the current version.
         let dir = tempfile::tempdir().unwrap();
         let v4_doc = br#"{
             "schemaVersion": 4,
@@ -865,11 +889,66 @@ mod tests {
         }"#;
         std::fs::write(dir.path().join("state.json"), v4_doc).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
-        assert_eq!(state.schema_version, 5);
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
         assert!(!state.identity.enabled);
         assert_eq!(state.identity.source, IdentitySource::Auto);
         assert!(state.identity.name.is_empty());
         assert!(state.identity.email.is_empty());
+    }
+
+    #[test]
+    fn v5_state_migrates_to_current_with_mappings_defaults() {
+        // Sprint 13 added AppState.mappings. v5 documents lack the
+        // field — serde(default = default_mapping_state) backfills the
+        // per-harness Tier A defaults and the loader re-stamps
+        // schema_version to v6. The user immediately sees Tier A
+        // coverage rather than an empty mapping table.
+        let dir = tempfile::tempdir().unwrap();
+        let v5_doc = br#"{
+            "schemaVersion": 5,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": false,
+            "identity": {
+                "enabled": false,
+                "source": "auto",
+                "name": "",
+                "email": ""
+            }
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v5_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
+        // Every supported harness ID appears in the auto-populated
+        // mappings table.
+        assert_eq!(
+            state.mappings.harnesses.len(),
+            10,
+            "v5→v6 migration should populate per-harness defaults",
+        );
+    }
+
+    #[test]
+    fn v5_state_round_trips_to_v6_on_disk_after_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let v5_doc = br#"{
+            "schemaVersion": 5,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": false,
+            "identity": {
+                "enabled": false,
+                "source": "auto",
+                "name": "",
+                "email": ""
+            }
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v5_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+        assert!(on_disk.contains("\"schemaVersion\": 6"));
+        assert!(on_disk.contains("\"mappings\""));
     }
 
     #[test]

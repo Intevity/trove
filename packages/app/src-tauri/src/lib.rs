@@ -14,6 +14,7 @@ pub mod harness;
 pub mod identity;
 pub mod ipc;
 pub mod log_watcher;
+pub mod mappings;
 pub mod otlp_emit;
 pub mod safety;
 pub mod secrets;
@@ -68,6 +69,8 @@ pub fn run() {
             ipc::commands::set_identity_manual,
             ipc::commands::set_identity_auto,
             ipc::commands::resolve_identity_preview,
+            ipc::commands::apply_mappings,
+            ipc::commands::reset_mappings_to_defaults,
             ipc::collector_status::get_collector_status,
             ipc::collector_status::get_metrics_snapshot,
             ipc::collector_status::get_collector_log_tail,
@@ -406,11 +409,23 @@ fn prepare_collector_runtime(
                         Vec::new()
                     };
                     let resolved = identity::resolve(&state.identity, &harnesses);
-                    let yaml = if state.identity.enabled {
+                    let yaml_with_identity = if state.identity.enabled {
                         collector::codegen::apply_identity_overlay(rendered.yaml, &resolved)
                     } else {
                         rendered.yaml
                     };
+                    // Layer the Tier A mapping overlay on top of the
+                    // identity overlay. Order matters: the mapping
+                    // overlay's pipeline-list edit anchors on both the
+                    // baseline and the identity-augmented form, so it's
+                    // order-independent, but running identity first
+                    // keeps `resource/identity` at the tail of the
+                    // pipeline (it tags every emission, including the
+                    // synthesized Tier A metrics).
+                    let yaml = collector::codegen::apply_mapping_overlay(
+                        yaml_with_identity,
+                        &state.mappings,
+                    );
                     (yaml, env)
                 }
                 Err(e) => {

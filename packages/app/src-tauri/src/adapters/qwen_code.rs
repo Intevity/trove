@@ -58,6 +58,14 @@ fn build_region(_opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     let mut telemetry = serde_json::Map::new();
     telemetry.insert("enabled".to_string(), Value::Bool(true));
     telemetry.insert("target".to_string(), Value::String("local".to_string()));
+    // useCollector + otlpProtocol mirror gemini_cli: required as of
+    // upstream's 0.4x telemetry refactor for any signal to actually
+    // leave the harness process for the local collector.
+    telemetry.insert("useCollector".to_string(), Value::Bool(true));
+    telemetry.insert(
+        "otlpProtocol".to_string(),
+        Value::String("http".to_string()),
+    );
     telemetry.insert(
         "otlpEndpoint".to_string(),
         Value::String("http://127.0.0.1:4318".to_string()),

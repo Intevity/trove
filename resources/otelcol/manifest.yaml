@@ -35,3 +35,9 @@ processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/attributesprocessor v0.151.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourceprocessor v0.151.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/filterprocessor v0.151.0
+  # Sprint 13 — Tier A mapping overlay. `transform` provides OTTL for
+  # back-filling `harness.id` from `service.name` on native-OTel
+  # harness emissions; `metricstransform` produces the additive Tier A
+  # copy (action: insert) of each declared native metric.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.151.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/metricstransformprocessor v0.151.0

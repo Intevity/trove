@@ -133,6 +133,26 @@ pub fn parse_event_line(line: &str, opts: &ApplyOptions) -> Option<Value> {
     }))
 }
 
+/// Parse one wrapper line into a Tier A metric payload covering the
+/// invocation it represents. Same shape as the Aider variant
+/// — see [`crate::adapters::aider::parse_event_metric_payload`].
+/// Copilot CLI exposes no tokenizer or rate-table either, so token and
+/// cost metrics are intentionally absent.
+#[must_use]
+pub fn parse_event_metric_payload(line: &str, opts: &ApplyOptions) -> Option<Value> {
+    super::wrapper_common_metrics::build_invocation_metrics(
+        line,
+        opts,
+        &super::wrapper_common_metrics::WrapperMetricsSpec {
+            expected_tool: "copilot-cli",
+            service_name: "copilot-cli",
+            harness_id: "copilot-cli",
+            harness_name: "GitHub Copilot CLI",
+            scope_name: "trove.adapters.copilot_cli",
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

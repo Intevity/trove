@@ -1,6 +1,49 @@
 # MAPPING_PLAN
 
-Status: **planning** — no code written. Pick this up in a fresh session.
+Status: **implemented (Sprint 13)** — core mapping foundation, collector
+overlay, and watcher/wrapper Tier A emission shipped. The advanced
+row-level editor and per-model cost-override UI remain as follow-up
+work; everything below describes the data model and design contract
+the implementation followed.
+
+## Implementation summary
+
+What's in the codebase now:
+
+- `crate::mappings` (`packages/app/src-tauri/src/mappings/`) — Rust
+  data model (`MappingState`, `HarnessMapping`, `MappingSource`,
+  `TierAMetric`, `CostOverride`), per-harness defaults, validation,
+  and the cost rate table. Wire-format byte-identical to the Zod
+  schemas in `@trove/shared`.
+- `AppState.mappings` field (schema v6) — persisted alongside the
+  existing identity/backend records. v5→v6 migration auto-populates
+  per-harness defaults via `mappings::default_state` so users see
+  Tier A coverage on first relaunch.
+- `apply_mapping_overlay` (`collector/codegen.rs`) — extends the
+  rendered `collector.yaml` with `transform/harness-tag` (back-fills
+  `harness.id` from `service.name` for native-OTel harnesses that
+  can't inject `OTEL_RESOURCE_ATTRIBUTES`) plus one
+  `metricstransform/tierA-<harness>` block per harness with enabled
+  `synthesize-from-native` rows. Uses `action: insert` so Tier B
+  passes through untouched.
+- `apply_mappings` / `reset_mappings_to_defaults` IPC commands —
+  validate → persist → reload collector.
+- React `MappingsTab` (read-only viewer) — surfaces every harness's
+  rows with a master enable toggle and a "reset to defaults" button.
+- `cline_watcher` Tier A emission — classifies each new `ui_messages.json`
+  entry by `say` type and emits `trove.harness.events` / `errors`
+  data points alongside the existing logs.
+- `wrapper_common_metrics` shared builder — Aider and Copilot-CLI
+  wrappers each invocation produces `trove.harness.events` +
+  `trove.harness.turn.duration` (histogram, shared bucket bounds with
+  the Cursor hook) + `trove.harness.errors` on non-zero exit.
+
+Deferred to a follow-up PR:
+
+- Per-row mapping editor (add/edit/delete individual rows; the v1 UI
+  is master-toggle + reset-to-defaults only).
+- Per-model cost-override editor.
+- Export / import mapping JSON (open question #4).
 
 ## Goal
 

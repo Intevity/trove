@@ -13,6 +13,16 @@
 //! optional `text`. The parser is intentionally permissive — Cline's
 //! upstream format may evolve, and best-effort means we shouldn't
 //! crash on shape drift.
+//!
+//! Sprint 13 — in addition to logs, emit Tier A metric data points for
+//! each *new* message classified into one of the bounded event kinds
+//! (`chat.turn`, `tool.call`, `shell.exec`, `file.edit`, plus the
+//! `errors` bucket). The per-task watermark grew from a content hash
+//! to `(hash, last_emitted_index)` so we never double-count on
+//! re-read — every emission covers exactly the slice of messages that
+//! showed up since the previous scan. Logs still fire on every change
+//! (their attribute set carries the up-to-date message count) so
+//! existing log-tail consumers keep working.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -29,6 +39,16 @@ use crate::otlp_emit;
 /// How often the watcher polls each task's `ui_messages.json`.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Per-task watermark. `hash` short-circuits the read when the file
+/// hasn't changed since the previous scan; `last_emitted_index`
+/// records how many messages we've already turned into Tier A metric
+/// data points so the next scan can slice from there.
+#[derive(Debug, Default, Clone)]
+struct TaskWatermark {
+    hash: String,
+    last_emitted_index: usize,
+}
+
 /// Spawn a Cline watcher rooted at `tasks_dir`. Returns a handle whose
 /// `abort()` halts the loop. Errors during emission are logged at
 /// `tracing::warn!` and the loop continues — best-effort.
@@ -40,31 +60,40 @@ pub fn spawn(
 ) -> WatcherHandle {
     let tasks_dir = tasks_dir.into();
     let join = tokio::spawn(async move {
-        run(tasks_dir, opts, poll_interval, |payload: Value| async move {
-            otlp_emit::post_logs_json(&payload).await
-        })
+        run(
+            tasks_dir,
+            opts,
+            poll_interval,
+            |payload: Value| async move { otlp_emit::post_logs_json(&payload).await },
+            |payload: Value| async move { otlp_emit::post_metrics_json(&payload).await },
+        )
         .await;
     });
     WatcherHandle::from_join(join)
 }
 
-/// Test-friendly variant: takes an explicit emitter so tests can
-/// capture payloads instead of `POSTing` to a real receiver. The
-/// emitter takes an owned `Value` (not a reference) to keep the trait
+/// Test-friendly variant: takes explicit emitters for logs and metrics
+/// so tests can capture payloads instead of `POSTing` to a real
+/// receiver. Owned `Value` (not a reference) on both keeps the trait
 /// bounds free of HRTB lifetime gymnastics — the watcher emits at
 /// most once per second per task, so the clone cost is negligible.
-pub async fn run<F, Fut>(
+pub async fn run<FLog, FutLog, FMetric, FutMetric>(
     tasks_dir: PathBuf,
     opts: ApplyOptions,
     poll_interval: Duration,
-    emit: F,
+    emit_log: FLog,
+    emit_metric: FMetric,
 ) where
-    F: Fn(Value) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>> + Send,
+    FLog: Fn(Value) -> FutLog + Send + Sync + 'static,
+    FutLog: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>> + Send,
+    FMetric: Fn(Value) -> FutMetric + Send + Sync + 'static,
+    FutMetric: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>> + Send,
 {
-    let mut last_seen: HashMap<String, String> = HashMap::new();
+    let mut watermarks: HashMap<String, TaskWatermark> = HashMap::new();
     loop {
-        if let Err(e) = scan_once(&tasks_dir, &opts, &mut last_seen, &emit).await {
+        if let Err(e) =
+            scan_once(&tasks_dir, &opts, &mut watermarks, &emit_log, &emit_metric).await
+        {
             tracing::warn!(error = %e, ?tasks_dir, "cline watcher tick errored");
         }
         tokio::time::sleep(poll_interval).await;
@@ -72,17 +101,21 @@ pub async fn run<F, Fut>(
 }
 
 /// One pass over the tasks directory. Reads each `<id>/ui_messages.json`,
-/// emits a log record if its content hash has changed since the last
-/// scan, and updates the per-task watermark.
-async fn scan_once<F, Fut>(
+/// emits a log record (and any Tier A metrics derived from new messages)
+/// if its content hash has changed since the last scan, and updates the
+/// per-task watermark.
+async fn scan_once<FLog, FutLog, FMetric, FutMetric>(
     tasks_dir: &Path,
     opts: &ApplyOptions,
-    last_seen: &mut HashMap<String, String>,
-    emit: &F,
+    watermarks: &mut HashMap<String, TaskWatermark>,
+    emit_log: &FLog,
+    emit_metric: &FMetric,
 ) -> std::io::Result<()>
 where
-    F: Fn(Value) -> Fut,
-    Fut: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>>,
+    FLog: Fn(Value) -> FutLog,
+    FutLog: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>>,
+    FMetric: Fn(Value) -> FutMetric,
+    FutMetric: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>>,
 {
     let mut entries = match tokio::fs::read_dir(tasks_dir).await {
         Ok(rd) => rd,
@@ -108,19 +141,51 @@ where
             }
         };
         let hash = sha256_hex(&content);
-        if last_seen.get(&task_id) == Some(&hash) {
+        let previous = watermarks
+            .get(&task_id)
+            .cloned()
+            .unwrap_or_default();
+        if previous.hash == hash {
             continue;
         }
-        last_seen.insert(task_id.clone(), hash);
 
-        let Some(payload) = parse_task_log_payload(&task_id, &content, opts) else {
-            continue;
-        };
-        if let Err(e) = emit(payload).await {
-            tracing::warn!(error = %e, %task_id, "cline watcher OTLP emit failed");
+        // Compute the new tail before emitting so the watermark moves
+        // forward regardless of emit success — a transient OTLP
+        // failure shouldn't make us re-emit the same chunk forever.
+        let new_message_count = parsed_message_count(&content).unwrap_or(0);
+        watermarks.insert(
+            task_id.clone(),
+            TaskWatermark {
+                hash,
+                last_emitted_index: new_message_count,
+            },
+        );
+
+        if let Some(log_payload) = parse_task_log_payload(&task_id, &content, opts) {
+            if let Err(e) = emit_log(log_payload).await {
+                tracing::warn!(error = %e, %task_id, "cline watcher log emit failed");
+            }
+        }
+        if let Some(metric_payload) = parse_task_metric_payload(
+            &task_id,
+            &content,
+            previous.last_emitted_index,
+            opts,
+        ) {
+            if let Err(e) = emit_metric(metric_payload).await {
+                tracing::warn!(error = %e, %task_id, "cline watcher metric emit failed");
+            }
         }
     }
     Ok(())
+}
+
+/// Parse `ui_messages_bytes` and return the message count if the
+/// payload is a JSON array. Returns `None` for unparseable input.
+fn parsed_message_count(ui_messages_bytes: &[u8]) -> Option<usize> {
+    let messages: Value = serde_json::from_slice(ui_messages_bytes).ok()?;
+    let arr = messages.as_array()?;
+    Some(arr.len())
 }
 
 /// Build an OTLP/HTTP/JSON `LogRecord` payload for one Cline task.
@@ -182,6 +247,166 @@ fn custom_attributes_iter(
     attrs: &BTreeMap<String, String>,
 ) -> impl Iterator<Item = (&str, &str)> {
     attrs.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+}
+
+/// One Tier A bucket the watcher derives from a Cline `ui_messages.json`
+/// entry. Returned by [`classify_message`].
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum Classification {
+    /// `trove.harness.events` with `event.kind = <kind>`.
+    Event(&'static str),
+    /// `trove.harness.errors` with `error.kind = "unknown"`. Cline's
+    /// `say.error` messages don't carry a structured failure mode, so
+    /// every error lands in the catch-all bucket today.
+    Error,
+}
+
+/// Map a single Cline `ui_messages.json` entry onto a Tier A bucket.
+/// Returns `None` for messages Trove doesn't synthesize (e.g. `ask`
+/// prompts the user has to answer, `command_output` payloads,
+/// `api_req_started` records — those carry API metadata, not a turn
+/// boundary).
+///
+/// The classifications mirror the hook-rule rows in
+/// [`crate::mappings::defaults`]'s `cline` defaults. If you edit one,
+/// edit the other so the Mappings UI and the watcher stay aligned.
+#[must_use]
+fn classify_message(msg: &Value) -> Option<Classification> {
+    let kind = msg.get("type").and_then(Value::as_str)?;
+    if kind != "say" {
+        return None;
+    }
+    let say = msg.get("say").and_then(Value::as_str)?;
+    match say {
+        "text" => Some(Classification::Event("chat.turn")),
+        "tool" => Some(Classification::Event("tool.call")),
+        "command" => Some(Classification::Event("shell.exec")),
+        "error" => Some(Classification::Error),
+        _ => None,
+    }
+}
+
+/// Build an OTLP/HTTP/JSON metrics payload covering every message at
+/// index `from_index..` that classifies into a Tier A bucket. Returns
+/// `None` when no new messages classify (so the watcher doesn't post an
+/// empty metrics payload) or when the file is unparseable.
+///
+/// Today emits two metrics:
+/// - `trove.harness.events` with one data point per classified event,
+///   tagged `event.kind`.
+/// - `trove.harness.errors` with one data point per `say.error`,
+///   tagged `error.kind = "unknown"`.
+///
+/// Token and cost synthesis depend on parsing `api_req_finished`
+/// payloads, which carry per-turn token counts and cost in a stringified
+/// JSON blob inside `text`. Deferred to a follow-up pass once the
+/// upstream schema is verified against a real Cline session (see plan
+/// open question #4).
+#[must_use]
+pub fn parse_task_metric_payload(
+    task_id: &str,
+    ui_messages_bytes: &[u8],
+    from_index: usize,
+    opts: &ApplyOptions,
+) -> Option<Value> {
+    let messages: Value = serde_json::from_slice(ui_messages_bytes).ok()?;
+    let arr = messages.as_array()?;
+    if from_index >= arr.len() {
+        return None;
+    }
+    let new_slice = &arr[from_index..];
+
+    let mut event_kinds: BTreeMap<&'static str, u64> = BTreeMap::new();
+    let mut error_count: u64 = 0;
+    for msg in new_slice {
+        match classify_message(msg) {
+            Some(Classification::Event(kind)) => {
+                *event_kinds.entry(kind).or_insert(0) += 1;
+            }
+            Some(Classification::Error) => {
+                error_count += 1;
+            }
+            None => {}
+        }
+    }
+    if event_kinds.is_empty() && error_count == 0 {
+        return None;
+    }
+
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos())
+        .to_string();
+    let start_ns = now_ns.clone();
+
+    let mut metrics: Vec<Value> = Vec::new();
+
+    if !event_kinds.is_empty() {
+        let data_points: Vec<Value> = event_kinds
+            .into_iter()
+            .map(|(kind, count)| {
+                json!({
+                    "startTimeUnixNano": start_ns,
+                    "timeUnixNano": now_ns,
+                    "asInt": count.to_string(),
+                    "attributes": [
+                        {"key": "event.kind", "value": {"stringValue": kind}},
+                        {"key": "cline.task_id", "value": {"stringValue": task_id}},
+                    ],
+                })
+            })
+            .collect();
+        metrics.push(json!({
+            "name": "trove.harness.events",
+            "unit": "1",
+            "description": "Count of harness events processed by Trove.",
+            "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": true,
+                "dataPoints": data_points,
+            }
+        }));
+    }
+    if error_count > 0 {
+        metrics.push(json!({
+            "name": "trove.harness.errors",
+            "unit": "1",
+            "description": "Count of harness errors observed by Trove.",
+            "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": true,
+                "dataPoints": [{
+                    "startTimeUnixNano": start_ns,
+                    "timeUnixNano": now_ns,
+                    "asInt": error_count.to_string(),
+                    "attributes": [
+                        {"key": "error.kind", "value": {"stringValue": "unknown"}},
+                        {"key": "cline.task_id", "value": {"stringValue": task_id}},
+                    ],
+                }]
+            }
+        }));
+    }
+
+    let mut resource_attrs = vec![
+        json!({"key": "service.name", "value": {"stringValue": "cline"}}),
+        json!({"key": "harness.id", "value": {"stringValue": "cline"}}),
+        json!({"key": "harness.name", "value": {"stringValue": "Cline"}}),
+        json!({"key": "trove.source", "value": {"stringValue": "cline"}}),
+    ];
+    for (k, v) in custom_attributes_iter(&opts.custom_attributes) {
+        resource_attrs.push(json!({"key": k, "value": {"stringValue": v}}));
+    }
+
+    Some(json!({
+        "resourceMetrics": [{
+            "resource": {"attributes": resource_attrs},
+            "scopeMetrics": [{
+                "scope": {"name": "trove.adapters.cline", "version": env!("CARGO_PKG_VERSION")},
+                "metrics": metrics,
+            }]
+        }]
+    }))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -289,15 +514,24 @@ mod tests {
     async fn watcher_emits_one_payload_per_changed_task_file() {
         let dir = tempdir().unwrap();
         let tasks_dir = dir.path().to_path_buf();
-        let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-        let captured_clone = captured.clone();
+        let logs: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let logs_clone = logs.clone();
+        let metrics: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let metrics_clone = metrics.clone();
 
         // Pre-populate one task before spawn so we hit the "first scan
         // emits" path immediately.
         write_task_messages(&tasks_dir, "t1", &[json!({"text": "init"})]);
 
-        let emit = move |p: Value| {
-            let captured = captured_clone.clone();
+        let emit_log = move |p: Value| {
+            let captured = logs_clone.clone();
+            async move {
+                captured.lock().await.push(p);
+                Ok::<_, otlp_emit::OtlpEmitError>(())
+            }
+        };
+        let emit_metric = move |p: Value| {
+            let captured = metrics_clone.clone();
             async move {
                 captured.lock().await.push(p);
                 Ok::<_, otlp_emit::OtlpEmitError>(())
@@ -305,18 +539,26 @@ mod tests {
         };
 
         let handle = tokio::spawn(async move {
-            run(tasks_dir.clone(), ApplyOptions::default(), Duration::from_millis(50), emit).await;
+            run(
+                tasks_dir.clone(),
+                ApplyOptions::default(),
+                Duration::from_millis(50),
+                emit_log,
+                emit_metric,
+            )
+            .await;
             // run() loops forever; we abort it from the test below.
         });
 
-        // First emission for t1.
-        wait_for_count(&captured, 1, Duration::from_secs(2)).await;
+        // First emission for t1 (log only — the test fixture's
+        // {"text":"init"} doesn't classify into a Tier A bucket).
+        wait_for_count(&logs, 1, Duration::from_secs(2)).await;
 
-        // Add t2; expect a second emission. (No change to t1 → no
+        // Add t2; expect a second log emission. (No change to t1 → no
         // duplicate.)
         let dir_path = dir.path().to_path_buf();
         write_task_messages(&dir_path, "t2", &[json!({"text": "second"})]);
-        wait_for_count(&captured, 2, Duration::from_secs(2)).await;
+        wait_for_count(&logs, 2, Duration::from_secs(2)).await;
 
         // Re-emit by mutating t1.
         write_task_messages(
@@ -324,12 +566,12 @@ mod tests {
             "t1",
             &[json!({"text": "init"}), json!({"text": "next"})],
         );
-        wait_for_count(&captured, 3, Duration::from_secs(2)).await;
+        wait_for_count(&logs, 3, Duration::from_secs(2)).await;
 
         handle.abort();
         let _ = handle.await;
 
-        let entries = captured.lock().await.clone();
+        let entries = logs.lock().await.clone();
         let task_ids: Vec<String> = entries
             .iter()
             .map(|p| {
@@ -346,6 +588,255 @@ mod tests {
             .collect();
         assert!(task_ids.contains(&"t1".to_string()));
         assert!(task_ids.contains(&"t2".to_string()));
+        // No metric payloads expected: these fixture messages omit
+        // the `type`/`say` fields the classifier needs.
+        assert_eq!(metrics.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn watcher_emits_metrics_for_classified_messages() {
+        let dir = tempdir().unwrap();
+        let tasks_dir = dir.path().to_path_buf();
+        let metrics: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let metrics_clone = metrics.clone();
+        let logs: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let logs_clone = logs.clone();
+
+        // Seed a task with three classifiable messages: one chat turn,
+        // one tool call, one error.
+        write_task_messages(
+            &tasks_dir,
+            "task-class",
+            &[
+                json!({"type": "say", "say": "text", "text": "hi"}),
+                json!({"type": "say", "say": "tool", "text": "read_file"}),
+                json!({"type": "say", "say": "error", "text": "bang"}),
+            ],
+        );
+
+        let emit_log = move |p: Value| {
+            let c = logs_clone.clone();
+            async move {
+                c.lock().await.push(p);
+                Ok::<_, otlp_emit::OtlpEmitError>(())
+            }
+        };
+        let emit_metric = move |p: Value| {
+            let c = metrics_clone.clone();
+            async move {
+                c.lock().await.push(p);
+                Ok::<_, otlp_emit::OtlpEmitError>(())
+            }
+        };
+
+        let handle = tokio::spawn(async move {
+            run(
+                tasks_dir,
+                ApplyOptions::default(),
+                Duration::from_millis(30),
+                emit_log,
+                emit_metric,
+            )
+            .await;
+        });
+
+        wait_for_count(&metrics, 1, Duration::from_secs(2)).await;
+        handle.abort();
+        let _ = handle.await;
+
+        let m = &metrics.lock().await[0].clone();
+        let names: Vec<String> = m["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"trove.harness.events".to_string()));
+        assert!(names.contains(&"trove.harness.errors".to_string()));
+
+        // The Tier A resource attributes are present.
+        let resource_attrs =
+            m["resourceMetrics"][0]["resource"]["attributes"].as_array().unwrap();
+        assert!(resource_attrs.iter().any(|a| {
+            a["key"] == "harness.id" && a["value"]["stringValue"] == "cline"
+        }));
+    }
+
+    #[tokio::test]
+    async fn watcher_does_not_double_count_existing_messages_on_subsequent_changes() {
+        let dir = tempdir().unwrap();
+        let tasks_dir = dir.path().to_path_buf();
+        let metrics: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let metrics_clone = metrics.clone();
+
+        // Seed with one message that classifies as chat.turn.
+        write_task_messages(
+            &tasks_dir,
+            "task-watermark",
+            &[json!({"type": "say", "say": "text", "text": "one"})],
+        );
+
+        let emit_log = |_p: Value| async { Ok::<_, otlp_emit::OtlpEmitError>(()) };
+        let emit_metric = move |p: Value| {
+            let c = metrics_clone.clone();
+            async move {
+                c.lock().await.push(p);
+                Ok::<_, otlp_emit::OtlpEmitError>(())
+            }
+        };
+
+        let dir_path = dir.path().to_path_buf();
+        let handle = tokio::spawn(async move {
+            run(
+                tasks_dir,
+                ApplyOptions::default(),
+                Duration::from_millis(30),
+                emit_log,
+                emit_metric,
+            )
+            .await;
+        });
+
+        wait_for_count(&metrics, 1, Duration::from_secs(2)).await;
+
+        // Append a second classifiable message; the next emission must
+        // count *only* the new one.
+        write_task_messages(
+            &dir_path,
+            "task-watermark",
+            &[
+                json!({"type": "say", "say": "text", "text": "one"}),
+                json!({"type": "say", "say": "tool", "text": "ls"}),
+            ],
+        );
+        wait_for_count(&metrics, 2, Duration::from_secs(2)).await;
+
+        handle.abort();
+        let _ = handle.await;
+
+        // Pull the second emission. It should report exactly one
+        // event row (the new tool.call), not two.
+        let second = metrics.lock().await[1].clone();
+        let event_metric = second["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["name"] == "trove.harness.events")
+            .cloned()
+            .unwrap();
+        let data_points = event_metric["sum"]["dataPoints"].as_array().unwrap();
+        let total_count: u64 = data_points
+            .iter()
+            .map(|dp| dp["asInt"].as_str().unwrap().parse::<u64>().unwrap())
+            .sum();
+        assert_eq!(
+            total_count, 1,
+            "second emission must cover only the new message, not the whole file"
+        );
+    }
+
+    #[test]
+    fn classify_message_recognizes_known_say_subtypes() {
+        assert_eq!(
+            classify_message(&json!({"type": "say", "say": "text"})),
+            Some(Classification::Event("chat.turn"))
+        );
+        assert_eq!(
+            classify_message(&json!({"type": "say", "say": "tool"})),
+            Some(Classification::Event("tool.call"))
+        );
+        assert_eq!(
+            classify_message(&json!({"type": "say", "say": "command"})),
+            Some(Classification::Event("shell.exec"))
+        );
+        assert_eq!(
+            classify_message(&json!({"type": "say", "say": "error"})),
+            Some(Classification::Error)
+        );
+    }
+
+    #[test]
+    fn classify_message_ignores_ask_and_unknown_say_subtypes() {
+        assert!(classify_message(&json!({"type": "ask", "ask": "tool"})).is_none());
+        assert!(classify_message(&json!({"type": "say", "say": "api_req_started"})).is_none());
+        assert!(classify_message(&json!({"text": "noise"})).is_none());
+    }
+
+    #[test]
+    fn metric_payload_is_none_when_slice_has_no_classifiable_messages() {
+        let messages = serde_json::to_vec(&json!([
+            {"type": "ask", "ask": "tool"},
+            {"type": "say", "say": "api_req_started"}
+        ]))
+        .unwrap();
+        let r = parse_task_metric_payload("t", &messages, 0, &ApplyOptions::default());
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn metric_payload_is_none_when_from_index_is_beyond_end() {
+        let messages = serde_json::to_vec(&json!([
+            {"type": "say", "say": "text"},
+        ]))
+        .unwrap();
+        let r = parse_task_metric_payload("t", &messages, 5, &ApplyOptions::default());
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn metric_payload_groups_event_kinds_into_one_metric_with_multiple_data_points() {
+        let messages = serde_json::to_vec(&json!([
+            {"type": "say", "say": "text"},
+            {"type": "say", "say": "text"},
+            {"type": "say", "say": "tool"},
+        ]))
+        .unwrap();
+        let p =
+            parse_task_metric_payload("t", &messages, 0, &ApplyOptions::default()).unwrap();
+        let m = &p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"];
+        let events = m
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["name"] == "trove.harness.events")
+            .unwrap();
+        let data_points = events["sum"]["dataPoints"].as_array().unwrap();
+        assert_eq!(data_points.len(), 2, "one data point per distinct event.kind");
+        // Count by kind to confirm aggregation.
+        let counts: BTreeMap<String, u64> = data_points
+            .iter()
+            .map(|dp| {
+                let kind = dp["attributes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|a| a["key"] == "event.kind")
+                    .unwrap()["value"]["stringValue"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                let count: u64 = dp["asInt"].as_str().unwrap().parse().unwrap();
+                (kind, count)
+            })
+            .collect();
+        assert_eq!(counts.get("chat.turn"), Some(&2));
+        assert_eq!(counts.get("tool.call"), Some(&1));
+    }
+
+    #[test]
+    fn metric_payload_carries_custom_attributes_on_the_resource() {
+        let messages = serde_json::to_vec(&json!([
+            {"type": "say", "say": "text"},
+        ]))
+        .unwrap();
+        let mut opts = ApplyOptions::default();
+        opts.custom_attributes
+            .insert("team".into(), "platform".into());
+        let p = parse_task_metric_payload("t", &messages, 0, &opts).unwrap();
+        let attrs = p["resourceMetrics"][0]["resource"]["attributes"].as_array().unwrap();
+        assert!(attrs
+            .iter()
+            .any(|a| a["key"] == "team" && a["value"]["stringValue"] == "platform"));
     }
 
     async fn wait_for_count(
@@ -374,15 +865,23 @@ mod tests {
         let tasks_dir = dir.path().join("missing");
         let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
         let captured_clone = captured.clone();
-        let emit = move |p: Value| {
+        let emit_log = move |p: Value| {
             let captured = captured_clone.clone();
             async move {
                 captured.lock().await.push(p);
                 Ok::<_, otlp_emit::OtlpEmitError>(())
             }
         };
+        let emit_metric = |_p: Value| async { Ok::<_, otlp_emit::OtlpEmitError>(()) };
         let handle = tokio::spawn(async move {
-            run(tasks_dir, ApplyOptions::default(), Duration::from_millis(50), emit).await;
+            run(
+                tasks_dir,
+                ApplyOptions::default(),
+                Duration::from_millis(50),
+                emit_log,
+                emit_metric,
+            )
+            .await;
         });
         // Let the loop tick a few times — it should not panic.
         tokio::time::sleep(Duration::from_millis(200)).await;
