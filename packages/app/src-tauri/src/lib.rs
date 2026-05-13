@@ -139,7 +139,16 @@ pub fn run() {
             // an app relaunch produces no Tier A emission and the
             // SignOz dashboard panels stay empty until the user clicks
             // Apply again.
-            ipc::commands::respawn_persisted_watchers(app.handle());
+            //
+            // Deferred onto `tauri::async_runtime::spawn` so the inner
+            // `tokio::spawn` calls inside each watcher run inside the
+            // tokio runtime context. Calling `respawn_persisted_watchers`
+            // directly here aborts the process because setup runs
+            // synchronously before the runtime is live.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                ipc::commands::respawn_persisted_watchers(&app_handle);
+            });
 
             Ok(())
         })
