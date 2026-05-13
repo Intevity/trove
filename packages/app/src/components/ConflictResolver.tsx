@@ -11,24 +11,18 @@ import type {
 } from '@trove/shared';
 
 import { TroveIpcError, resolveConflict } from '../lib/ipc.js';
+import { Button, StatusDot } from './ui/index.js';
 
 export interface ConflictResolverProps {
   harnessId: HarnessId;
   conflict: ConflictPayload;
   options: ApplyOptions;
-  /** Fires after a successful resolution. The parent decides what to do
-   *  next (close modal, refresh state, etc.). */
   onResolved: (outcome: ConflictResolutionOutcome) => void;
-  /** Cancel the resolver — back out without writing anything. */
   onCancel: () => void;
 }
 
 type Mode = 'three-way' | 'two-way';
 
-/** Sprint 8 — 3-way merge resolver. Surfaces when `apply_patch` returns
- *  `region-conflict-detected`. Renders three panes (Original / Yours /
- *  Trove's) and offers three explicit actions; orphan-block payloads
- *  (no prior baseline in `state.json`) collapse to a 2-pane fallback. */
 export function ConflictResolver({
   harnessId,
   conflict,
@@ -76,11 +70,14 @@ export function ConflictResolver({
       role="region"
       aria-label="3-way merge resolver"
     >
-      <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-        A managed Trove block in <code className="font-mono text-xs">{conflict.configPath}</code>{' '}
-        was edited outside Trove. Pick how to resolve — Trove will not silently overwrite your
-        changes.
-      </p>
+      <div className="flex items-start gap-2 rounded-card border border-hairline bg-ios-orange/[0.08] px-3 py-2 text-[13px] text-fg-primary dark:border-hairline-dark dark:text-fg-primary-dark">
+        <StatusDot status="amber" size="md" pulse={false} className="mt-1" />
+        <p>
+          A managed Trove block in{' '}
+          <code className="font-mono text-[11px]">{conflict.configPath}</code> was edited outside
+          Trove. Pick how to resolve — Trove will not silently overwrite your changes.
+        </p>
+      </div>
 
       {mode === 'three-way' ? (
         <Pane
@@ -91,7 +88,7 @@ export function ConflictResolver({
         />
       ) : (
         <p
-          className="rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          className="rounded-card border border-hairline bg-canvas px-3 py-2 text-[12px] text-fg-secondary dark:border-hairline-dark dark:bg-canvas-dark dark:text-fg-secondary-dark"
           data-testid="conflict-orphan-notice"
         >
           No prior baseline is on file for this harness — Trove can&apos;t show what it last wrote.
@@ -115,50 +112,50 @@ export function ConflictResolver({
 
       {actionError ? (
         <div
-          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-200"
+          className="flex items-start gap-2 rounded-card border border-hairline bg-ios-red/[0.08] px-3 py-2 text-[13px] text-fg-primary dark:border-hairline-dark dark:text-fg-primary-dark"
           data-testid="conflict-action-error"
         >
-          <p className="font-medium">Resolution failed</p>
-          <p className="mt-1 text-xs">{actionError.cause.kind}</p>
+          <StatusDot status="red" size="md" pulse={false} className="mt-1" />
+          <div>
+            <p className="font-medium">Resolution failed</p>
+            <p className="mt-1 text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
+              {actionError.cause.kind}
+            </p>
+          </div>
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-          data-testid="conflict-cancel"
-        >
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-hairline pt-3 dark:border-hairline-dark">
+        <Button variant="secondary" size="md" testid="conflict-cancel" onClick={onCancel}>
           Cancel
-        </button>
-        <button
-          type="button"
-          onClick={() => void dispatch({ kind: 'merge-manually', options })}
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          testid="conflict-merge-manually"
           disabled={pending !== null}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-          data-testid="conflict-merge-manually"
+          onClick={() => void dispatch({ kind: 'merge-manually', options })}
         >
           {pending === 'merge-manually' ? 'Writing siblings…' : 'Merge manually'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void dispatch({ kind: 'keep-mine' })}
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          testid="conflict-keep-mine"
           disabled={pending !== null}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-          data-testid="conflict-keep-mine"
+          onClick={() => void dispatch({ kind: 'keep-mine' })}
         >
           {pending === 'keep-mine' ? 'Saving baseline…' : 'Keep mine'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void dispatch({ kind: 'take-theirs', options })}
+        </Button>
+        <Button
+          variant="primary"
+          size="md"
+          testid="conflict-take-theirs"
           disabled={pending !== null}
-          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
-          data-testid="conflict-take-theirs"
+          onClick={() => void dispatch({ kind: 'take-theirs', options })}
         >
           {pending === 'take-theirs' ? 'Overwriting…' : "Take Trove's"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -171,21 +168,22 @@ interface PaneProps {
   testId: string;
 }
 
-/** Read-only payload pane, used for "Original" in 3-way mode. */
 function Pane({ title, payload, mutedTone, testId }: PaneProps): JSX.Element {
   return (
     <section data-testid={testId}>
-      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <h3 className="mb-1 text-caption uppercase text-fg-tertiary dark:text-fg-tertiary-dark">
         {title}
       </h3>
       <pre
         className={
           mutedTone
-            ? 'max-h-[20vh] overflow-auto rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400'
-            : 'max-h-[20vh] overflow-auto rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-snug dark:border-slate-800 dark:bg-slate-950'
+            ? 'max-h-[20vh] overflow-auto rounded-card border border-hairline bg-canvas p-3 text-[12px] text-fg-tertiary dark:border-hairline-dark dark:bg-canvas-dark dark:text-fg-tertiary-dark'
+            : 'max-h-[20vh] overflow-auto rounded-card border border-hairline bg-canvas p-3 text-[12px] leading-snug dark:border-hairline-dark dark:bg-canvas-dark'
         }
       >
-        {payload || <span className="text-slate-400 italic">(empty)</span>}
+        {payload || (
+          <span className="italic text-fg-tertiary dark:text-fg-tertiary-dark">(empty)</span>
+        )}
       </pre>
     </section>
   );
@@ -193,16 +191,11 @@ function Pane({ title, payload, mutedTone, testId }: PaneProps): JSX.Element {
 
 interface DiffPaneProps {
   title: string;
-  /** Original payload to diff against. `null` falls back to a plain
-   *  payload render with no diff overlay. */
   baseline: string | null;
   payload: string;
   testId: string;
 }
 
-/** Payload pane with a `diffLines` overlay against `baseline`. Renders
- *  added/removed/unchanged segments with colour cues so the user can
- *  see at a glance what's different. */
 function DiffPane({ title, baseline, payload, testId }: DiffPaneProps): JSX.Element {
   if (baseline === null) {
     return <Pane title={title} payload={payload} testId={testId} />;
@@ -210,19 +203,19 @@ function DiffPane({ title, baseline, payload, testId }: DiffPaneProps): JSX.Elem
   const parts = diffLines(baseline, payload);
   return (
     <section data-testid={testId}>
-      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <h3 className="mb-1 text-caption uppercase text-fg-tertiary dark:text-fg-tertiary-dark">
         {title}
       </h3>
-      <pre className="max-h-[24vh] overflow-auto rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-snug dark:border-slate-800 dark:bg-slate-950">
+      <pre className="max-h-[24vh] overflow-auto rounded-card border border-hairline bg-canvas p-3 text-[12px] leading-snug dark:border-hairline-dark dark:bg-canvas-dark">
         {parts.map((part, idx) => (
           <span
             key={idx}
             className={
               part.added
-                ? 'block bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+                ? 'block bg-ios-green/[0.18] text-ios-green'
                 : part.removed
-                  ? 'block bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200'
-                  : 'block text-slate-600 dark:text-slate-400'
+                  ? 'block bg-ios-red/[0.18] text-ios-red'
+                  : 'block text-fg-secondary dark:text-fg-secondary-dark'
             }
           >
             {(part.added ? '+ ' : part.removed ? '- ' : '  ') + part.value.replace(/\n$/, '')}
@@ -239,9 +232,6 @@ interface SiblingPathsBannerProps {
   'data-testid'?: string;
 }
 
-/** Banner shown after a successful `merge-manually` action. Surfaces
- *  the sibling-file paths and the host-config path so the user can
- *  open them in their editor. */
 function SiblingPathsBanner({
   siblingPaths,
   onCancel,
@@ -249,12 +239,15 @@ function SiblingPathsBanner({
 }: SiblingPathsBannerProps): JSX.Element {
   return (
     <div className="space-y-3 px-5 py-4" data-testid={testId} data-state="merge-deferred">
-      <p className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100">
-        Sibling files written next to your config. Open the host file in your editor and merge by
-        hand. Re-apply once you&apos;re done — Trove will hash the result and either accept it (no
-        conflict) or surface this resolver again.
-      </p>
-      <dl className="space-y-1 text-xs font-mono">
+      <div className="flex items-start gap-2 rounded-card border border-hairline bg-ios-green/[0.08] px-3 py-2 text-[13px] text-fg-primary dark:border-hairline-dark dark:text-fg-primary-dark">
+        <StatusDot status="green" size="md" pulse={false} className="mt-1" />
+        <p>
+          Sibling files written next to your config. Open the host file in your editor and merge by
+          hand. Re-apply once you&apos;re done — Trove will hash the result and either accept it (no
+          conflict) or surface this resolver again.
+        </p>
+      </div>
+      <dl className="space-y-1 font-mono text-[12px]">
         <PathLine label="Host config" value={siblingPaths.host} testId="conflict-sibling-host" />
         <PathLine
           label="Trove's intended"
@@ -268,14 +261,14 @@ function SiblingPathsBanner({
         />
       </dl>
       <div className="flex justify-end pt-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="md"
+          testid="conflict-merge-deferred-close"
           onClick={onCancel}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-          data-testid="conflict-merge-deferred-close"
         >
           Close
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -290,10 +283,10 @@ interface PathLineProps {
 function PathLine({ label, value, testId }: PathLineProps): JSX.Element {
   return (
     <div className="flex flex-col">
-      <dt className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <dt className="text-[10px] uppercase tracking-wide text-fg-tertiary dark:text-fg-tertiary-dark">
         {label}
       </dt>
-      <dd className="break-all text-slate-900 dark:text-slate-100" data-testid={testId}>
+      <dd className="break-all text-fg-primary dark:text-fg-primary-dark" data-testid={testId}>
         {value}
       </dd>
     </div>

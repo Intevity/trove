@@ -8,6 +8,15 @@ import type {
 } from '@trove/shared';
 
 import { TroveIpcError, testExport } from '../lib/ipc.js';
+import {
+  Button,
+  Card,
+  CardHeader,
+  CardTitle,
+  StatTile,
+  StatusDot,
+  type DotStatus,
+} from './ui/index.js';
 import { SyntheticSpanHints } from './wizard/SyntheticSpanHints.js';
 
 interface Props {
@@ -43,92 +52,88 @@ export function SidecarPanel({ state, metrics, backend }: Props): JSX.Element {
   }
 
   return (
-    <section
-      data-testid="sidecar-panel"
-      className="rounded-md border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"
-    >
-      <header className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Collector</h2>
-        <span data-testid="sidecar-state" className="text-xs text-slate-600 dark:text-slate-400">
-          {formatState(state)}
+    <Card testid="sidecar-panel">
+      <CardHeader>
+        <CardTitle>Collector</CardTitle>
+        <span className="flex items-center gap-1.5">
+          <StatusDot status={dotForState(state)} size="sm" />
+          <span
+            data-testid="sidecar-state"
+            className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark"
+          >
+            {formatState(state)}
+          </span>
         </span>
-      </header>
+      </CardHeader>
 
-      <dl className="grid grid-cols-3 gap-3 text-xs text-slate-700 dark:text-slate-300">
-        <CountTile
-          label="Received"
-          spans={metrics?.received.spans ?? 0}
-          metricPoints={metrics?.received.metricPoints ?? 0}
-          logRecords={metrics?.received.logRecords ?? 0}
-          testid="counts-received"
+      <div className="grid grid-cols-3 gap-2">
+        <StatTile testid="counts-received" label="Received" value={metrics?.received.spans ?? 0}>
+          <span data-testid="counts-received-spans">{metrics?.received.spans ?? 0}</span> spans ·{' '}
+          <span data-testid="counts-received-metrics">{metrics?.received.metricPoints ?? 0}</span>{' '}
+          metrics ·{' '}
+          <span data-testid="counts-received-logs">{metrics?.received.logRecords ?? 0}</span> logs
+        </StatTile>
+        <StatTile testid="counts-sent" label="Sent" value={metrics?.sent.spans ?? 0}>
+          <span data-testid="counts-sent-spans">{metrics?.sent.spans ?? 0}</span> spans ·{' '}
+          <span data-testid="counts-sent-metrics">{metrics?.sent.metricPoints ?? 0}</span> metrics ·{' '}
+          <span data-testid="counts-sent-logs">{metrics?.sent.logRecords ?? 0}</span> logs
+        </StatTile>
+        <StatTile
+          testid="counts-last-signal"
+          label="Last signal"
+          value={formatLastSignal(metrics)}
         />
-        <CountTile
-          label="Sent"
-          spans={metrics?.sent.spans ?? 0}
-          metricPoints={metrics?.sent.metricPoints ?? 0}
-          logRecords={metrics?.sent.logRecords ?? 0}
-          testid="counts-sent"
-        />
-        <div data-testid="counts-last-signal">
-          <dt className="text-slate-500">Last signal</dt>
-          <dd className="font-mono text-sm">{formatLastSignal(metrics)}</dd>
-        </div>
-      </dl>
+      </div>
 
       <div className="mt-3 flex flex-col gap-2">
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            data-testid="test-pipeline-button"
+          <Button
+            variant="primary"
+            size="md"
+            testid="test-pipeline-button"
             disabled={busy}
             onClick={() => void handleTest()}
-            className="rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-900 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100 dark:hover:bg-blue-900"
           >
             {busy ? 'Testing…' : 'Test Pipeline'}
-          </button>
+          </Button>
           {result ? (
             <span
               data-testid="test-pipeline-result"
               data-status={result.status}
-              className={`text-xs ${
-                result.status === 'ok'
-                  ? 'text-emerald-700 dark:text-emerald-300'
-                  : 'text-amber-700 dark:text-amber-300'
+              className={`text-[12px] ${
+                result.status === 'ok' ? 'text-ios-green' : 'text-ios-orange'
               }`}
             >
               {result.status === 'ok' ? '✓' : '⚠︎'} {result.detail}
             </span>
           ) : null}
           {error ? (
-            <span className="text-xs text-red-700 dark:text-red-300">
-              Test failed: {error.cause.kind}
-            </span>
+            <span className="text-[12px] text-ios-red">Test failed: {error.cause.kind}</span>
           ) : null}
         </div>
         {result?.status === 'ok' ? <SyntheticSpanHints backendKind={backend?.kind} /> : null}
       </div>
-    </section>
+    </Card>
   );
 }
 
-function CountTile(props: {
-  label: string;
-  spans: number;
-  metricPoints: number;
-  logRecords: number;
-  testid: string;
-}): JSX.Element {
-  const { label, spans, metricPoints, logRecords, testid } = props;
-  return (
-    <div data-testid={testid}>
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="font-mono text-sm">
-        <span data-testid={`${testid}-spans`}>{spans}</span> spans ·{' '}
-        <span data-testid={`${testid}-metrics`}>{metricPoints}</span> metrics ·{' '}
-        <span data-testid={`${testid}-logs`}>{logRecords}</span> logs
-      </dd>
-    </div>
-  );
+/** Map collector run-state to the small status dot in the card header.
+ *  Presentational only — the same kind→tone collapse the diagnostics
+ *  row does, but kept local because this is a different surface. */
+function dotForState(state: CollectorRunState | null): DotStatus {
+  if (!state) return 'gray';
+  switch (state.kind) {
+    case 'running':
+      return 'green';
+    case 'starting':
+    case 'stopping':
+    case 'idle':
+      return 'amber';
+    case 'crashed':
+    case 'failed':
+    case 'stopped':
+      return 'red';
+  }
 }
 
 function formatState(state: CollectorRunState | null): string {

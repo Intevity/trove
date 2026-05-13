@@ -1,16 +1,11 @@
 import type { BackendDraft, TestExportResult } from '@trove/shared';
 
+import { Button, StatusDot } from '../ui/index.js';
 import { SyntheticSpanHints } from './SyntheticSpanHints.js';
 
 export interface TestExportStepProps {
-  /** Disables every button while we're mid-test or mid-save. */
   busy: boolean;
-  /** What the most recent run returned, or null when the user hasn't
-   *  pressed the button yet. */
   result: TestExportResult | null;
-  /** Kind of backend the user is configuring; threads through to the
-   *  post-success hints block so the "Look for this in {label}"
-   *  preamble names the user's chosen backend by label. */
   backendKind?: BackendDraft['kind'] | undefined;
   onTest: () => void;
   onSave: () => void;
@@ -31,59 +26,54 @@ export function TestExportStep({
 
   return (
     <section data-testid="test-export-step">
-      <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+      <h2 className="text-[20px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
         Send a synthetic span
       </h2>
-      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+      <p className="mt-1 text-[13px] text-fg-secondary dark:text-fg-secondary-dark">
         Trove will send one synthetic OTLP trace through the local collector to your backend, then
         watch for any error in the collector log within five seconds. Click <strong>Save</strong>{' '}
         once you see a green check.
       </p>
 
       <div className="mt-6 space-y-4">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="md"
+          testid="test-export-run"
           onClick={onTest}
           disabled={busy}
-          data-testid="test-export-run"
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-400"
         >
           {busy && status === null ? 'Testing…' : result === null ? 'Test export' : 'Test again'}
-        </button>
+        </Button>
 
         {result ? <ResultBanner result={result} backendKind={backendKind} /> : null}
 
         <div className="flex items-center justify-between pt-2">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="md"
+            testid="test-export-back"
             onClick={onBack}
             disabled={busy}
-            data-testid="test-export-back"
-            className="text-sm text-slate-600 hover:text-slate-900 disabled:text-slate-400 dark:text-slate-400 dark:hover:text-slate-100"
           >
             ← Back
-          </button>
+          </Button>
 
           <div className="flex items-center gap-3">
             {showSaveAnyway ? (
-              <button
-                type="button"
-                onClick={onSave}
-                data-testid="test-export-save-anyway"
-                className="text-sm text-slate-600 underline hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
-              >
+              <Button variant="ghost" size="sm" testid="test-export-save-anyway" onClick={onSave}>
                 Save anyway
-              </button>
+              </Button>
             ) : null}
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="md"
+              testid="test-export-save"
               onClick={onSave}
               disabled={!canSave}
-              data-testid="test-export-save"
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-300 disabled:text-slate-600"
             >
               Save
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -101,30 +91,32 @@ function ResultBanner({
   if (result.status === 'ok') {
     return (
       <div data-testid="test-export-banner-ok">
-        <p className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">
-          ✅ {result.detail}
-        </p>
+        <div className="flex items-start gap-2 rounded-card border border-hairline bg-ios-green/[0.08] px-3 py-2 text-[13px] text-fg-primary dark:border-hairline-dark dark:text-fg-primary-dark">
+          <StatusDot status="green" size="md" pulse={false} className="mt-1" />
+          <span>{result.detail}</span>
+        </div>
         <SyntheticSpanHints backendKind={backendKind} />
       </div>
     );
   }
   if (result.status === 'failed') {
     return (
-      <p
+      <div
         data-testid="test-export-banner-failed"
-        className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-200"
+        className="flex items-start gap-2 rounded-card border border-hairline bg-ios-red/[0.08] px-3 py-2 text-[13px] text-fg-primary dark:border-hairline-dark dark:text-fg-primary-dark"
       >
-        ❌ {result.detail}
-      </p>
+        <StatusDot status="red" size="md" pulse={false} className="mt-1" />
+        <span>{result.detail}</span>
+      </div>
     );
   }
-  // timeout
   return (
-    <p
+    <div
       data-testid="test-export-banner-timeout"
-      className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+      className="flex items-start gap-2 rounded-card border border-hairline bg-ios-orange/[0.08] px-3 py-2 text-[13px] text-fg-primary dark:border-hairline-dark dark:text-fg-primary-dark"
     >
-      ⏱ {result.detail}
-    </p>
+      <StatusDot status="amber" size="md" pulse={false} className="mt-1" />
+      <span>{result.detail}</span>
+    </div>
   );
 }

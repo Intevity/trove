@@ -13,11 +13,15 @@ body {
   overflow: hidden;
   background: #f2f2f7;
   color: #1d1d1f;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 @media (prefers-color-scheme: dark) {
   body {
-    background: #111111;
+    background: #1c1c1e;
     color: #f5f5f7;
   }
 }

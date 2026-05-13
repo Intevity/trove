@@ -5,6 +5,7 @@ import type { OverallHealth } from '@trove/shared';
 
 import troveLogo from '../assets/trove-logo.svg';
 import { overallHealthLabel } from '../lib/health.js';
+import { StatusDot, type DotStatus } from './ui/index.js';
 
 export type TabId = 'overview' | 'harnesses' | 'logs' | 'mappings' | 'settings';
 
@@ -22,10 +23,10 @@ const TABS: readonly TabDef[] = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-const DOT_COLOR: Record<OverallHealth, string> = {
-  green: 'bg-ios-green',
-  amber: 'bg-ios-orange',
-  red: 'bg-ios-red',
+const DOT_STATUS: Record<OverallHealth, DotStatus> = {
+  green: 'green',
+  amber: 'amber',
+  red: 'red',
 };
 
 const DOT_TOOLTIP_SUFFIX: Record<OverallHealth, string> = {
@@ -54,9 +55,9 @@ export function AppHeader({ health, detail, activeTab, onTabChange }: Props): JS
   return (
     <header
       data-testid="app-header-bar"
-      className="flex-shrink-0 flex items-center gap-2 px-3 pt-2 pb-2 border-b border-black/10 dark:border-white/10"
+      className="flex flex-shrink-0 items-center gap-2 border-b border-hairline px-3 pb-2 pt-2 dark:border-hairline-dark"
     >
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex flex-shrink-0 items-center gap-2">
         <img
           src={troveLogo}
           alt=""
@@ -67,27 +68,23 @@ export function AppHeader({ health, detail, activeTab, onTabChange }: Props): JS
         />
         <span
           data-testid="app-header"
-          className="text-[15px] font-semibold tracking-tight text-black dark:text-white"
+          className="text-[15px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark"
         >
           Trove
         </span>
-        <span
-          data-testid="app-health-dot"
-          data-health={health}
-          aria-label={tooltip}
-          title={tooltip}
-          className="relative flex h-2 w-2 ml-0.5 cursor-help"
-        >
-          {health === 'green' && (
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-ios-green opacity-50" />
-          )}
-          <span className={`relative inline-flex rounded-full h-2 w-2 ${DOT_COLOR[health]}`} />
-        </span>
+        <StatusDot
+          status={DOT_STATUS[health]}
+          size="sm"
+          label={tooltip}
+          testid="app-health-dot"
+          dataAttrs={{ 'data-health': health }}
+          className="ml-0.5"
+        />
       </div>
 
       <div
         role="tablist"
-        className="ml-auto flex bg-black/[0.06] dark:bg-white/[0.08] rounded-xl p-[3px] min-w-0"
+        className="ml-auto flex min-w-0 rounded-xl bg-black/[0.06] p-[3px] dark:bg-white/[0.08]"
       >
         {TABS.map(({ id, label, icon: Icon }) => {
           const active = activeTab === id;
@@ -99,16 +96,16 @@ export function AppHeader({ health, detail, activeTab, onTabChange }: Props): JS
               aria-selected={active}
               data-testid={`tab-${id}`}
               onClick={() => onTabChange(id)}
-              className={`relative flex items-center justify-center gap-1 px-2 py-1 rounded-[9px] text-[11px] font-medium transition-colors duration-150 ${
+              className={`relative flex items-center justify-center gap-1 rounded-[9px] px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${
                 active
-                  ? 'text-black dark:text-white'
-                  : 'text-ios-gray hover:text-black dark:hover:text-white'
+                  ? 'text-fg-primary dark:text-fg-primary-dark'
+                  : 'text-ios-gray hover:text-fg-primary dark:hover:text-fg-primary-dark'
               }`}
             >
               {active && (
                 <motion.span
                   layoutId="trove-tab-pill"
-                  className="absolute inset-0 rounded-[9px] bg-white dark:bg-[#3A3A3C] shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  className="absolute inset-0 rounded-[9px] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.15)] dark:bg-[#3A3A3C]"
                   transition={{ type: 'spring', stiffness: 500, damping: 40 }}
                 />
               )}
