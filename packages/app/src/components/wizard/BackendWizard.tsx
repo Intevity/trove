@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import type { BackendDraft, TestExportResult } from '@trove/shared';
 
 import { TroveIpcError, saveBackend, testExport } from '../../lib/ipc.js';
+import { Card, StatusDot } from '../ui/index.js';
 import { CredentialsForm, type Kind } from './CredentialsForm.js';
 import { PresetPicker } from './PresetPicker.js';
 import { TestExportStep } from './TestExportStep.js';
@@ -10,23 +11,9 @@ import { TestExportStep } from './TestExportStep.js';
 type Step = 'pick-preset' | 'enter-creds' | 'test-export';
 
 export interface BackendWizardProps {
-  /** Called after the user successfully saves a backend. The parent
-   *  swaps the wizard out for the dashboard view. */
   onComplete: () => void;
 }
 
-/** First-run wizard for picking a destination backend. Step machine:
- *
- * - `pick-preset`: choose between SigNoz / Honeycomb / Grafana Cloud /
- *   Datadog / generic OTLP / passthrough.
- * - `enter-creds`: per-kind form, secret fields masked.
- * - `test-export`: synthetic span flows through the local collector;
- *   on green the Save button enables; on red a "Save anyway" link
- *   appears for users behind corporate proxies.
- *
- * The wizard owns its state via plain useState — no form library — to
- * mirror the rest of the Trove app. Mounted only when
- * `appState.backend === null`. */
 export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
   const [step, setStep] = useState<Step>('pick-preset');
   const [kind, setKind] = useState<Kind | null>(null);
@@ -66,12 +53,6 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      // The wizard saves the draft *before* testing — test_export needs
-      // the supervisor to be running with the user's chosen backend.
-      // If the test goes green, the user clicks Save (which is a no-op
-      // beyond closing the wizard). If red, the user can iterate by
-      // editing creds (back to step 2) or accept the result (Save
-      // anyway). Either way the backend persists; clear_backend reverts.
       await saveBackend(draft);
       const result = await testExport();
       setTestResult(result);
@@ -90,16 +71,11 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
   }, [draft]);
 
   const handleSave = useCallback(() => {
-    // saveBackend already ran during the test; nothing to persist here.
-    // Just hand control back to the dashboard.
     onComplete();
   }, [onComplete]);
 
   return (
-    <div
-      className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-      data-testid="backend-wizard"
-    >
+    <Card as="div" padding="lg" testid="backend-wizard">
       {step === 'pick-preset' ? <PresetPicker onSelect={handlePresetSelect} /> : null}
       {step === 'enter-creds' && kind !== null ? (
         <CredentialsForm
@@ -121,14 +97,15 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
       ) : null}
 
       {error ? (
-        <p
+        <div
           data-testid="backend-wizard-error"
-          className="mt-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-200"
+          className="mt-4 flex items-start gap-2 rounded-card border border-hairline bg-ios-red/[0.08] px-3 py-2 text-[13px] text-fg-primary dark:border-hairline-dark dark:text-fg-primary-dark"
         >
-          {error}
-        </p>
+          <StatusDot status="red" size="md" pulse={false} className="mt-1" />
+          <span>{error}</span>
+        </div>
       ) : null}
-    </div>
+    </Card>
   );
 }
 

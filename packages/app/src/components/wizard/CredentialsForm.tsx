@@ -3,18 +3,16 @@ import { useMemo, useState } from 'react';
 import type { BackendDraft } from '@trove/shared';
 import { presetMetadataFor } from '@trove/collector-presets';
 
+import { Button } from '../ui/index.js';
+
 export type Kind = BackendDraft['kind'];
 
 export interface CredentialsFormProps {
   kind: Kind;
-  /** Called when the form is filled in and the user clicks Continue. */
   onSubmit: (draft: BackendDraft) => void;
-  /** Called when the user clicks Back to return to the preset picker. */
   onBack: () => void;
 }
 
-/** Initial draft skeleton for the chosen kind. Populated by the form
- *  fields below; submitted to the parent only when validation passes. */
 function emptyDraft(kind: Kind): BackendDraft {
   switch (kind) {
     case 'signoz':
@@ -32,12 +30,6 @@ function emptyDraft(kind: Kind): BackendDraft {
   }
 }
 
-/** Normalize fields that users commonly paste in inconvenient forms.
- *  SigNoz Cloud's docs and UI show the ingestion endpoint in several
- *  shapes (`https://ingest.us2.signoz.cloud`, `ingest.us.signoz.cloud:443`,
- *  bare host), but the OTLP/gRPC exporter expects `host:port`. Strip the
- *  scheme, drop trailing slashes, and default the port to 443 (SigNoz
- *  Cloud gRPC TLS) when absent so paste-and-go works for any form. */
 function canonicalizeDraft(draft: BackendDraft): BackendDraft {
   if (draft.kind === 'signoz') {
     let endpoint = draft.endpoint
@@ -52,8 +44,6 @@ function canonicalizeDraft(draft: BackendDraft): BackendDraft {
   return draft;
 }
 
-/** Per-kind validator. Returns the first user-facing error string, or
- *  null when the draft is ready to submit. */
 function validate(draft: BackendDraft): string | null {
   switch (draft.kind) {
     case 'signoz': {
@@ -118,46 +108,34 @@ export function CredentialsForm({ kind, onSubmit, onBack }: CredentialsFormProps
 
   return (
     <section data-testid="credentials-form">
-      <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">{meta.label}</h2>
-      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{meta.description}</p>
+      <h2 className="text-[20px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
+        {meta.label}
+      </h2>
+      <p className="mt-1 text-[13px] text-fg-secondary dark:text-fg-secondary-dark">
+        {meta.description}
+      </p>
 
       <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
         {renderFields(draft, setDraft)}
 
         {error ? (
-          <p
-            data-testid="credentials-form-error"
-            className="text-sm text-red-700 dark:text-red-300"
-          >
+          <p data-testid="credentials-form-error" className="text-[13px] text-ios-red">
             {error}
           </p>
         ) : null}
 
         <div className="flex items-center justify-between pt-2">
-          <button
-            type="button"
-            onClick={onBack}
-            data-testid="credentials-form-back"
-            className="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
-          >
+          <Button variant="ghost" size="md" testid="credentials-form-back" onClick={onBack}>
             ← Back
-          </button>
-          <button
-            type="submit"
-            data-testid="credentials-form-continue"
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
+          </Button>
+          <Button variant="primary" size="md" testid="credentials-form-continue" type="submit">
             Continue
-          </button>
+          </Button>
         </div>
       </form>
     </section>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Per-kind field rendering
-// ---------------------------------------------------------------------------
 
 function renderFields(
   draft: BackendDraft,
@@ -259,12 +237,15 @@ function renderFields(
             testId="otlp-generic-endpoint"
           />
           <fieldset>
-            <legend className="text-sm font-medium text-slate-900 dark:text-slate-100">
+            <legend className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
               Protocol
             </legend>
             <div className="mt-2 flex gap-4">
               {(['http', 'grpc'] as const).map((p) => (
-                <label key={p} className="flex items-center gap-2 text-sm">
+                <label
+                  key={p}
+                  className="flex items-center gap-2 text-[13px] text-fg-secondary dark:text-fg-secondary-dark"
+                >
                   <input
                     type="radio"
                     name="otlp-protocol"
@@ -297,9 +278,8 @@ function renderFields(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Field primitives
-// ---------------------------------------------------------------------------
+const INPUT_CLASS =
+  'mt-1 w-full rounded-[8px] border border-hairline bg-surface-elevated px-3 py-2 text-[13px] text-fg-primary placeholder:text-fg-tertiary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark';
 
 function TextField({
   label,
@@ -318,17 +298,21 @@ function TextField({
 }): JSX.Element {
   return (
     <label className="block">
-      <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{label}</span>
+      <span className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
+        {label}
+      </span>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         data-testid={testId}
-        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900"
+        className={INPUT_CLASS}
       />
       {helper ? (
-        <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{helper}</span>
+        <span className="mt-1 block text-[12px] text-fg-tertiary dark:text-fg-tertiary-dark">
+          {helper}
+        </span>
       ) : null}
     </label>
   );
@@ -350,27 +334,31 @@ function PasswordField({
   const [reveal, setReveal] = useState(false);
   return (
     <label className="block">
-      <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{label}</span>
+      <span className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
+        {label}
+      </span>
       <div className="mt-1 flex items-center gap-2">
         <input
           type={reveal ? 'text' : 'password'}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           data-testid={testId}
-          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900"
+          className={`${INPUT_CLASS} mt-0`}
         />
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
+          testid={`${testId}-reveal`}
           onClick={() => setReveal((r) => !r)}
-          data-testid={`${testId}-reveal`}
-          className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           aria-label={reveal ? 'Hide value' : 'Show value'}
         >
           {reveal ? 'Hide' : 'Show'}
-        </button>
+        </Button>
       </div>
       {helper ? (
-        <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{helper}</span>
+        <span className="mt-1 block text-[12px] text-fg-tertiary dark:text-fg-tertiary-dark">
+          {helper}
+        </span>
       ) : null}
     </label>
   );
@@ -410,7 +398,6 @@ function HeadersEditor({ headers, onChange }: HeadersEditorProps): JSX.Element {
   };
 
   const addRow = (): void => {
-    // Pick a unique placeholder name so editing immediately works.
     let i = 1;
     let name = 'header';
     while (Object.prototype.hasOwnProperty.call(headers, name)) {
@@ -420,18 +407,23 @@ function HeadersEditor({ headers, onChange }: HeadersEditorProps): JSX.Element {
     onChange({ ...headers, [name]: '' });
   };
 
+  const SMALL_INPUT =
+    'flex-1 rounded-[8px] border border-hairline bg-surface-elevated px-3 py-1 text-[13px] text-fg-primary placeholder:text-fg-tertiary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark';
+
   return (
     <fieldset>
-      <legend className="text-sm font-medium text-slate-900 dark:text-slate-100">
+      <legend className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
         Auth headers
       </legend>
-      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+      <p className="mt-1 text-[12px] text-fg-tertiary dark:text-fg-tertiary-dark">
         Each header value is stored in your OS keychain, never in plain text on disk.
       </p>
 
       <ul className="mt-2 space-y-2" data-testid="otlp-generic-headers">
         {entries.length === 0 ? (
-          <li className="text-xs italic text-slate-500 dark:text-slate-400">No headers yet.</li>
+          <li className="text-[12px] italic text-fg-tertiary dark:text-fg-tertiary-dark">
+            No headers yet.
+          </li>
         ) : (
           entries.map(([name, value]) => (
             <li key={name} className="flex items-center gap-2">
@@ -442,7 +434,7 @@ function HeadersEditor({ headers, onChange }: HeadersEditorProps): JSX.Element {
                 placeholder="x-api-key"
                 aria-label="Header name"
                 data-testid={`otlp-generic-header-name-${name}`}
-                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900"
+                className={SMALL_INPUT}
               />
               <input
                 type="password"
@@ -451,17 +443,17 @@ function HeadersEditor({ headers, onChange }: HeadersEditorProps): JSX.Element {
                 placeholder="value"
                 aria-label="Header value"
                 data-testid={`otlp-generic-header-value-${name}`}
-                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900"
+                className={SMALL_INPUT}
               />
-              <button
-                type="button"
-                onClick={() => remove(name)}
-                data-testid={`otlp-generic-header-remove-${name}`}
+              <Button
+                variant="secondary"
+                size="sm"
+                testid={`otlp-generic-header-remove-${name}`}
                 aria-label={`Remove ${name}`}
-                className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                onClick={() => remove(name)}
               >
                 Remove
-              </button>
+              </Button>
             </li>
           ))
         )}
@@ -471,7 +463,7 @@ function HeadersEditor({ headers, onChange }: HeadersEditorProps): JSX.Element {
         type="button"
         onClick={addRow}
         data-testid="otlp-generic-header-add"
-        className="mt-2 rounded-md border border-dashed border-slate-400 px-3 py-1 text-xs text-slate-600 hover:border-blue-500 hover:text-blue-700 dark:border-slate-600 dark:text-slate-400 dark:hover:border-blue-400 dark:hover:text-blue-300"
+        className="mt-2 rounded-[8px] border border-dashed border-hairline px-3 py-1 text-[12px] text-fg-secondary hover:border-ios-blue hover:text-ios-blue dark:border-hairline-dark dark:text-fg-secondary-dark"
       >
         + Add header
       </button>

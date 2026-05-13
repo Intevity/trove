@@ -9,6 +9,7 @@ import type {
 
 import { RECENT_SIGNAL_WINDOW_MS } from '../../lib/health.js';
 import { TroveIpcError, testExport } from '../../lib/ipc.js';
+import { Button, Card, CardHeader, CardTitle, StatusDot } from '../ui/index.js';
 
 interface Props {
   appState: AppState;
@@ -61,24 +62,21 @@ export function DiagnosticsPanel({ appState, state, metrics }: Props): JSX.Eleme
   }
 
   return (
-    <section
-      data-testid="diagnostics-panel"
-      className="rounded-md border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"
-    >
-      <header className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Diagnostics</h2>
-        <button
-          type="button"
-          data-testid="diagnostics-backend-check-button"
+    <Card testid="diagnostics-panel">
+      <CardHeader>
+        <CardTitle>Diagnostics</CardTitle>
+        <Button
+          variant="secondary"
+          size="sm"
+          testid="diagnostics-backend-check-button"
           disabled={busy}
           onClick={() => void handleRunBackendCheck()}
-          className="rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-900 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100 dark:hover:bg-blue-900"
         >
           {busy ? 'Checking…' : 'Run backend check'}
-        </button>
-      </header>
+        </Button>
+      </CardHeader>
 
-      <ul className="flex flex-col gap-1.5">
+      <ul className="divide-y divide-hairline rounded-card border border-hairline dark:divide-hairline-dark dark:border-hairline-dark">
         {passiveRows.map((row) => (
           <DiagnosticsRow key={row.id} row={row} />
         ))}
@@ -86,53 +84,38 @@ export function DiagnosticsPanel({ appState, state, metrics }: Props): JSX.Eleme
       </ul>
 
       {error ? (
-        <p
-          data-testid="diagnostics-backend-check-error"
-          className="mt-2 text-xs text-red-700 dark:text-red-300"
-        >
+        <p data-testid="diagnostics-backend-check-error" className="mt-2 text-[12px] text-ios-red">
           Backend check failed: {error.cause.kind}
         </p>
       ) : null}
-    </section>
+    </Card>
   );
 }
-
-const ROW_STYLES: Record<DiagnosticStatus, string> = {
-  green:
-    'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
-  amber:
-    'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200',
-  red: 'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200',
-};
-
-const ROW_DOT: Record<DiagnosticStatus, string> = {
-  green: 'bg-emerald-500',
-  amber: 'bg-amber-500',
-  red: 'bg-red-500',
-};
 
 function DiagnosticsRow({ row }: { row: DiagnosticRow }): JSX.Element {
   return (
     <li
       data-testid={`diagnostics-row-${row.id}`}
       data-status={row.status}
-      className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${ROW_STYLES[row.status]}`}
+      className="flex items-center gap-2.5 px-3 py-2 first:rounded-t-card last:rounded-b-card"
     >
-      <span
-        aria-hidden
-        className={`inline-block h-2.5 w-2.5 rounded-full ${ROW_DOT[row.status]}`}
-      />
-      <span className="font-medium">{row.label}</span>
-      <span className="opacity-80">— {row.detail}</span>
+      <StatusDot status={row.status} size="md" />
+      <span className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
+        {row.label}
+      </span>
+      <span className="text-[13px] text-fg-secondary dark:text-fg-secondary-dark">
+        — {row.detail}
+      </span>
       {row.fixTargetTestid && row.status !== 'green' ? (
-        <button
-          type="button"
-          data-testid={`diagnostics-fix-${row.id}`}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto"
+          testid={`diagnostics-fix-${row.id}`}
           onClick={() => scrollToTestid(row.fixTargetTestid!)}
-          className="ml-auto text-xs font-medium underline-offset-2 hover:underline"
         >
           Fix
-        </button>
+        </Button>
       ) : null}
     </li>
   );

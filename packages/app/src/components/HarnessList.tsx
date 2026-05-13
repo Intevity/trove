@@ -3,6 +3,17 @@ import { useMemo, useState } from 'react';
 
 import type { DetectedHarness, HarnessId } from '@trove/shared';
 
+import {
+  Button,
+  Card,
+  CardHeader,
+  CardTitle,
+  Pill,
+  StatusDot,
+  type DotStatus,
+  type PillTone,
+} from './ui/index.js';
+
 const HARNESS_LABELS: Record<HarnessId, string> = {
   'claude-code': 'Claude Code',
   'gemini-cli': 'Gemini CLI',
@@ -44,17 +55,6 @@ const HARNESS_LOGOS: Record<HarnessId, HarnessLogoSpec> = {
   'copilot-cli': { bg: '#24292E', mark: 'gh' },
 };
 
-/** Build-time map from `<id>.svg` filename to its raw markup.
- *  Empty until a contributor drops a file in
- *  `packages/app/src/assets/harness-logos/`. `eager: true` so the
- *  lookup is synchronous in the render path; `query: '?raw'` returns
- *  the file contents as a string so we can inline the brand mark as
- *  an actual `<svg>` element rather than an `<img>` wrapper. Inlining
- *  matters because the row's `<svg>` itself must carry no `fill` (so
- *  the tile background composites transparently against either light
- *  or dark row surfaces) — we drop the source SVG's root attributes
- *  and only forward its `viewBox`, leaving brand colors on the inner
- *  paths to come through. */
 const BRAND_LOGO_SOURCES = import.meta.glob<string>('../assets/harness-logos/*.svg', {
   eager: true,
   query: '?raw',
@@ -66,7 +66,6 @@ interface ParsedBrandLogo {
   inner: string;
 }
 
-/** Cache so we parse each SVG once at module load instead of per render. */
 const PARSED_BRAND_LOGOS: Map<string, ParsedBrandLogo | null> = new Map();
 for (const [path, raw] of Object.entries(BRAND_LOGO_SOURCES)) {
   PARSED_BRAND_LOGOS.set(path, parseBrandLogo(raw));
@@ -88,16 +87,6 @@ function brandLogo(id: HarnessId): ParsedBrandLogo | undefined {
   return PARSED_BRAND_LOGOS.get(`../assets/harness-logos/${id}.svg`) ?? undefined;
 }
 
-/** Per-harness coverage advisory surfaced as a badge next to the
- *  telemetry status. Cursor CLI carries one because its hook surface
- *  is a strict subset of the IDE's; the Tier 3 trio (Cline, Aider,
- *  Copilot CLI) carry one because none of those tools emit native
- *  OTEL — Trove approximates their telemetry via log watching or
- *  shell-rc wrappers, with the trade-offs called out in the tooltip.
- *  The badge text stays short (the row is tight); the optional
- *  `tooltip` field renders as a `title` attribute so hovering surfaces
- *  the longer explanation without taking row real-estate. The
- *  `docsUrl` link points at the upstream tool's docs. */
 interface CoverageNote {
   text: string;
   tooltip: string;
@@ -133,19 +122,9 @@ const COVERAGE_NOTES: Partial<Record<HarnessId, CoverageNote>> = {
 export interface HarnessListProps {
   harnesses: DetectedHarness[];
   loading: boolean;
-  /** Called when the user clicks "Enable" — the parent opens the
-   *  PatchPreviewModal for `id`. */
   onEnable?: (id: HarnessId) => void;
-  /** Called when the user clicks "Disable" — the parent calls
-   *  `revertPatch` for `id`. */
   onDisable?: (id: HarnessId) => void;
-  /** Set of harness IDs whose row is currently mid-revert (button
-   *  disables + label changes). */
   busyIds?: ReadonlySet<HarnessId>;
-  /** Optional click handler for the header's Refresh button. Wired
-   *  from the dashboard, which owns the `refresh()` returned by
-   *  `useDetectedHarnesses`. When omitted (e.g. test fixtures that
-   *  only care about row rendering), the button isn't rendered. */
   onRefresh?: () => void | Promise<void>;
 }
 
@@ -159,10 +138,6 @@ export function HarnessList({
 }: HarnessListProps): JSX.Element {
   const [query, setQuery] = useState('');
 
-  // Filter first (by name/id, case-insensitive), then partition detected
-  // ahead of undetected so a user scanning the list lands on the rows
-  // they can toggle without hunting. Stable partition preserves the
-  // parent's relative order inside each group.
   const sorted = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matches = q
@@ -182,18 +157,16 @@ export function HarnessList({
   const showSearch = !loading && harnesses.length > 0;
 
   return (
-    <section data-testid="harness-list-section">
-      <header className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-          Detected harnesses
-        </h2>
+    <Card as="section" padding="sm" testid="harness-list-section">
+      <CardHeader>
+        <CardTitle>Detected harnesses</CardTitle>
         {onRefresh ? (
-          <button
-            type="button"
-            data-testid="harness-list-refresh"
+          <Button
+            variant="secondary"
+            size="sm"
+            testid="harness-list-refresh"
             disabled={loading}
             onClick={() => void onRefresh()}
-            className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
             aria-label="refresh harness detection"
             title="Re-run detection — useful when you've just installed a harness"
           >
@@ -214,16 +187,16 @@ export function HarnessList({
               />
             </svg>
             {loading ? 'Refreshing…' : 'Refresh'}
-          </button>
+          </Button>
         ) : null}
-      </header>
+      </CardHeader>
 
       {showSearch ? (
         <div className="relative mb-2">
           <Search
             size={13}
             aria-hidden="true"
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-tertiary dark:text-fg-tertiary-dark"
           />
           <input
             type="text"
@@ -233,7 +206,7 @@ export function HarnessList({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter harnesses by name…"
             aria-label="Filter harnesses by name"
-            className="w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-8 text-xs text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            className="w-full rounded-[8px] border border-hairline bg-surface-elevated py-1.5 pl-8 pr-8 text-[12px] text-fg-primary placeholder:text-fg-tertiary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark"
           />
           {hasQuery ? (
             <button
@@ -241,7 +214,7 @@ export function HarnessList({
               data-testid="harness-search-clear"
               aria-label="Clear search"
               onClick={() => setQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-tertiary hover:text-fg-primary dark:text-fg-tertiary-dark dark:hover:text-fg-primary-dark"
             >
               <X size={13} aria-hidden="true" />
             </button>
@@ -251,25 +224,28 @@ export function HarnessList({
 
       {loading ? (
         <p
-          className="text-sm text-slate-500 dark:text-slate-400"
+          className="text-[13px] text-fg-secondary dark:text-fg-secondary-dark"
           data-testid="harness-list-loading"
         >
           Detecting harnesses…
         </p>
       ) : harnesses.length === 0 ? (
-        <p className="text-sm text-slate-500 dark:text-slate-400" data-testid="harness-list-empty">
+        <p
+          className="text-[13px] text-fg-secondary dark:text-fg-secondary-dark"
+          data-testid="harness-list-empty"
+        >
           No supported harnesses detected on this machine.
         </p>
       ) : sorted.length === 0 ? (
         <p
-          className="text-sm text-slate-500 dark:text-slate-400"
+          className="text-[13px] text-fg-secondary dark:text-fg-secondary-dark"
           data-testid="harness-list-no-matches"
         >
           No harnesses match “{query.trim()}”.
         </p>
       ) : (
         <ul
-          className="divide-y divide-slate-200 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-800"
+          className="divide-y divide-hairline overflow-hidden rounded-card border border-hairline dark:divide-hairline-dark dark:border-hairline-dark"
           data-testid="harness-list"
         >
           {sorted.map((harness) => (
@@ -283,16 +259,10 @@ export function HarnessList({
           ))}
         </ul>
       )}
-    </section>
+    </Card>
   );
 }
 
-/** Brand mark for a harness. Renders the user-supplied SVG from
- *  `packages/app/src/assets/harness-logos/<id>.svg` when present;
- *  otherwise falls back to the inline monogram tile. Either path
- *  produces a 32x32 element with a transparent background that
- *  composites cleanly over light and dark row surfaces. `dimmed` greys
- *  out the logo for undetected rows to mirror the row's muted styling. */
 function HarnessLogo({ id, dimmed }: { id: HarnessId; dimmed: boolean }): JSX.Element {
   const className = `shrink-0 ${dimmed ? 'opacity-40 grayscale' : ''}`;
   const brand = brandLogo(id);
@@ -375,11 +345,15 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
   };
 
   const rowClass = harness.detected
-    ? 'flex items-center justify-between gap-4 border-l-2 border-l-emerald-400 bg-white px-4 py-3 dark:bg-slate-950'
-    : 'flex items-center justify-between gap-4 border-l-2 border-l-transparent bg-slate-50/60 px-4 py-3 dark:bg-slate-900/40';
+    ? 'flex items-center justify-between gap-4 bg-surface px-4 py-3 dark:bg-surface-dark'
+    : 'flex items-center justify-between gap-4 bg-canvas/40 px-4 py-3 dark:bg-canvas-dark/40';
   const labelClass = harness.detected
-    ? 'text-sm font-medium text-slate-900 dark:text-slate-100'
-    : 'text-sm font-medium text-slate-500 dark:text-slate-400';
+    ? 'text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark'
+    : 'text-[13px] font-medium text-fg-secondary dark:text-fg-secondary-dark';
+
+  const dot: DotStatus = harness.detected ? 'green' : 'gray';
+  const pillTone: PillTone =
+    harness.telemetry === 'on' ? 'green' : harness.telemetry === 'off' ? 'neutral' : 'amber';
 
   return (
     <li
@@ -391,19 +365,21 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
         <HarnessLogo id={harness.id} dimmed={!harness.detected} />
         <div>
           <p className={labelClass}>{HARNESS_LABELS[harness.id]}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">{detectionLabel}</p>
+          <p className="text-[11px] text-fg-tertiary dark:text-fg-tertiary-dark">
+            {detectionLabel}
+          </p>
         </div>
       </div>
-      <div className="flex flex-col items-end gap-1 text-right">
-        <span
-          className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400"
-          data-testid={`harness-telemetry-${harness.id}`}
-        >
-          {telemetryLabel}
+      <div className="flex flex-col items-end gap-1.5 text-right">
+        <span className="flex items-center gap-1.5">
+          <StatusDot status={dot} size="sm" pulse={false} />
+          <Pill tone={pillTone} testid={`harness-telemetry-${harness.id}`}>
+            {telemetryLabel}
+          </Pill>
         </span>
         {COVERAGE_NOTES[harness.id] ? (
           <a
-            className="text-xs italic text-amber-600 underline-offset-2 hover:underline dark:text-amber-400"
+            className="text-[11px] italic text-ios-orange underline-offset-2 hover:underline"
             data-testid={`harness-coverage-note-${harness.id}`}
             href={COVERAGE_NOTES[harness.id]!.docsUrl}
             target="_blank"
@@ -413,15 +389,15 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
             {COVERAGE_NOTES[harness.id]!.text}
           </a>
         ) : null}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={handleClick}
           disabled={!harness.detected || !adapterAvailable || busy}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-900 shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           aria-label={`toggle-${harness.id}`}
         >
           {buttonLabel}
-        </button>
+        </Button>
       </div>
     </li>
   );

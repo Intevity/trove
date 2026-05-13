@@ -93,7 +93,7 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
   );
 
   return (
-    <div data-testid="dashboard" className="flex h-full flex-col">
+    <div data-testid="dashboard" className="flex h-full flex-col bg-canvas dark:bg-canvas-dark">
       <AppHeader health={health} detail={detail} activeTab={activeTab} onTabChange={setActiveTab} />
 
       <main className="flex-1 min-h-0 overflow-auto">
