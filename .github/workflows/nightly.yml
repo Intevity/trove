@@ -105,8 +105,46 @@ jobs:
       - name: Vitest (TS adapter / safety / dashboard suites)
         run: pnpm test
 
-      - name: Cargo test (Rust adapter golden-file suites)
-        run: cargo test --manifest-path packages/app/src-tauri/Cargo.toml --workspace
+      # Rust coverage gate moved here from ci.yml. The instrumented build
+      # re-links the workspace from scratch; running it on every PR cost
+      # ~3-5 min per Linux PR run for a gate that flips infrequently.
+      # Nightly is plenty fast to catch coverage regressions within 24h.
+      #
+      # Threshold rationale: the safety toolkit floor is 85% lines / 80%
+      # functions (Sprint 2 plan called for 95%, but ~10–12% of lines are
+      # tracing::warn / errno branches inside fs::File::open and
+      # fs::set_permissions failure paths that require filesystem fault
+      # injection to hit). Tracked in MVP_PLAN.md.
+      #
+      # `--ignore-filename-regex` scopes to the safety toolkit so Tauri
+      # runtime surface (lib.rs, tray.rs, collector supervisor) — covered
+      # by Playwright + sidecar-mac — doesn't collapse the average.
+      #
+      # cargo-llvm-cov runs `cargo test` under instrumentation, so this
+      # step subsumes the previous "Cargo test (Rust adapter golden-file
+      # suites)" invocation.
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cargo test with llvm-cov coverage gate
+        run: |
+          cargo llvm-cov \
+            --manifest-path packages/app/src-tauri/Cargo.toml \
+            --workspace \
+            --html \
+            --output-dir coverage/rust \
+            --ignore-filename-regex '(main\.rs|lib\.rs|tray\.rs|collector/)' \
+            --fail-under-lines 85 \
+            --fail-under-functions 80
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: ignore
 
   harness-version-drift:
     name: Upstream harness version drift
