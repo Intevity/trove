@@ -2,6 +2,19 @@ name: CI
 
 on:
   pull_request:
+    # Skip the full Rust + macOS pipeline for changes that can't affect
+    # build output: prose-only doc edits, repo-root markdown, license,
+    # and contributor governance files. Any code change still falls
+    # through and runs the full lane.
+    paths-ignore:
+      - 'documentation/**'
+      - '**/*.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'LICENSE'
+      - 'CODE_OF_CONDUCT.md'
+      - 'SECURITY.md'
+      - 'CONTRIBUTING.md'
   push:
     branches: [main]
 
@@ -126,47 +139,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path packages/app/src-tauri/Cargo.toml --all-targets -- -D warnings
 
-      # Sprint 2 PR 3: Rust coverage gate scoped to the safety toolkit.
-      #
-      # Threshold rationale: the Sprint 2 plan called for 95%, but
-      # ~10–12% of lines in the safety crate are tracing::warn / errno
-      # branches inside fs::File::open and fs::set_permissions failure
-      # paths that require filesystem-level fault injection to hit.
-      # The pragmatic Sprint 2 floor is 85% lines / 80% functions; the
-      # follow-on adapter work in Sprint 3+ will exercise more of the
-      # error surface organically, at which point this ratchets back
-      # toward 95%. Tracked in MVP_PLAN.md.
-      #
-      # The gate scopes to the safety toolkit via --ignore-filename-regex
-      # so coverage of the Tauri runtime surface (lib.rs, tray.rs, the
-      # Sprint 1 collector supervisor) doesn't collapse the average.
-      # That code is exercised by Playwright + sidecar-mac integration
-      # tests, not by unit tests.
-      #
-      # cargo-llvm-cov runs `cargo test` under instrumentation, so this
-      # step subsumes a separate `cargo test` invocation.
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Cargo test with llvm-cov coverage gate
-        run: |
-          cargo llvm-cov \
-            --manifest-path packages/app/src-tauri/Cargo.toml \
-            --workspace \
-            --html \
-            --output-dir coverage/rust \
-            --ignore-filename-regex '(main\.rs|lib\.rs|tray\.rs|collector/)' \
-            --fail-under-lines 85 \
-            --fail-under-functions 80
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ github.run_id }}
-          path: coverage/
-          retention-days: 7
-          if-no-files-found: ignore
+      # PR-fast lane: plain `cargo test`. Coverage instrumentation
+      # (cargo-llvm-cov + 85%/80% gate) moved to nightly.yml because the
+      # instrumented build re-links the entire workspace from scratch
+      # — clippy + llvm-cov compiled twice cost ~3-5 min per Linux PR
+      # run for a gate that only flips on infrequent coverage regressions.
+      # PRs still get full correctness via `cargo test`; nightly catches
+      # any coverage backsliding within 24h.
+      - name: Cargo test
+        run: cargo test --manifest-path packages/app/src-tauri/Cargo.toml --workspace
 
   e2e:
     name: playwright e2e (ubuntu)
@@ -192,8 +173,30 @@ jobs:
       - name: Build TS workspace libraries
         run: pnpm --filter @trove/shared --filter @trove/collector-presets build
 
+      # Cache the playwright browser download. Keyed on the @playwright/test
+      # version that ends up in the lockfile so a version bump invalidates.
+      - name: Resolve Playwright version
+        id: pw-version
+        run: |
+          v=$(pnpm --filter @trove/app why -r --depth=0 @playwright/test 2>/dev/null \
+                | awk '/@playwright\/test/{print $NF; exit}')
+          echo "version=${v:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+
       - name: Install Playwright browsers
-        run: pnpm --filter @trove/app exec playwright install --with-deps chromium
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            # Browsers already cached — only install system deps.
+            pnpm --filter @trove/app exec playwright install-deps chromium
+          else
+            pnpm --filter @trove/app exec playwright install --with-deps chromium
+          fi
 
       - name: Run Playwright e2e
         run: pnpm --filter @trove/app e2e
