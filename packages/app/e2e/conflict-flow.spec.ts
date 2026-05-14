@@ -40,16 +40,22 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
   await installTauriMock(page, {
     // Seed a backend so the dashboard renders directly (no wizard step).
     appState: {
-      schemaVersion: 6,
-      backend: {
-        kind: 'signoz',
-        endpoint: 'ingest.us.signoz.cloud:443',
-        ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
-      },
+      schemaVersion: 7,
+      backends: [
+        {
+          id: '11111111-1111-1111-1111-111111111111',
+          backend: {
+            kind: 'signoz',
+            endpoint: 'ingest.us.signoz.cloud:443',
+            ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
+          },
+        },
+      ],
       harnesses: [],
       autoUpdateEnabled: false,
       identity: { enabled: false, source: 'auto', name: '', email: '' },
       mappings: { schemaVersion: 1, harnesses: [] },
+      telemetryObserved: {},
     },
     collectorStatus: {
       state: { kind: 'running', pid: 1234, restarts: 0 },
@@ -98,16 +104,22 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
 }) => {
   await installTauriMock(page, {
     appState: {
-      schemaVersion: 6,
-      backend: {
-        kind: 'signoz',
-        endpoint: 'ingest.us.signoz.cloud:443',
-        ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
-      },
+      schemaVersion: 7,
+      backends: [
+        {
+          id: '11111111-1111-1111-1111-111111111111',
+          backend: {
+            kind: 'signoz',
+            endpoint: 'ingest.us.signoz.cloud:443',
+            ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
+          },
+        },
+      ],
       harnesses: [],
       autoUpdateEnabled: false,
       identity: { enabled: false, source: 'auto', name: '', email: '' },
       mappings: { schemaVersion: 1, harnesses: [] },
+      telemetryObserved: {},
     },
     collectorStatus: {
       state: { kind: 'running', pid: 1234, restarts: 0 },

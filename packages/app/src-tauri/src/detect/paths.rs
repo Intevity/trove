@@ -19,6 +19,14 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::with_capacity(2);
     match harness {
         HarnessId::ClaudeCode => paths.push(home.join(".claude").join("settings.json")),
+        // Claude Desktop (formerly Cowork) is an Electron app. The
+        // OTLP exporter setup lives in the Claude admin web UI for
+        // Team/Enterprise tenants — there is no local config Trove
+        // can patch. Detection therefore relies entirely on the app
+        // bundle (macOS) or Programs-folder probe (Windows/Linux),
+        // handled outside `config_search_paths`. We still leave a
+        // hook for a per-user preferences file in case Anthropic
+        // ships one later (verified empty for now).
         HarnessId::GeminiCli => paths.push(home.join(".gemini").join("settings.json")),
         HarnessId::CodexCli => {
             paths.push(home.join(".codex").join("config.toml"));
@@ -69,7 +77,7 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
         // `read_telemetry` / `read_trove_region_present` hooks use the
         // shell-rc patch state (overlayed by the IPC layer from
         // state.json).
-        HarnessId::Aider | HarnessId::CopilotCli => {}
+        HarnessId::ClaudeDesktop | HarnessId::Aider | HarnessId::CopilotCli => {}
     }
     paths
 }
@@ -114,8 +122,14 @@ pub fn app_bundle_path(harness: HarnessId, app_root: &Path) -> Option<PathBuf> {
         return None;
     }
     match harness {
-        // Claude Code ships /Applications/Claude.app on macOS.
-        HarnessId::ClaudeCode => Some(app_root.join("Claude.app")),
+        // Anthropic's `/Applications/Claude.app` is the desktop app
+        // (formerly Cowork) that hosts the OTLP emitter. Trove's
+        // Claude Code (CLI) detection relied on this same bundle as a
+        // secondary signal; we leave that in place so an existing user
+        // who only has the desktop app still sees Claude Code detected
+        // when the `claude` CLI ships alongside, but the canonical
+        // owner of the bundle from a UX point of view is Claude Desktop.
+        HarnessId::ClaudeCode | HarnessId::ClaudeDesktop => Some(app_root.join("Claude.app")),
         // Cursor IDE ships /Applications/Cursor.app on macOS. Cursor CLI
         // (`cursor-agent`) doesn't get its own bundle — it's detected via
         // the binary on PATH instead.
@@ -263,6 +277,29 @@ mod tests {
             app_bundle_path(HarnessId::ClaudeCode, &root),
             Some(PathBuf::from("/tmp/Applications/Claude.app"))
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_desktop_app_bundle_is_the_same_claude_app() {
+        // Both Claude Code (CLI) and Claude Desktop (Electron app) ship
+        // alongside `/Applications/Claude.app` — the bundle is the same
+        // for both. Independent detection means the user sees two rows:
+        // the CLI (managed via ~/.claude/settings.json) and the desktop
+        // app (managed via the Claude admin web UI).
+        let root = PathBuf::from("/tmp/Applications");
+        assert_eq!(
+            app_bundle_path(HarnessId::ClaudeDesktop, &root),
+            Some(PathBuf::from("/tmp/Applications/Claude.app"))
+        );
+    }
+
+    #[test]
+    fn claude_desktop_has_no_config_search_paths() {
+        // Claude Desktop's OTLP setup is admin-managed; there is no
+        // local config file Trove probes for it.
+        let home = PathBuf::from("/home/dev");
+        assert!(config_search_paths(HarnessId::ClaudeDesktop, &home).is_empty());
     }
 
     #[cfg(target_os = "macos")]

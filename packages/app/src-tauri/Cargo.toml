@@ -90,6 +90,11 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 # replaced per pixel preserving alpha. `default-features = false`
 # strips the unrelated codec set; we only need PNG.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Multi-platform forwarding: each configured backend gets a stable UUID
+# id so the UI can edit/remove a specific instance and keychain account
+# names can be scoped per-instance (avoiding collision when the same
+# kind is configured more than once).
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 proptest = "1"

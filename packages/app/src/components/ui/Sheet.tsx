@@ -52,7 +52,7 @@ export function Sheet({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-[6px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-4 backdrop-blur-[6px]"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -60,10 +60,10 @@ export function Sheet({
       onClick={onClose}
     >
       <div
-        className={`flex w-full flex-col overflow-hidden rounded-modal bg-surface-elevated shadow-modal dark:bg-surface-elevated-dark dark:shadow-modal-dark ${SIZE_CLASS[size]}`}
+        className={`flex max-h-full w-full flex-col overflow-hidden rounded-modal bg-surface-elevated shadow-modal dark:bg-surface-elevated-dark dark:shadow-modal-dark ${SIZE_CLASS[size]}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-hairline px-5 py-4 dark:border-hairline-dark">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-hairline px-5 py-4 dark:border-hairline-dark">
           <div className="min-w-0">
             <h2
               id={titleId}
@@ -90,7 +90,7 @@ export function Sheet({
         <div className="min-h-0 flex-1 overflow-auto">{children}</div>
 
         {footer ? (
-          <footer className="flex items-center justify-end gap-3 border-t border-hairline px-5 py-3 dark:border-hairline-dark">
+          <footer className="flex shrink-0 items-center justify-end gap-3 border-t border-hairline px-5 py-3 dark:border-hairline-dark">
             {footer}
           </footer>
         ) : null}

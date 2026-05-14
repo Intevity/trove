@@ -15,12 +15,13 @@ const baseIdentity = { enabled: false, source: 'auto' as const, name: '', email:
 
 function appStateWithMappings(mappings: MappingState): AppState {
   return {
-    schemaVersion: 6,
-    backend: null,
+    schemaVersion: 7,
+    backends: [],
     harnesses: [],
     autoUpdateEnabled: false,
     identity: baseIdentity,
     mappings,
+    telemetryObserved: {},
   };
 }
 

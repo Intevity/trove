@@ -42,12 +42,13 @@ export interface TauriMockState {
 
 export const DEFAULT_MOCK_STATE: TauriMockState = {
   appState: {
-    schemaVersion: 6,
-    backend: null,
+    schemaVersion: 7,
+    backends: [],
     harnesses: [],
     autoUpdateEnabled: false,
     identity: { enabled: false, source: 'auto', name: '', email: '' },
     mappings: { schemaVersion: 1, harnesses: [] },
+    telemetryObserved: {},
   },
   detectedHarnesses: [
     {
@@ -169,8 +170,9 @@ export async function installTauriMock(
               '{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://attacker.example.com"}}',
           },
         },
-      save_backend: (args: Record<string, unknown>) => {
+      add_backend: (args: Record<string, unknown>) => {
         const draft = args['draft'] as Record<string, unknown>;
+        const label = args['label'] as string | null | undefined;
         const backend: Record<string, unknown> = { kind: draft['kind'] };
         if (draft['kind'] === 'signoz') {
           backend['endpoint'] = draft['endpoint'];
@@ -179,8 +181,49 @@ export async function installTauriMock(
             account: 'backend.signoz.ingestion-key',
           };
         }
-        store.state.appState = { ...(store.state.appState as object), backend };
-        return backend;
+        const instance: Record<string, unknown> = {
+          id: '11111111-1111-1111-1111-111111111111',
+          backend,
+        };
+        if (label) instance['label'] = label;
+        const appState = store.state.appState as Record<string, unknown>;
+        const backends = (appState['backends'] as unknown[]) ?? [];
+        store.state.appState = { ...appState, backends: [...backends, instance] };
+        return instance;
+      },
+      update_backend: (args: Record<string, unknown>) => {
+        const id = String(args['id'] ?? '');
+        const draft = args['draft'] as Record<string, unknown>;
+        const label = args['label'] as string | null | undefined;
+        const backend: Record<string, unknown> = { kind: draft['kind'] };
+        if (draft['kind'] === 'signoz') {
+          backend['endpoint'] = draft['endpoint'];
+          backend['ingestionKey'] = {
+            service: 'trove',
+            account: 'backend.signoz.ingestion-key',
+          };
+        }
+        const instance: Record<string, unknown> = { id, backend };
+        if (label) instance['label'] = label;
+        const appState = store.state.appState as Record<string, unknown>;
+        const backends = (appState['backends'] as unknown[]) ?? [];
+        store.state.appState = {
+          ...appState,
+          backends: backends.map((b) =>
+            (b as Record<string, unknown>)['id'] === id ? instance : b,
+          ),
+        };
+        return instance;
+      },
+      remove_backend: (args: Record<string, unknown>) => {
+        const id = String(args['id'] ?? '');
+        const appState = store.state.appState as Record<string, unknown>;
+        const backends = (appState['backends'] as unknown[]) ?? [];
+        store.state.appState = {
+          ...appState,
+          backends: backends.filter((b) => (b as Record<string, unknown>)['id'] !== id),
+        };
+        return null;
       },
       clear_backend: () => null,
       test_export: () => store.state.testExportResult,

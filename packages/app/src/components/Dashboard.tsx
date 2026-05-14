@@ -16,11 +16,15 @@ import { HarnessesTab } from './tabs/HarnessesTab.js';
 import { LogsTab } from './tabs/LogsTab.js';
 import { MappingsTab } from './tabs/MappingsTab.js';
 import { OverviewTab } from './tabs/OverviewTab.js';
+import { PlatformsTab } from './tabs/PlatformsTab.js';
 import { SettingsTab } from './tabs/SettingsTab.js';
 
 interface Props {
   appState: AppState;
-  onChangeBackend: () => void;
+  /** Jump straight to the Platforms tab — Overview surfaces this when
+   *  zero platforms are configured so the user has an obvious next
+   *  step. */
+  onOpenPlatforms: () => void;
   /** Refresh the parent's `appState` after a write (e.g. the
    *  AutoUpdate toggle persists `autoUpdateEnabled` then asks the
    *  parent to re-fetch). */
@@ -33,7 +37,7 @@ interface Props {
  *  - Harnesses — detected-harness list with enable/disable
  *  - Logs — live collector log tail (fills available height)
  *  - Settings — auto-update, identity tagging */
-export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Props): JSX.Element {
+export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Props): JSX.Element {
   const { status } = useCollectorStatus();
   const { snapshot } = useMetricsSnapshot();
   const { harnesses, loading, error, refresh } = useDetectedHarnesses();
@@ -102,7 +106,10 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
             appState={appState}
             state={state}
             metrics={metrics}
-            onChangeBackend={onChangeBackend}
+            onOpenPlatforms={() => {
+              onOpenPlatforms();
+              setActiveTab('platforms');
+            }}
           />
         )}
         {activeTab === 'harnesses' && (
@@ -116,6 +123,9 @@ export function Dashboard({ appState, onChangeBackend, onAppStateRefresh }: Prop
             onDisable={(id) => void handleDisable(id)}
             onRefresh={() => void refresh()}
           />
+        )}
+        {activeTab === 'platforms' && (
+          <PlatformsTab appState={appState} onAppStateRefresh={onAppStateRefresh} />
         )}
         {activeTab === 'mappings' && (
           <MappingsTab appState={appState} onAppStateRefresh={onAppStateRefresh} />

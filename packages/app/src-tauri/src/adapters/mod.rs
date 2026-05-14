@@ -14,6 +14,8 @@ mod common;
 
 pub mod aider;
 pub mod claude_code;
+pub mod claude_desktop;
+pub mod claude_desktop_watcher;
 pub mod cline;
 pub mod cline_watcher;
 pub mod codex_cli;

@@ -39,21 +39,30 @@ function harnessConfig(id: HarnessId, enabled: boolean): HarnessConfig {
   };
 }
 
-function appState(opts?: { backend?: AppState['backend']; harnesses?: HarnessConfig[] }): AppState {
+function appState(opts?: {
+  backends?: AppState['backends'];
+  harnesses?: HarnessConfig[];
+}): AppState {
   return {
-    schemaVersion: 6,
-    backend:
-      opts?.backend === undefined
-        ? {
-            kind: 'signoz',
-            endpoint: 'ingest.us.signoz.cloud:443',
-            ingestionKey: { service: 'trove', account: 'signoz-key' },
-          }
-        : opts.backend,
+    schemaVersion: 7,
+    backends:
+      opts?.backends === undefined
+        ? [
+            {
+              id: '11111111-1111-1111-1111-111111111111',
+              backend: {
+                kind: 'signoz',
+                endpoint: 'ingest.us.signoz.cloud:443',
+                ingestionKey: { service: 'trove', account: 'signoz-key' },
+              },
+            },
+          ]
+        : opts.backends,
     harnesses: opts?.harnesses ?? [harnessConfig('claude-code', true)],
     autoUpdateEnabled: false,
     identity: { enabled: false, source: 'auto', name: '', email: '' },
     mappings: { schemaVersion: 1, harnesses: [] },
+    telemetryObserved: {},
   };
 }
 
@@ -159,10 +168,10 @@ describe('derivePassiveDiagnostics', () => {
 
 describe('deriveBackendRow', () => {
   it('reports red when backend is not configured', () => {
-    const row = deriveBackendRow(appState({ backend: null }), null, false, null);
+    const row = deriveBackendRow(appState({ backends: [] }), null, false, null);
     expect(row.status).toBe('red');
-    expect(row.detail).toContain('no backend configured');
-    expect(row.fixTargetTestid).toBe('backend-banner');
+    expect(row.detail).toContain('no platform configured');
+    expect(row.fixTargetTestid).toBe('configure-platform-nudge');
   });
 
   it('reports amber while a check is in flight', () => {
@@ -212,7 +221,7 @@ describe('deriveBackendRow', () => {
     const row = deriveBackendRow(appState(), { status: 'failed', detail: '401' }, false, null);
     expect(row.status).toBe('red');
     expect(row.detail).toContain('failed');
-    expect(row.fixTargetTestid).toBe('backend-banner');
+    expect(row.fixTargetTestid).toBe('configure-platform-nudge');
   });
 
   it('reports red when the test export timed out and no live data is flowing', () => {

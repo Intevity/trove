@@ -99,6 +99,7 @@ mod tests {
         MetricsSnapshot {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
+            diag_log_records: std::collections::HashMap::new(),
             last_signal_at,
             scraped_at: Instant::now(),
             unreachable,

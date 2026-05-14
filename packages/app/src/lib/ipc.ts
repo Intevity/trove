@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
+  AddBackendResponse,
   ApplyMappingsResponse,
   ApplyPatchResponse,
   CheckForUpdatesResponse,
@@ -12,20 +13,21 @@ import {
   IpcError,
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
+  RemoveBackendResponse,
   ResetMappingsToDefaultsResponse,
   ResolveConflictResponse,
   ResolveIdentityPreviewResponse,
   RevertPatchResponse,
-  SaveBackendResponse,
   SetAutoUpdateEnabledResponse,
   SetIdentityAutoResponse,
   SetIdentityEnabledResponse,
   SetIdentityManualResponse,
   TestExportResponse,
+  UpdateBackendResponse,
   type AppState,
   type ApplyOptions,
-  type Backend,
   type BackendDraft,
+  type BackendInstance,
   type CollectorLogTailResponse,
   type CollectorStatus,
   type ConflictAction,
@@ -133,16 +135,35 @@ export async function getAppState(): Promise<AppState> {
   return invokeIpc(IpcCommandName.GetAppState, undefined, GetAppStateResponse);
 }
 
-/** Persist a new backend chosen by the wizard. Stores each secret
- *  inline in the OS keychain; the returned `Backend` carries
- *  `SecretRef` handles only. PR 2 of Sprint 5 wires the collector
- *  reload that follows a successful save. */
-export async function saveBackend(draft: BackendDraft): Promise<Backend> {
-  return invokeIpc(IpcCommandName.SaveBackend, { draft }, SaveBackendResponse);
+/** Append a new platform to `AppState.backends`. Stores each secret
+ *  inline in the OS keychain (under id-scoped account names) and
+ *  returns the persisted `BackendInstance` (id + non-secret fields).
+ *  Triggers a collector reload so the new exporter immediately starts
+ *  receiving signals alongside every other configured platform. */
+export async function addBackend(draft: BackendDraft, label?: string): Promise<BackendInstance> {
+  return invokeIpc(IpcCommandName.AddBackend, { draft, label }, AddBackendResponse);
 }
 
-/** Wipe the active backend: deletes every keychain entry it referenced
- *  and nulls out `state.backend`. Idempotent. */
+/** Replace the platform with `id` using a fresh draft. Secrets must be
+ *  re-supplied — we never read keychain values back into JS. Returns
+ *  the updated `BackendInstance`. */
+export async function updateBackend(
+  id: string,
+  draft: BackendDraft,
+  label?: string,
+): Promise<BackendInstance> {
+  return invokeIpc(IpcCommandName.UpdateBackend, { id, draft, label }, UpdateBackendResponse);
+}
+
+/** Remove the platform with `id` (and its keychain entries). Idempotent
+ *  when `id` is not in the list. When the list becomes empty the
+ *  collector reverts to the smoke pass-through config. */
+export async function removeBackend(id: string): Promise<void> {
+  await invokeIpc(IpcCommandName.RemoveBackend, { id }, RemoveBackendResponse);
+}
+
+/** Wipe every configured platform: deletes every keychain entry and
+ *  empties `state.backends`. Idempotent. */
 export async function clearBackend(): Promise<void> {
   await invokeIpc(IpcCommandName.ClearBackend, undefined, ClearBackendResponse);
 }

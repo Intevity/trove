@@ -231,6 +231,17 @@ impl MappingState {
         self.harnesses.iter_mut().find(|h| h.harness_id == id)
     }
 
+    /// Every configured harness mapping, in declaration order. The
+    /// codegen uses this when it needs to decide which harnesses get a
+    /// `transform/harness-tag` rule — that set is broader than
+    /// [`Self::native_synthesis_harnesses`] because hook-only Tier-1
+    /// emitters (e.g., Claude Desktop) also need their `service.name`
+    /// mapped to `harness.id`.
+    #[must_use]
+    pub fn all_harnesses(&self) -> Vec<&HarnessMapping> {
+        self.harnesses.iter().collect()
+    }
+
     /// Every harness with at least one enabled
     /// [`MappingSource::SynthesizeFromNative`] row — the set the
     /// collector codegen needs to emit `transform/tierA-*` processors

@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react';
 
-import type { BackendDraft, TestExportResult } from '@trove/shared';
+import type { BackendDraft, BackendInstance, TestExportResult } from '@trove/shared';
 
-import { TroveIpcError, saveBackend, testExport } from '../../lib/ipc.js';
+import { TroveIpcError, addBackend, testExport, updateBackend } from '../../lib/ipc.js';
 import { Card, StatusDot } from '../ui/index.js';
 import { CredentialsForm, type Kind } from './CredentialsForm.js';
 import { PresetPicker } from './PresetPicker.js';
@@ -10,13 +10,28 @@ import { TestExportStep } from './TestExportStep.js';
 
 type Step = 'pick-preset' | 'enter-creds' | 'test-export';
 
+/** "Add a new platform" vs "Edit an existing instance." In edit mode
+ *  the preset picker is skipped (kind is fixed) and the credentials
+ *  form is pre-seeded from the instance's non-secret fields; the user
+ *  still re-types every secret because the keychain values are never
+ *  read back into JS. */
+export type WizardMode = { kind: 'add' } | { kind: 'edit'; instance: BackendInstance };
+
 export interface BackendWizardProps {
+  /** Defaults to `{ kind: 'add' }` for the first-run wizard host. */
+  mode?: WizardMode;
   onComplete: () => void;
 }
 
-export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
-  const [step, setStep] = useState<Step>('pick-preset');
-  const [kind, setKind] = useState<Kind | null>(null);
+export function BackendWizard({
+  mode = { kind: 'add' },
+  onComplete,
+}: BackendWizardProps): JSX.Element {
+  const isEdit = mode.kind === 'edit';
+  const initialKind: Kind | null = isEdit ? mode.instance.backend.kind : null;
+
+  const [step, setStep] = useState<Step>(isEdit ? 'enter-creds' : 'pick-preset');
+  const [kind, setKind] = useState<Kind | null>(initialKind);
   const [draft, setDraft] = useState<BackendDraft | null>(null);
   const [testResult, setTestResult] = useState<TestExportResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -36,12 +51,17 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
   }, []);
 
   const handleBackToPicker = useCallback(() => {
+    // In edit mode there is no preset picker step; "Back" cancels.
+    if (isEdit) {
+      onComplete();
+      return;
+    }
     setStep('pick-preset');
     setKind(null);
     setDraft(null);
     setTestResult(null);
     setError(null);
-  }, []);
+  }, [isEdit, onComplete]);
 
   const handleBackToCreds = useCallback(() => {
     setStep('enter-creds');
@@ -53,7 +73,11 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      await saveBackend(draft);
+      if (isEdit) {
+        await updateBackend(mode.instance.id, draft, mode.instance.label);
+      } else {
+        await addBackend(draft);
+      }
       const result = await testExport();
       setTestResult(result);
     } catch (e) {
@@ -68,7 +92,7 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
     } finally {
       setBusy(false);
     }
-  }, [draft]);
+  }, [draft, isEdit, mode]);
 
   const handleSave = useCallback(() => {
     onComplete();
@@ -81,6 +105,7 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
         <CredentialsForm
           key={kind}
           kind={kind}
+          {...(isEdit ? { initialFields: nonSecretFieldsForEdit(mode.instance) } : {})}
           onSubmit={handleCredsSubmit}
           onBack={handleBackToPicker}
         />
@@ -107,6 +132,33 @@ export function BackendWizard({ onComplete }: BackendWizardProps): JSX.Element {
       ) : null}
     </Card>
   );
+}
+
+/** Map a stored `BackendInstance` back to the non-secret fields the
+ *  `CredentialsForm` accepts as a starting point in edit mode. Secrets
+ *  are intentionally left blank — the user re-enters them. */
+function nonSecretFieldsForEdit(instance: BackendInstance): Partial<BackendDraft> {
+  switch (instance.backend.kind) {
+    case 'signoz':
+      return { kind: 'signoz', endpoint: instance.backend.endpoint };
+    case 'honeycomb':
+      return { kind: 'honeycomb', dataset: instance.backend.dataset };
+    case 'grafana-cloud':
+      return { kind: 'grafana-cloud', endpoint: instance.backend.endpoint };
+    case 'datadog':
+      return { kind: 'datadog', site: instance.backend.site };
+    case 'otlp-generic':
+      return {
+        kind: 'otlp-generic',
+        endpoint: instance.backend.endpoint,
+        protocol: instance.backend.protocol,
+        // Headers names carry over so the user only re-types each
+        // header's secret value, not the header key.
+        headers: Object.fromEntries(Object.keys(instance.backend.headers).map((k) => [k, ''])),
+      };
+    case 'otelcol-passthrough':
+      return { kind: 'otelcol-passthrough', endpoint: instance.backend.endpoint };
+  }
 }
 
 function describeIpcError(err: TroveIpcError): string {

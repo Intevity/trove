@@ -37,6 +37,19 @@ pub fn detect(id: HarnessId, detector: &Detector) -> DetectedHarness {
         detection_method = Some(DetectionMethod::AppBundle);
     }
 
+    // Claude Desktop ships as an Electron app on macOS (Claude.app —
+    // handled above), Windows (`%LOCALAPPDATA%\AnthropicClaude\Claude.exe`
+    // or similar), and Linux (per-distro AppImage / .desktop entry).
+    // Probe those non-macOS install locations only when no signal has
+    // fired yet so we don't override an existing detection_method.
+    if matches!(id, HarnessId::ClaudeDesktop) && detection_method.is_none() {
+        if let Some(p) = probe_claude_desktop_install(&detector.home) {
+            if p.exists() {
+                detection_method = Some(DetectionMethod::AppBundle);
+            }
+        }
+    }
+
     let (telemetry, trove_region_present) = match config_path.as_deref() {
         Some(path) => (read_telemetry(id, path), read_trove_region_present(id, path)),
         None => (TelemetryStatus::Unknown, false),
@@ -69,6 +82,9 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
         // config-dir signals instead and returns None here.
         HarnessId::Aider => Some("aider"),
         HarnessId::CopilotCli => Some("gh"),
+        // Claude Desktop is a GUI Electron app; it ships no canonical
+        // PATH binary. Detection is bundle-only (handled in
+        // `app_bundle_path`).
         _ => None,
     }
 }
@@ -181,6 +197,57 @@ fn check_cursor_telemetry(text: &str) -> TelemetryStatus {
 /// whether Trove's own block is present — Trove only writes the block
 /// when it's registering the plugin). Returns `On` for either; `Off`
 /// otherwise. JSON parse failures bubble up as `Unknown`.
+/// Best-effort probe for a Claude Desktop install on Windows / Linux.
+/// macOS is covered by [`super::paths::app_bundle_path`]; this helper
+/// fills in the gap for the other two platforms. Returns the first
+/// candidate path that *might* exist; the caller still has to call
+/// `.exists()` against it. Returns `None` on macOS.
+fn probe_claude_desktop_install(home: &Path) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = home;
+        None
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // The official installer drops the app under
+        // `%LOCALAPPDATA%\AnthropicClaude\Claude.exe`. Fall back to
+        // `%LOCALAPPDATA%\Programs\Claude\Claude.exe` for the older
+        // Programs-folder layout.
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let local = std::path::PathBuf::from(local);
+            let primary = local.join("AnthropicClaude").join("Claude.exe");
+            if primary.exists() {
+                return Some(primary);
+            }
+            let fallback = local.join("Programs").join("Claude").join("Claude.exe");
+            if fallback.exists() {
+                return Some(fallback);
+            }
+        }
+        let _ = home;
+        None
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        // Linux: the AppImage typically lands under
+        // ~/.local/share/applications/ or ~/.local/bin/claude — neither
+        // is canonical, so we probe a small set of common spots.
+        for tail in [
+            ".local/share/applications/claude.desktop",
+            ".local/bin/claude-desktop",
+            ".local/share/Claude/Claude",
+            "Applications/Claude.AppImage",
+        ] {
+            let p = home.join(tail);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+}
+
 fn check_opencode_telemetry(text: &str) -> TelemetryStatus {
     if matches!(extract_region(Format::Json, text), Ok(Some(_))) {
         return TelemetryStatus::On;
@@ -702,5 +769,49 @@ mod tests {
         let result = detect(HarnessId::ClaudeCode, &detector);
         assert!(result.detected);
         assert_eq!(result.detection_method, Some(DetectionMethod::AppBundle));
+    }
+
+    // --- Claude Desktop detection -------------------------------------------
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_desktop_detected_via_app_bundle() {
+        let home = tempdir().unwrap();
+        let app_root = tempdir().unwrap();
+        fs::create_dir_all(app_root.path().join("Claude.app")).unwrap();
+
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(Vec::new()),
+            app_root: app_root.path().to_path_buf(),
+        };
+
+        let result = detect(HarnessId::ClaudeDesktop, &detector);
+        assert!(result.detected);
+        assert_eq!(result.detection_method, Some(DetectionMethod::AppBundle));
+        // Local detection doesn't know whether the audit-log tap is
+        // emitting yet, so we leave telemetry at Unknown here. The
+        // IPC overlay (live counter + sticky observation) flips it to
+        // On once the first Cowork turn lands.
+        assert_eq!(result.telemetry, TelemetryStatus::Unknown);
+        assert!(result.config_path.is_none());
+        // Claude Desktop is now adapter-backed via the audit-log tap
+        // (see `adapters::claude_desktop`). The Harnesses tab uses
+        // this to show an Enable/Disable toggle just like every other
+        // detected harness.
+        assert!(result.adapter_available);
+    }
+
+    #[test]
+    fn claude_desktop_not_detected_when_nothing_is_installed() {
+        let home = tempdir().unwrap();
+        let result = detect(HarnessId::ClaudeDesktop, &detector_for(home.path()));
+        assert!(!result.detected);
+        assert!(result.config_path.is_none());
+        // adapter_available reflects the *adapter*, not detection:
+        // even if Claude isn't installed on this machine, the
+        // adapter still exists. (Other harnesses follow the same
+        // convention.)
+        assert!(result.adapter_available);
     }
 }

@@ -19,6 +19,11 @@ export default tseslint.config(
       // bundled by OpenCode). Linting them with the app's TS config produces
       // false positives (require(), CommonJS catch params, etc.).
       'resources/**',
+      // `.claude/worktrees/<name>/` are isolated git worktrees Plumb/Claude
+      // Code creates for ephemeral sessions. Already gitignored, but ESLint
+      // doesn't honor `.gitignore`, so we exclude them here too — otherwise
+      // their vendored `resources/**` files re-trigger CommonJS lint errors.
+      '**/.claude/**',
     ],
   },
   {

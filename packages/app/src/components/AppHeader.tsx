@@ -1,4 +1,4 @@
-import { Activity, FileText, Network, Settings, Zap } from 'lucide-react';
+import { Activity, FileText, Network, Send, Settings, Zap } from 'lucide-react';
 import { motion } from 'motion/react';
 
 import type { OverallHealth } from '@trove/shared';
@@ -7,7 +7,7 @@ import troveLogo from '../assets/trove-logo.svg';
 import { overallHealthLabel } from '../lib/health.js';
 import { StatusDot, type DotStatus } from './ui/index.js';
 
-export type TabId = 'overview' | 'harnesses' | 'logs' | 'mappings' | 'settings';
+export type TabId = 'overview' | 'harnesses' | 'platforms' | 'mappings' | 'logs' | 'settings';
 
 interface TabDef {
   id: TabId;
@@ -18,6 +18,7 @@ interface TabDef {
 const TABS: readonly TabDef[] = [
   { id: 'overview', label: 'Overview', icon: Activity },
   { id: 'harnesses', label: 'Harnesses', icon: Zap },
+  { id: 'platforms', label: 'Platforms', icon: Send },
   { id: 'mappings', label: 'Mappings', icon: Network },
   { id: 'logs', label: 'Logs', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings },

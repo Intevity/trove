@@ -3,7 +3,6 @@ import { Bug } from 'lucide-react';
 
 import intevityLogo from '../assets/intevityLogoIcon.png';
 import { openBugReport } from '../lib/bugReport.js';
-import { Hairline } from './ui/index.js';
 
 const INTEVITY_URL =
   'https://www.intevity.com/?utm_source=trove&utm_medium=app&utm_campaign=built-by-footer';
@@ -32,7 +31,7 @@ export function Footer(): JSX.Element {
         <span className="font-mono tabular-nums" title={`Trove ${displayVersion}`}>
           {displayVersion}
         </span>
-        <Hairline vertical className="h-3" />
+        <span aria-hidden="true" className="h-3 w-px bg-black/15 dark:bg-white/15" />
         <button
           type="button"
           onClick={handleReportBug}

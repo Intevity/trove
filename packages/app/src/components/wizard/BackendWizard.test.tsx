@@ -21,11 +21,17 @@ describe('BackendWizard', () => {
   it('flows from preset → creds → test → save', async () => {
     const onComplete = vi.fn();
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'save_backend') {
+      if (cmd === 'add_backend') {
         return Promise.resolve({
-          kind: 'signoz',
-          endpoint: 'ingest.us.signoz.cloud:443',
-          ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
+          id: '11111111-1111-1111-1111-111111111111',
+          backend: {
+            kind: 'signoz',
+            endpoint: 'ingest.us.signoz.cloud:443',
+            ingestionKey: {
+              service: 'trove',
+              account: 'backend.signoz.ingestion-key.11111111-1111-1111-1111-111111111111',
+            },
+          },
         });
       }
       if (cmd === 'test_export') {
@@ -55,26 +61,33 @@ describe('BackendWizard', () => {
     fireEvent.click(screen.getByTestId('test-export-save'));
     expect(onComplete).toHaveBeenCalledTimes(1);
 
-    // Verify the IPC contract: save_backend received the draft;
+    // Verify the IPC contract: add_backend received the draft;
     // test_export was called with no args.
-    const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'save_backend');
+    const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'add_backend');
     expect(saveCall?.[1]).toEqual({
       draft: {
         kind: 'signoz',
         endpoint: 'ingest.us.signoz.cloud:443',
         ingestionKey: 'sk-ingest-test',
       },
+      label: undefined,
     });
     expect(invokeMock.mock.calls.find((c) => c[0] === 'test_export')).toBeDefined();
   });
 
   it('surfaces a failed test result on red and gates Save', async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'save_backend') {
+      if (cmd === 'add_backend') {
         return Promise.resolve({
-          kind: 'signoz',
-          endpoint: 'ingest.us.signoz.cloud:443',
-          ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
+          id: '11111111-1111-1111-1111-111111111111',
+          backend: {
+            kind: 'signoz',
+            endpoint: 'ingest.us.signoz.cloud:443',
+            ingestionKey: {
+              service: 'trove',
+              account: 'backend.signoz.ingestion-key.11111111-1111-1111-1111-111111111111',
+            },
+          },
         });
       }
       if (cmd === 'test_export') {
@@ -110,9 +123,9 @@ describe('BackendWizard', () => {
     expect(screen.getByTestId('preset-picker')).toBeDefined();
   });
 
-  it('surfaces ipc errors raised by save_backend', async () => {
+  it('surfaces ipc errors raised by add_backend', async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'save_backend') {
+      if (cmd === 'add_backend') {
         return Promise.reject({ kind: 'internal', reason: 'keychain locked' });
       }
       return Promise.reject(new Error(`unexpected command ${cmd}`));

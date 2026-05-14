@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import {
   AppState,
-  Backend,
+  BackendInstance,
   CollectorLogTailResponse,
   CollectorStatus,
   ConflictResolutionOutcome,
@@ -55,15 +55,30 @@ export type ResolveConflictResponse = z.infer<typeof ResolveConflictResponse>;
 export const GetAppStateResponse = AppState;
 export type GetAppStateResponse = z.infer<typeof GetAppStateResponse>;
 
-/** `save_backend` — args: { draft: BackendDraft }. Stores each secret
- *  in the OS keychain, persists the resulting Backend (with `SecretRef`
- *  handles) into `state.json`, and triggers a collector reload (PR 2).
- *  Returns the persisted Backend. */
-export const SaveBackendResponse = Backend;
-export type SaveBackendResponse = z.infer<typeof SaveBackendResponse>;
+/** `add_backend` — args: { draft: BackendDraft, label?: string }.
+ *  Appends a new platform to `AppState.backends` with a freshly-minted
+ *  UUID id, stores its secrets in the OS keychain under id-scoped
+ *  account names, then triggers a collector reload so the new exporter
+ *  is wired into every pipeline. Returns the persisted instance. */
+export const AddBackendResponse = BackendInstance;
+export type AddBackendResponse = z.infer<typeof AddBackendResponse>;
 
-/** `clear_backend` — no arguments. Deletes the keychain entries for
- *  the active backend and nulls out `state.backend`. Returns nothing. */
+/** `update_backend` — args: { id: string, draft: BackendDraft, label?: string }.
+ *  Replaces the backend with `id` using a fresh draft (the caller must
+ *  re-supply secrets since we never read keychain values back into JS).
+ *  Returns the updated instance. */
+export const UpdateBackendResponse = BackendInstance;
+export type UpdateBackendResponse = z.infer<typeof UpdateBackendResponse>;
+
+/** `remove_backend` — args: { id: string }. Deletes the named instance
+ *  and its keychain entries. Idempotent — a no-op when `id` is not in
+ *  `AppState.backends`. */
+export const RemoveBackendResponse = z.null();
+export type RemoveBackendResponse = z.infer<typeof RemoveBackendResponse>;
+
+/** `clear_backend` — no arguments. Deletes every keychain entry and
+ *  empties `state.backends`. Returns nothing. Backwards-compatible alias
+ *  retained for callers that want to wipe the whole list in one shot. */
 export const ClearBackendResponse = z.null();
 export type ClearBackendResponse = z.infer<typeof ClearBackendResponse>;
 
@@ -164,7 +179,9 @@ export const IpcCommandName = {
   RevertPatch: 'revert_patch',
   ResolveConflict: 'resolve_conflict',
   GetAppState: 'get_app_state',
-  SaveBackend: 'save_backend',
+  AddBackend: 'add_backend',
+  UpdateBackend: 'update_backend',
+  RemoveBackend: 'remove_backend',
   ClearBackend: 'clear_backend',
   TestExport: 'test_export',
   GetCollectorStatus: 'get_collector_status',

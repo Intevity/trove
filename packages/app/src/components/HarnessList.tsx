@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 
 import type { DetectedHarness, HarnessId } from '@trove/shared';
 
+import { HARNESS_SETUP_GUIDES, HarnessSetupGuideModal } from './HarnessSetupGuide.js';
 import {
   Button,
   Card,
@@ -16,6 +17,7 @@ import {
 
 const HARNESS_LABELS: Record<HarnessId, string> = {
   'claude-code': 'Claude Code',
+  'claude-desktop': 'Claude Desktop',
   'gemini-cli': 'Gemini CLI',
   'codex-cli': 'OpenAI Codex CLI',
   'qwen-code': 'Qwen Code',
@@ -44,6 +46,7 @@ interface HarnessLogoSpec {
 }
 const HARNESS_LOGOS: Record<HarnessId, HarnessLogoSpec> = {
   'claude-code': { bg: '#CC785C', mark: 'C' },
+  'claude-desktop': { bg: '#CC785C', mark: 'CD' },
   'gemini-cli': { bg: '#1A73E8', mark: 'G' },
   'codex-cli': { bg: '#10A37F', mark: 'O' },
   'qwen-code': { bg: '#FF6A00', mark: 'Q' },
@@ -92,6 +95,16 @@ interface CoverageNote {
   tooltip: string;
   docsUrl: string;
 }
+/** Small italic line shown under the telemetry Pill, for harnesses
+ *  whose detection signal isn't a host config file Trove patches.
+ *  Claude Desktop is the one entry today: there's no OTLP plumbing or
+ *  hook to install — Trove reads each Cowork session's local audit log
+ *  as it's appended and synthesises Tier A metrics in-stream. */
+const TELEMETRY_HINTS: Partial<Record<HarnessId, string>> = {
+  'claude-desktop':
+    'Detected in-stream from each Cowork session’s local audit log — no setup needed.',
+};
+
 const COVERAGE_NOTES: Partial<Record<HarnessId, CoverageNote>> = {
   'cursor-cli': {
     text: 'Partial event coverage',
@@ -137,6 +150,7 @@ export function HarnessList({
   onRefresh,
 }: HarnessListProps): JSX.Element {
   const [query, setQuery] = useState('');
+  const [openGuideFor, setOpenGuideFor] = useState<HarnessId | null>(null);
 
   const sorted = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -255,10 +269,19 @@ export function HarnessList({
               onEnable={onEnable}
               onDisable={onDisable}
               busy={busyIds?.has(harness.id) ?? false}
+              onOpenGuide={() => setOpenGuideFor(harness.id)}
             />
           ))}
         </ul>
       )}
+      {openGuideFor && HARNESS_SETUP_GUIDES[openGuideFor] ? (
+        <HarnessSetupGuideModal
+          guide={HARNESS_SETUP_GUIDES[openGuideFor]!}
+          open
+          onClose={() => setOpenGuideFor(null)}
+          testid={`harness-setup-guide-${openGuideFor}`}
+        />
+      ) : null}
     </Card>
   );
 }
@@ -317,10 +340,19 @@ interface HarnessRowProps {
   onEnable: ((id: HarnessId) => void) | undefined;
   onDisable: ((id: HarnessId) => void) | undefined;
   busy: boolean;
+  onOpenGuide: () => void;
 }
 
-function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JSX.Element {
+function HarnessRow({
+  harness,
+  onEnable,
+  onDisable,
+  busy,
+  onOpenGuide,
+}: HarnessRowProps): JSX.Element {
   const adapterAvailable = harness.adapterAvailable;
+  const guide = HARNESS_SETUP_GUIDES[harness.id];
+  const hasGuide = Boolean(guide);
   const detectionLabel = describeDetection(harness);
   const telemetryLabel = describeTelemetry(harness);
   const enabled = harness.troveRegionPresent;
@@ -330,13 +362,19 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
       ? 'Disabling…'
       : 'Enabling…'
     : !adapterAvailable
-      ? 'Adapter not yet available'
+      ? hasGuide
+        ? (guide!.buttonLabel ?? 'Set up →')
+        : 'Adapter not yet available'
       : enabled
         ? 'Disable'
         : 'Enable';
 
   const handleClick = (): void => {
-    if (!adapterAvailable || busy) return;
+    if (busy) return;
+    if (!adapterAvailable) {
+      if (hasGuide) onOpenGuide();
+      return;
+    }
     if (enabled) {
       onDisable?.(harness.id);
     } else {
@@ -377,6 +415,15 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
             {telemetryLabel}
           </Pill>
         </span>
+        {TELEMETRY_HINTS[harness.id] ? (
+          <p
+            className="max-w-[260px] text-[10.5px] italic text-fg-tertiary dark:text-fg-tertiary-dark"
+            data-testid={`harness-telemetry-hint-${harness.id}`}
+            title={TELEMETRY_HINTS[harness.id]}
+          >
+            {TELEMETRY_HINTS[harness.id]}
+          </p>
+        ) : null}
         {COVERAGE_NOTES[harness.id] ? (
           <a
             className="text-[11px] italic text-ios-orange underline-offset-2 hover:underline"
@@ -389,15 +436,24 @@ function HarnessRow({ harness, onEnable, onDisable, busy }: HarnessRowProps): JS
             {COVERAGE_NOTES[harness.id]!.text}
           </a>
         ) : null}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleClick}
-          disabled={!harness.detected || !adapterAvailable || busy}
-          aria-label={`toggle-${harness.id}`}
-        >
-          {buttonLabel}
-        </Button>
+        {/* Adapterless harnesses (e.g. Claude Desktop, which Trove
+            auto-detects via its local audit log) have no user-facing
+            action — the telemetry pill is the entire UI. Render the
+            CTA only when an adapter exists or a setup guide is
+            registered. */}
+        {adapterAvailable || hasGuide ? (
+          <Button
+            variant={!adapterAvailable && hasGuide ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={handleClick}
+            disabled={!harness.detected || busy}
+            aria-label={
+              !adapterAvailable && hasGuide ? `setup-${harness.id}` : `toggle-${harness.id}`
+            }
+          >
+            {buttonLabel}
+          </Button>
+        ) : null}
       </div>
     </li>
   );

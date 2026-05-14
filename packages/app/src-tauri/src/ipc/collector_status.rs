@@ -426,6 +426,7 @@ mod tests {
                 log_records: 0,
             },
             sent: SignalCounts::default(),
+            diag_log_records: std::collections::HashMap::new(),
             last_signal_at: Some(now - Duration::from_millis(2_500)),
             scraped_at: now - Duration::from_millis(500),
             unreachable: false,
@@ -443,6 +444,7 @@ mod tests {
         let snap = MetricsSnapshot {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
+            diag_log_records: std::collections::HashMap::new(),
             last_signal_at: None,
             scraped_at: now,
             unreachable: false,
@@ -459,6 +461,7 @@ mod tests {
         let snap = MetricsSnapshot {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
+            diag_log_records: std::collections::HashMap::new(),
             last_signal_at: None,
             scraped_at: now,
             unreachable: true,

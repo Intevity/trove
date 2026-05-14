@@ -26,6 +26,7 @@ pub use derive::{OverallHealth, derive_overall_health};
 pub use metrics_tap::{
     MetricsSnapshot, MetricsTap, MetricsTapHandle, MetricsTapOptions, SignalCounts,
 };
+pub use codegen::harness_id_suffix;
 
 /// Tauri-managed state slot for the live supervisor. Sprint 5 PR 2
 /// wraps the handle so `save_backend` / `clear_backend` can swap it

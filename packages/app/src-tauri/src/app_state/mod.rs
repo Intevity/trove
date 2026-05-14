@@ -16,28 +16,21 @@
 //! ## Migration scaffold
 //!
 //! [`load_from_dir`] reads only `schemaVersion` from the file before
-//! parsing the rest. The current schema is version `6`. Older versions
+//! parsing the rest. The current schema is version `7`. Older versions
 //! are migrated in-place by relying on `#[serde(default)]` for fields
 //! introduced in later schemas:
-//! - v2 → v6: `TrovePatch.lastWrittenRegionPayload` (Sprint 8) defaults
-//!   to `""`; `AppState.autoUpdateEnabled` (Sprint 10) defaults to
-//!   `false`; `AppState.identity` (Sprint 12) defaults to its
-//!   `Identity::default()` (off, auto, empty strings);
-//!   `AppState.mappings` (Sprint 13) defaults to the per-harness Tier A
-//!   defaults via [`crate::mappings::default_state`].
-//! - v3 → v6: `AppState.autoUpdateEnabled` defaults to `false`;
-//!   `AppState.identity` defaults to off; `AppState.mappings` defaults
-//!   to per-harness Tier A defaults.
-//! - v4 → v6: `AppState.identity` defaults to off; `AppState.mappings`
-//!   defaults to per-harness Tier A defaults.
-//! - v5 → v6: `AppState.mappings` defaults to per-harness Tier A
-//!   defaults. v5 docs in the wild come from before the Mappings UI
-//!   shipped; auto-populating means the user immediately sees Tier A
-//!   coverage rather than an empty mapping table on first relaunch.
+//! - v2..=v5 → v6: see prior fields backfilled via `#[serde(default)]`.
+//! - v6 → v7 (multi-platform refactor): the single nullable `backend`
+//!   slot is rewritten as a one-element `backends` list (or empty when
+//!   the slot was `None`), with a freshly-generated UUID id. Existing
+//!   keychain entries keep their kind-keyed account names — the legacy
+//!   single instance gets the empty-suffix variant so secrets resolve
+//!   without re-prompting the user.
+//! - All earlier versions migrate forward through the same chain.
 //!
 //! After parse, the loader re-stamps
 //! `schema_version = CURRENT_SCHEMA_VERSION` on the in-memory value so
-//! the next save persists v6 to disk. v1 was never written in the wild
+//! the next save persists v7 to disk. v1 was never written in the wild
 //! and remains an explicit error.
 
 use std::collections::BTreeMap;
@@ -57,7 +50,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 
 /// Opaque keychain handle. The actual secret never leaves the OS
 /// keychain. Mirrors `SecretRef` in `packages/shared/src/schemas.ts`.
@@ -160,6 +153,19 @@ pub enum BackendDraft {
     OtelcolPassthrough { endpoint: String },
 }
 
+/// One configured forwarding destination. Multi-platform support wraps
+/// each [`Backend`] with a stable UUID id (used to scope keychain
+/// accounts and identify the row in IPC edit/remove calls) and an
+/// optional display label. Mirrors the Zod `BackendInstance`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendInstance {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub backend: Backend,
+}
+
 /// What Trove records about each harness it has touched. Mirrors the
 /// Zod `HarnessConfig`. Reuses [`ApplyOptions`] for the `options` inline
 /// object since the shape and serde representation are identical.
@@ -220,10 +226,15 @@ pub enum IdentitySource {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {
-    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `6`). Older or
+    /// Pinned to [`CURRENT_SCHEMA_VERSION`] (currently `7`). Older or
     /// newer values surface as [`AppStateError::UnknownSchemaVersion`].
     pub schema_version: u32,
-    pub backend: Option<Backend>,
+    /// Configured forwarding destinations. Every signal is broadcast to
+    /// every configured backend (no per-platform routing rules). Empty
+    /// list means "no platforms configured" — the supervisor runs the
+    /// smoke config and waits.
+    #[serde(default)]
+    pub backends: Vec<BackendInstance>,
     pub harnesses: Vec<HarnessConfig>,
     /// Sprint 10 — opt-in auto-updater. Default `false`; flipped via the
     /// `set_auto_update_enabled` IPC command. Gates only the
@@ -246,6 +257,16 @@ pub struct AppState {
     /// See [`crate::mappings`] for the schema and per-harness defaults.
     #[serde(default = "default_mapping_state")]
     pub mappings: MappingState,
+    /// Sticky per-harness "first telemetry observed at" timestamps
+    /// (Unix seconds). Once any harness has emitted telemetry that the
+    /// collector or an adapter watcher counted, its entry lands here
+    /// and persists across app restarts. The Harnesses dashboard reads
+    /// this to keep the pill green even when the live counter resets
+    /// (e.g. process restart, harness idle for hours). Forward-compat
+    /// via `#[serde(default)]`: v7 state docs without this field load
+    /// as an empty map and accrete entries on the next observation.
+    #[serde(default)]
+    pub telemetry_observed: BTreeMap<HarnessId, i64>,
 }
 
 impl Default for AppState {
@@ -253,11 +274,12 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
-            backend: None,
+            backends: Vec::new(),
             harnesses: Vec::new(),
             auto_update_enabled: false,
             identity: Identity::default(),
             mappings: default_mapping_state(),
+            telemetry_observed: BTreeMap::new(),
         }
     }
 }
@@ -312,62 +334,33 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2..=v6 migration. Sprint 8 added
-        // `TrovePatch.lastWrittenRegionPayload` (defaults to ""); Sprint
-        // 10 added `AppState.autoUpdateEnabled` (defaults to false);
-        // Sprint 12 added `AppState.identity` (defaults to off); Sprint
-        // 13 added `AppState.mappings` (defaults to per-harness Tier A
-        // defaults). All use `#[serde(default)]`, so older documents
-        // deserialize cleanly into the current in-memory shape with
-        // sensible defaults. We re-stamp schema_version on the returned
-        // struct so the next save persists the current version to disk
-        // and the matching loader hits the current branch from then on.
-        2..=6 => {
-            // Field-shape migration: SigNoz `region` → `endpoint`. The
-            // wizard used to ask for a region code and codegen built
-            // `ingest.{region}.signoz.cloud:443`. SigNoz Cloud actually
-            // hands users a full ingestion URL, so we now collect that
-            // verbatim. Pre-existing state.json files persisted the old
-            // `region` field; reproduce the old format string exactly so
-            // a user upgrading sees the same hostname they had before
-            // (auto-recovery rule: don't silently change meaning).
-            // Independent of `schemaVersion` because the change is a
-            // field rename within one discriminated-union variant; a
-            // version bump would force older clients to refuse files
-            // that round-trip through this loader cleanly.
+        // v2..=v7 migration. Earlier sprints added autoUpdateEnabled,
+        // identity, and mappings — all use `#[serde(default)]` so older
+        // documents deserialize cleanly. v7 (multi-platform refactor)
+        // replaces the single `backend` slot with a `backends` list; the
+        // pre-deserialization shim below rewrites the legacy field when
+        // present. We re-stamp schema_version on the returned struct so
+        // the next save persists the current version to disk.
+        2..=7 => {
+            // Field-shape migrations applied at the JSON-value level so
+            // we don't need to keep parallel legacy deserializer types
+            // around. Applied in chronological order so a v2 document
+            // walks through every fix before final typed deserialization:
+            //   (1) SigNoz `region` → `endpoint` (rename inside one
+            //       discriminated-union variant).
+            //   (2) v6 → v7: `backend: Backend | null` → `backends: [BackendInstance]`.
             let mut value: serde_json::Value =
                 serde_json::from_slice(&bytes).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
                 })?;
-            if let Some(backend) = value
-                .get_mut("backend")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                let is_signoz = backend
-                    .get("kind")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("signoz");
-                if is_signoz
-                    && backend.contains_key("region")
-                    && !backend.contains_key("endpoint")
-                {
-                    let region = backend
-                        .remove("region")
-                        .and_then(|v| v.as_str().map(String::from))
-                        .unwrap_or_default();
-                    backend.insert(
-                        "endpoint".to_string(),
-                        serde_json::Value::String(format!(
-                            "ingest.{region}.signoz.cloud:443"
-                        )),
-                    );
-                }
-            }
+            migrate_signoz_region_to_endpoint(&mut value);
+            migrate_backend_to_backends(&mut value);
             let mut state: AppState =
                 serde_json::from_value(value).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
                 })?;
             state.schema_version = CURRENT_SCHEMA_VERSION;
+            backfill_missing_harness_mappings(&mut state);
             Ok(state)
         }
         // v1 was never persisted in the wild — Sprint 4 bumped the shape
@@ -375,6 +368,99 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         // Hitting this branch means the user hand-crafted a v1 file, which
         // we treat as a real bug they should escalate.
         v => Err(AppStateError::UnknownSchemaVersion(v)),
+    }
+}
+
+/// Reshape an in-memory `state.json` JSON value from the v2..=v5
+/// `SigNoz` `region`-keyed form to the current `endpoint`-keyed form.
+/// Idempotent: a no-op when the backend variant is not signoz or when
+/// the document already uses `endpoint`. The backend may live under
+/// either the legacy single-slot `backend` key or the v7+ `backends`
+/// list — both forms are handled.
+fn migrate_signoz_region_to_endpoint(value: &mut serde_json::Value) {
+    let fixup = |backend: &mut serde_json::Map<String, serde_json::Value>| {
+        let is_signoz = backend
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            == Some("signoz");
+        if is_signoz && backend.contains_key("region") && !backend.contains_key("endpoint") {
+            let region = backend
+                .remove("region")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            backend.insert(
+                "endpoint".to_string(),
+                serde_json::Value::String(format!("ingest.{region}.signoz.cloud:443")),
+            );
+        }
+    };
+    if let Some(backend) = value
+        .get_mut("backend")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        fixup(backend);
+    }
+    if let Some(list) = value
+        .get_mut("backends")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for entry in list {
+            if let Some(backend) = entry
+                .get_mut("backend")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                fixup(backend);
+            }
+        }
+    }
+}
+
+/// Reshape a v2..=v6 document's single `backend` slot into the v7
+/// `backends` list. When `backend` is non-null, wrap it in a one-element
+/// list with a freshly-generated UUID id and no label. When null or
+/// absent, materialise an empty list. Idempotent: a no-op when the
+/// document already carries `backends`.
+fn migrate_backend_to_backends(value: &mut serde_json::Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if obj.contains_key("backends") {
+        return;
+    }
+    let legacy = obj.remove("backend");
+    let list = match legacy {
+        Some(serde_json::Value::Object(backend)) => {
+            let id = uuid::Uuid::new_v4().to_string();
+            let mut instance = serde_json::Map::new();
+            instance.insert("id".to_string(), serde_json::Value::String(id));
+            instance.insert("backend".to_string(), serde_json::Value::Object(backend));
+            vec![serde_json::Value::Object(instance)]
+        }
+        _ => Vec::new(),
+    };
+    obj.insert("backends".to_string(), serde_json::Value::Array(list));
+}
+
+/// Backfill `mappings.harnesses` with the default entry for any
+/// [`HarnessId`] that's missing from a freshly-loaded state. This
+/// guarantees newly-introduced harnesses pick up their default
+/// mapping rows on the next launch without forcing a manual "Reset to
+/// defaults" click. Existing entries are left untouched so user
+/// customizations survive (the `enabled` flag, attribute tweaks, etc.).
+fn backfill_missing_harness_mappings(state: &mut AppState) {
+    let existing: std::collections::HashSet<HarnessId> = state
+        .mappings
+        .harnesses
+        .iter()
+        .map(|h| h.harness_id)
+        .collect();
+    for id in HarnessId::all() {
+        if !existing.contains(id) {
+            state
+                .mappings
+                .harnesses
+                .push(crate::mappings::defaults_for(*id));
+        }
     }
 }
 
@@ -415,6 +501,32 @@ pub fn remove_harness_in(config_dir: &Path, id: HarnessId) -> Result<(), AppStat
     save_to_dir(config_dir, &state)
 }
 
+/// Mark every id in `ids` as having been observed (Unix seconds = `now`).
+/// Idempotent: ids that already have a timestamp keep their original
+/// "first observed at"; only newly-seen ids are inserted. Returns the
+/// set of ids whose entry was added (useful for tests / logging). The
+/// save is skipped entirely when nothing changed, so the common-case
+/// poll (every harness already sticky) is a single state.json read.
+pub fn record_telemetry_observed_in(
+    config_dir: &Path,
+    ids: impl IntoIterator<Item = HarnessId>,
+    now_unix_seconds: i64,
+) -> Result<Vec<HarnessId>, AppStateError> {
+    let mut state = load_from_dir(config_dir)?;
+    let mut added = Vec::new();
+    for id in ids {
+        if let std::collections::btree_map::Entry::Vacant(e) = state.telemetry_observed.entry(id) {
+            e.insert(now_unix_seconds);
+            added.push(id);
+        }
+    }
+    if added.is_empty() {
+        return Ok(added);
+    }
+    save_to_dir(config_dir, &state)?;
+    Ok(added)
+}
+
 // ---------------------------------------------------------------------------
 // BackendDraft <-> Backend translation
 // ---------------------------------------------------------------------------
@@ -434,8 +546,15 @@ pub struct DraftSecret {
 /// when each `DraftSecret` drops). The returned `Backend` is safe to
 /// persist in `state.json` — every secret-bearing field is now a
 /// [`SecretRef`].
+///
+/// `instance_id` scopes the keychain account names so two instances of
+/// the same kind never collide on a single keychain entry. Pass the
+/// stable UUID of the [`BackendInstance`] that owns this draft.
 #[must_use]
-pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecret>) {
+pub fn drain_secrets_from_draft(
+    draft: BackendDraft,
+    instance_id: &str,
+) -> (Backend, Vec<DraftSecret>) {
     use crate::secrets::accounts;
 
     let mut secrets: Vec<DraftSecret> = Vec::new();
@@ -445,7 +564,7 @@ pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecre
             endpoint,
             ingestion_key,
         } => {
-            let account = accounts::signoz_ingestion_key();
+            let account = accounts::signoz_ingestion_key(instance_id);
             secrets.push(DraftSecret {
                 account: account.clone(),
                 value: zeroize::Zeroizing::new(ingestion_key),
@@ -456,7 +575,7 @@ pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecre
             }
         }
         BackendDraft::Honeycomb { team, dataset } => {
-            let account = accounts::honeycomb_team();
+            let account = accounts::honeycomb_team(instance_id);
             secrets.push(DraftSecret {
                 account: account.clone(),
                 value: zeroize::Zeroizing::new(team),
@@ -467,7 +586,7 @@ pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecre
             }
         }
         BackendDraft::GrafanaCloud { endpoint, auth } => {
-            let account = accounts::grafana_cloud_auth();
+            let account = accounts::grafana_cloud_auth(instance_id);
             secrets.push(DraftSecret {
                 account: account.clone(),
                 value: zeroize::Zeroizing::new(auth),
@@ -478,7 +597,7 @@ pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecre
             }
         }
         BackendDraft::Datadog { site, api_key } => {
-            let account = accounts::datadog_api_key();
+            let account = accounts::datadog_api_key(instance_id);
             secrets.push(DraftSecret {
                 account: account.clone(),
                 value: zeroize::Zeroizing::new(api_key),
@@ -495,7 +614,7 @@ pub fn drain_secrets_from_draft(draft: BackendDraft) -> (Backend, Vec<DraftSecre
         } => {
             let mut header_refs: BTreeMap<String, SecretRef> = BTreeMap::new();
             for (name, raw) in headers {
-                let account = accounts::otlp_generic_header(&name);
+                let account = accounts::otlp_generic_header(instance_id, &name);
                 secrets.push(DraftSecret {
                     account: account.clone(),
                     value: zeroize::Zeroizing::new(raw),
@@ -606,6 +725,14 @@ mod tests {
         }
     }
 
+    fn sample_signoz_instance() -> BackendInstance {
+        BackendInstance {
+            id: "11111111-1111-1111-1111-111111111111".into(),
+            label: None,
+            backend: sample_signoz(),
+        }
+    }
+
     fn sample_harness(id: HarnessId) -> HarnessConfig {
         HarnessConfig {
             id,
@@ -626,8 +753,8 @@ mod tests {
     fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 6);
-        assert!(s.backend.is_none());
+        assert_eq!(s.schema_version, 7);
+        assert!(s.backends.is_empty());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
         assert!(!s.identity.enabled);
@@ -679,11 +806,12 @@ mod tests {
     fn app_state_round_trips_through_serde() {
         let state = AppState {
             schema_version: CURRENT_SCHEMA_VERSION,
-            backend: Some(sample_signoz()),
+            backends: vec![sample_signoz_instance()],
             harnesses: vec![sample_harness(HarnessId::ClaudeCode)],
             auto_update_enabled: false,
             identity: Identity::default(),
             mappings: default_mapping_state(),
+            telemetry_observed: BTreeMap::new(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let revived: AppState = serde_json::from_str(&json).unwrap();
@@ -694,16 +822,105 @@ mod tests {
     fn app_state_round_trips_with_auto_update_enabled_true() {
         let state = AppState {
             schema_version: CURRENT_SCHEMA_VERSION,
-            backend: None,
+            backends: Vec::new(),
             harnesses: Vec::new(),
             auto_update_enabled: true,
             identity: Identity::default(),
             mappings: default_mapping_state(),
+            telemetry_observed: BTreeMap::new(),
         };
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"autoUpdateEnabled\":true"));
         let revived: AppState = serde_json::from_str(&json).unwrap();
         assert!(revived.auto_update_enabled);
+    }
+
+    #[test]
+    fn load_backfills_new_harness_mappings_from_old_v6_state() {
+        // Reproduce a real-world state.json frozen at schema v6: 10
+        // harnesses, no claude-desktop entry. After load, the migration
+        // should backfill claude-desktop with its default mapping rows
+        // so the codegen overlay knows to emit the Cowork pipeline.
+        let dir = tempfile::tempdir().unwrap();
+        let path = state_path_in(dir.path());
+        let v6 = serde_json::json!({
+            "schemaVersion": 6,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": true,
+            "identity": { "enabled": false, "source": "auto", "name": "", "email": "" },
+            "mappings": {
+                "schemaVersion": 1,
+                "harnesses": [
+                    { "harnessId": "claude-code", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "gemini-cli", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "codex-cli", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "qwen-code", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "opencode", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "cursor-ide", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "cursor-cli", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "cline", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "aider", "enabled": true, "sources": [], "costOverrides": {} },
+                    { "harnessId": "copilot-cli", "enabled": true, "sources": [], "costOverrides": {} }
+                ]
+            }
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&v6).unwrap()).unwrap();
+
+        let state = load_from_dir(dir.path()).unwrap();
+
+        let ids: Vec<HarnessId> = state
+            .mappings
+            .harnesses
+            .iter()
+            .map(|h| h.harness_id)
+            .collect();
+        assert!(
+            ids.contains(&HarnessId::ClaudeDesktop),
+            "load did not backfill claude-desktop: {ids:?}"
+        );
+        // The backfilled entry should carry the HookRule default sources
+        // (so the codegen overlay emits signaltometrics/cowork).
+        let cd = state
+            .mappings
+            .harnesses
+            .iter()
+            .find(|h| h.harness_id == HarnessId::ClaudeDesktop)
+            .unwrap();
+        assert!(!cd.sources.is_empty(), "backfilled claude-desktop has no sources");
+    }
+
+    #[test]
+    fn backfill_preserves_existing_harness_customizations() {
+        // If a v6 state has claude-code's mapping explicitly disabled,
+        // the backfill must NOT clobber that — only missing entries are
+        // populated.
+        let dir = tempfile::tempdir().unwrap();
+        let path = state_path_in(dir.path());
+        let v6 = serde_json::json!({
+            "schemaVersion": 6,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": true,
+            "identity": { "enabled": false, "source": "auto", "name": "", "email": "" },
+            "mappings": {
+                "schemaVersion": 1,
+                "harnesses": [
+                    { "harnessId": "claude-code", "enabled": false, "sources": [], "costOverrides": {} }
+                ]
+            }
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&v6).unwrap()).unwrap();
+
+        let state = load_from_dir(dir.path()).unwrap();
+
+        let cc = state
+            .mappings
+            .harnesses
+            .iter()
+            .find(|h| h.harness_id == HarnessId::ClaudeCode)
+            .unwrap();
+        assert!(!cc.enabled, "claude-code customization was clobbered");
     }
 
     #[test]
@@ -714,15 +931,93 @@ mod tests {
     }
 
     #[test]
+    fn record_telemetry_observed_inserts_new_ids_and_skips_save_when_nothing_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        // First call: inserts both, returns both.
+        let added = record_telemetry_observed_in(
+            dir.path(),
+            [HarnessId::ClaudeDesktop, HarnessId::ClaudeCode],
+            1_715_000_000,
+        )
+        .unwrap();
+        assert_eq!(added.len(), 2);
+        assert!(added.contains(&HarnessId::ClaudeDesktop));
+        assert!(added.contains(&HarnessId::ClaudeCode));
+
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(
+            state.telemetry_observed.get(&HarnessId::ClaudeDesktop),
+            Some(&1_715_000_000)
+        );
+        assert_eq!(
+            state.telemetry_observed.get(&HarnessId::ClaudeCode),
+            Some(&1_715_000_000)
+        );
+
+        // Second call with an overlapping id and a NEW id: only the new
+        // one is added; the existing timestamp is preserved.
+        let added = record_telemetry_observed_in(
+            dir.path(),
+            [HarnessId::ClaudeDesktop, HarnessId::GeminiCli],
+            1_715_999_999,
+        )
+        .unwrap();
+        assert_eq!(added, vec![HarnessId::GeminiCli]);
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(
+            state.telemetry_observed.get(&HarnessId::ClaudeDesktop),
+            Some(&1_715_000_000),
+            "existing timestamp must be preserved (sticky 'first observed')",
+        );
+        assert_eq!(
+            state.telemetry_observed.get(&HarnessId::GeminiCli),
+            Some(&1_715_999_999)
+        );
+    }
+
+    #[test]
+    fn record_telemetry_observed_is_idempotent_for_already_seen_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        record_telemetry_observed_in(dir.path(), [HarnessId::Cline], 100).unwrap();
+        // Re-record the same id with a different timestamp.
+        let added = record_telemetry_observed_in(dir.path(), [HarnessId::Cline], 200).unwrap();
+        assert!(added.is_empty(), "no new ids; nothing should be reported as added");
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.telemetry_observed.get(&HarnessId::Cline), Some(&100));
+    }
+
+    #[test]
+    fn telemetry_observed_field_is_forward_compatible_with_v7_state_lacking_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = state_path_in(dir.path());
+        // A v7 doc written before this field existed — no
+        // telemetryObserved key. Other optional fields are also
+        // omitted so the test exercises the same serde `default`
+        // pathway a real upgrade-in-place would hit.
+        std::fs::write(
+            &path,
+            br#"{
+                "schemaVersion": 7,
+                "backends": [],
+                "harnesses": []
+            }"#,
+        )
+        .unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert!(state.telemetry_observed.is_empty());
+    }
+
+    #[test]
     fn save_then_load_is_identity() {
         let dir = tempfile::tempdir().unwrap();
         let original = AppState {
             schema_version: CURRENT_SCHEMA_VERSION,
-            backend: Some(sample_signoz()),
+            backends: vec![sample_signoz_instance()],
             harnesses: vec![sample_harness(HarnessId::GeminiCli)],
             auto_update_enabled: false,
             identity: Identity::default(),
             mappings: default_mapping_state(),
+            telemetry_observed: BTreeMap::new(),
         };
         save_to_dir(dir.path(), &original).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();
@@ -798,7 +1093,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 6"));
+        assert!(on_disk.contains("\"schemaVersion\": 7"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -855,7 +1150,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 6"));
+        assert!(on_disk.contains("\"schemaVersion\": 7"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -923,7 +1218,7 @@ mod tests {
         // mappings table.
         assert_eq!(
             state.mappings.harnesses.len(),
-            10,
+            11,
             "v5→v6 migration should populate per-harness defaults",
         );
     }
@@ -947,7 +1242,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 6"));
+        assert!(on_disk.contains("\"schemaVersion\": 7"));
         assert!(on_disk.contains("\"mappings\""));
     }
 
@@ -1046,6 +1341,91 @@ mod tests {
     }
 
     #[test]
+    fn v6_state_migrates_backend_slot_into_backends_list() {
+        // v7 (multi-platform refactor) replaces the single nullable
+        // `backend` slot with a list of `BackendInstance` rows. The
+        // loader wraps the legacy single backend into a one-element
+        // list with a freshly-generated UUID id so the existing
+        // keychain entries keep resolving.
+        let dir = tempfile::tempdir().unwrap();
+        let v6_doc = br#"{
+            "schemaVersion": 6,
+            "backend": {
+                "kind": "signoz",
+                "endpoint": "ingest.us.signoz.cloud:443",
+                "ingestionKey": {
+                    "service": "trove",
+                    "account": "backend.signoz.ingestion-key"
+                }
+            },
+            "harnesses": [],
+            "autoUpdateEnabled": false,
+            "identity": {
+                "enabled": false,
+                "source": "auto",
+                "name": "",
+                "email": ""
+            }
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v6_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(state.backends.len(), 1);
+        assert!(!state.backends[0].id.is_empty());
+        match &state.backends[0].backend {
+            Backend::Signoz { endpoint, .. } => {
+                assert_eq!(endpoint, "ingest.us.signoz.cloud:443");
+            }
+            other => panic!("expected signoz, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v6_state_with_null_backend_migrates_to_empty_backends_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let v6_doc = br#"{
+            "schemaVersion": 6,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": false,
+            "identity": {
+                "enabled": false,
+                "source": "auto",
+                "name": "",
+                "email": ""
+            }
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v6_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(state.backends.is_empty());
+    }
+
+    #[test]
+    fn v6_state_round_trips_to_v7_on_disk_after_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let v6_doc = br#"{
+            "schemaVersion": 6,
+            "backend": null,
+            "harnesses": [],
+            "autoUpdateEnabled": false,
+            "identity": {
+                "enabled": false,
+                "source": "auto",
+                "name": "",
+                "email": ""
+            }
+        }"#;
+        std::fs::write(dir.path().join("state.json"), v6_doc).unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+        assert!(on_disk.contains("\"schemaVersion\": 7"));
+        assert!(on_disk.contains("\"backends\""));
+        assert!(!on_disk.contains("\"backend\":"));
+    }
+
+    #[test]
     fn signoz_region_state_is_migrated_to_endpoint_on_load() {
         // Pre-fix builds persisted SigNoz as `{"kind":"signoz","region":"X",...}`
         // and codegen built `ingest.{region}.signoz.cloud:443`. New builds
@@ -1069,12 +1449,13 @@ mod tests {
         std::fs::write(dir.path().join("state.json"), legacy_doc).unwrap();
 
         let state = load_from_dir(dir.path()).unwrap();
-        let Some(Backend::Signoz {
+        assert_eq!(state.backends.len(), 1);
+        let Backend::Signoz {
             ref endpoint,
             ref ingestion_key,
-        }) = state.backend
+        } = state.backends[0].backend
         else {
-            panic!("expected a SigNoz backend, got {:?}", state.backend);
+            panic!("expected a SigNoz backend, got {:?}", state.backends);
         };
         assert_eq!(endpoint, "ingest.us.signoz.cloud:443");
         assert_eq!(ingestion_key.account, "backend.signoz.ingestion-key");
@@ -1106,8 +1487,9 @@ mod tests {
         std::fs::write(dir.path().join("state.json"), new_doc).unwrap();
 
         let state = load_from_dir(dir.path()).unwrap();
-        let Some(Backend::Signoz { ref endpoint, .. }) = state.backend else {
-            panic!("expected a SigNoz backend, got {:?}", state.backend);
+        assert_eq!(state.backends.len(), 1);
+        let Backend::Signoz { ref endpoint, .. } = state.backends[0].backend else {
+            panic!("expected a SigNoz backend, got {:?}", state.backends);
         };
         assert_eq!(endpoint, "ingest.eu.signoz.cloud:443");
     }
