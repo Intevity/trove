@@ -9,6 +9,11 @@ export type Kind = BackendDraft['kind'];
 
 export interface CredentialsFormProps {
   kind: Kind;
+  /** Edit-mode pre-fill for non-secret fields. Secret-bearing fields
+   *  (ingestionKey, team, auth, apiKey, header values) stay blank so
+   *  the user re-enters them — we never read keychain values back into
+   *  JS. The object's `kind` must match `kind`. */
+  initialFields?: Partial<BackendDraft>;
   onSubmit: (draft: BackendDraft) => void;
   onBack: () => void;
 }
@@ -89,8 +94,22 @@ function isUrl(s: string): boolean {
   }
 }
 
-export function CredentialsForm({ kind, onSubmit, onBack }: CredentialsFormProps): JSX.Element {
-  const [draft, setDraft] = useState<BackendDraft>(() => emptyDraft(kind));
+export function CredentialsForm({
+  kind,
+  initialFields,
+  onSubmit,
+  onBack,
+}: CredentialsFormProps): JSX.Element {
+  const [draft, setDraft] = useState<BackendDraft>(() => {
+    const base = emptyDraft(kind);
+    if (initialFields && initialFields.kind === kind) {
+      // Spread the non-secret subset over the empty defaults. Secret
+      // fields stay empty (the user has to re-type), but endpoints,
+      // datasets, sites, and protocol carry over.
+      return { ...base, ...(initialFields as Partial<typeof base>) } as BackendDraft;
+    }
+    return base;
+  });
   const [error, setError] = useState<string | null>(null);
   const meta = useMemo(() => presetMetadataFor(kind), [kind]);
 

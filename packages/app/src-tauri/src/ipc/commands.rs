@@ -16,13 +16,13 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 use crate::adapters::{
-    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, cline,
-    cline_watcher, codex_cli, copilot_cli, cursor_cli, cursor_ide, gemini_cli,
-    gemini_watcher, opencode,
+    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, claude_desktop,
+    claude_desktop_watcher, cline, cline_watcher, codex_cli, copilot_cli, cursor_cli,
+    cursor_ide, gemini_cli, gemini_watcher, opencode,
     qwen_code,
 };
 use crate::app_state::{
-    self, AppState, Backend, BackendDraft, HarnessConfig, backend_secret_accounts,
+    self, AppState, BackendDraft, BackendInstance, HarnessConfig, backend_secret_accounts,
     drain_secrets_from_draft, harness_config_from_apply,
 };
 use crate::collector::codegen;
@@ -55,18 +55,73 @@ pub fn list_detected_harnesses(app: tauri::AppHandle) -> Result<Vec<DetectedHarn
         .map_err(|e| IpcError::Internal {
             reason: format!("could not resolve app_config_dir: {e}"),
         })?;
-    list_detected_harnesses_inner(&config_dir)
+    let metrics = app.state::<crate::collector::MetricsTapHandle>();
+    let mut observed: HashMap<HarnessId, u64> = metrics
+        .latest()
+        .map(|snap| {
+            snap.diag_log_records
+                .iter()
+                .filter_map(|(k, v)| harness_id_from_suffix(k).map(|id| (id, *v)))
+                .collect()
+        })
+        .unwrap_or_default();
+    // Claude Desktop's audit.jsonl watcher emits OTLP metrics directly
+    // (the diag-log pipeline only counts logs). Merge its in-process
+    // emission counter so the Harnesses card pill flips to "On" once
+    // any Cowork turn has been observed.
+    let cowork_observations = claude_desktop_watcher::observation_count();
+    if cowork_observations > 0 {
+        observed
+            .entry(HarnessId::ClaudeDesktop)
+            .and_modify(|n| *n = (*n).saturating_add(cowork_observations))
+            .or_insert(cowork_observations);
+    }
+    // Persist every freshly-observed harness so the pill stays green
+    // across restarts and idle periods. The save is skipped entirely
+    // when nothing changed, so this is a state.json read for the
+    // common-case poll.
+    let fresh_ids: Vec<HarnessId> = observed
+        .iter()
+        .filter_map(|(id, count)| if *count > 0 { Some(*id) } else { None })
+        .collect();
+    if !fresh_ids.is_empty() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+        if let Err(e) = app_state::record_telemetry_observed_in(&config_dir, fresh_ids, now) {
+            tracing::warn!(error = %e, "failed to persist telemetry observations");
+        }
+    }
+    list_detected_harnesses_inner(&config_dir, &observed)
+}
+
+/// Resolve a `harness.id` suffix (the same string used in the codegen's
+/// `filter/diag-<suffix>` processor name) back to its [`HarnessId`].
+fn harness_id_from_suffix(suffix: &str) -> Option<HarnessId> {
+    HarnessId::all()
+        .iter()
+        .copied()
+        .find(|id| crate::collector::harness_id_suffix(*id) == suffix)
 }
 
 /// Test-friendly variant of [`list_detected_harnesses`]. Operates on
 /// an explicit config directory so unit tests can lay down a synthetic
 /// `state.json` and assert the Tier 3 overlay.
-pub fn list_detected_harnesses_inner(
+///
+/// `observed_log_records` is a sparse map keyed by [`HarnessId`] of the
+/// per-harness diagnostic log-record counts pulled from the metrics tap.
+/// Any harness with a non-zero count has demonstrably emitted telemetry
+/// this collector run, so its `telemetry` field is forced to
+/// [`TelemetryStatus::On`].
+pub fn list_detected_harnesses_inner<S: ::std::hash::BuildHasher>(
     config_dir: &Path,
+    observed_log_records: &HashMap<HarnessId, u64, S>,
 ) -> Result<Vec<DetectedHarness>, IpcError> {
     let mut rows = detect_all();
     let state = app_state::load_from_dir(config_dir)?;
     overlay_tier3_state(&mut rows, &state);
+    overlay_observed_telemetry(&mut rows, observed_log_records);
+    overlay_persisted_observations(&mut rows, &state);
     Ok(rows)
 }
 
@@ -87,6 +142,50 @@ fn overlay_tier3_state(rows: &mut [DetectedHarness], state: &AppState) {
             row.trove_region_present = true;
             row.telemetry = TelemetryStatus::On;
         }
+    }
+}
+
+/// For each row, flip `telemetry` to `On` if the collector's diagnostic
+/// filter pipeline has observed any records carrying the harness's
+/// known `service.name`. This is how adapterless Tier-1 emitters (e.g.
+/// Claude Desktop, whose OTLP is admin-configured server-side and
+/// invisible to local detection) escape the default "Unknown" pill.
+fn overlay_observed_telemetry<S: ::std::hash::BuildHasher>(
+    rows: &mut [DetectedHarness],
+    observed: &HashMap<HarnessId, u64, S>,
+) {
+    for row in rows.iter_mut() {
+        if observed.get(&row.id).copied().unwrap_or(0) > 0 {
+            row.telemetry = TelemetryStatus::On;
+        }
+    }
+}
+
+/// Sticky telemetry: any harness with a `telemetry_observed` entry in
+/// `state.json` has emitted telemetry at some point in the past and we
+/// keep its pill green from then on. Survives app restarts and stays
+/// green during long idle gaps when the live counter would otherwise
+/// reset to zero. The persisted entry is the timestamp of the first
+/// observation; presence is the signal, the value is informational.
+///
+/// Exception: if the user has explicitly disabled the harness
+/// (`state.harnesses[id].enabled == false`), the sticky overlay is
+/// suppressed. The Disable click is an authoritative intent — we
+/// stopped the tap, so the pill should reflect "no longer flowing"
+/// even though we once saw it.
+fn overlay_persisted_observations(rows: &mut [DetectedHarness], state: &AppState) {
+    for row in rows.iter_mut() {
+        if !state.telemetry_observed.contains_key(&row.id) {
+            continue;
+        }
+        let explicitly_disabled = state
+            .harnesses
+            .iter()
+            .any(|h| h.id == row.id && !h.enabled);
+        if explicitly_disabled {
+            continue;
+        }
+        row.telemetry = TelemetryStatus::On;
     }
 }
 
@@ -142,6 +241,10 @@ where
         HarnessId::CopilotCli => {
             copilot_cli::preview(home, options, &resolve_resource(HarnessId::CopilotCli)?)
         }
+        // Claude Desktop is adapter-backed by an audit-log tap rather
+        // than a host-file patch. Same shape as Cline: synthetic preview,
+        // synthetic apply, no host file touched.
+        HarnessId::ClaudeDesktop => claude_desktop::preview(home, options),
     }
 }
 
@@ -201,6 +304,10 @@ pub fn apply_patch(
             let wrapper = external_resource_path(&app, HarnessId::CopilotCli)?;
             copilot_cli::apply(&home, &options, &wrapper)
         }
+        // Synthetic apply — no host file written. The IPC layer's
+        // follow-on `spawn_tier3_watcher` + `upsert_harness` calls do
+        // the real work (watcher up, state.json entry persisted).
+        HarnessId::ClaudeDesktop => claude_desktop::apply(&home, &options),
     }?;
 
     // Sprint 9 PR 2/PR 3 — Tier 3 watchers. Each enabled tier-3
@@ -553,6 +660,10 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         HarnessId::Cline => cline::revert(&home),
         HarnessId::Aider => aider::revert(&home),
         HarnessId::CopilotCli => copilot_cli::revert(&home),
+        // No host file touched on apply, so nothing to undo here.
+        // The follow-on watcher abort + state.json remove (below) does
+        // the disable work.
+        HarnessId::ClaudeDesktop => claude_desktop::revert(&home),
     }?;
 
     // Sprint 9 PR 2 — abort the Tier 3 watcher (if any) for this id.
@@ -578,30 +689,124 @@ pub fn get_app_state(app: tauri::AppHandle) -> Result<AppState, IpcError> {
     Ok(app_state::load(&app)?)
 }
 
-/// Persist a new backend chosen by the wizard. Stores each secret in
-/// the OS keychain, replaces the raw values in `draft` with [`SecretRef`]
-/// handles, writes the resulting [`Backend`] to `state.json`, then
-/// regenerates `collector.yaml` and recycles the supervised sidecar so
-/// telemetry begins flowing to the new destination.
+/// Append a new platform to [`AppState::backends`]. Stores each secret
+/// in the OS keychain (under id-scoped account names), writes the
+/// resulting [`BackendInstance`] to `state.json`, then regenerates
+/// `collector.yaml` and recycles the supervised sidecar so telemetry
+/// begins flowing to the new destination alongside every other
+/// configured platform.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
-pub fn save_backend(app: tauri::AppHandle, draft: BackendDraft) -> Result<Backend, IpcError> {
-    let (backend, secrets_to_store) = drain_secrets_from_draft(draft);
+pub fn add_backend(
+    app: tauri::AppHandle,
+    draft: BackendDraft,
+    label: Option<String>,
+) -> Result<BackendInstance, IpcError> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let (backend, secrets_to_store) = drain_secrets_from_draft(draft, &id);
 
     for secret in &secrets_to_store {
         secrets::store(&secret.account, &secret.value)?;
     }
 
+    let instance = BackendInstance {
+        id,
+        label: label.filter(|s| !s.trim().is_empty()),
+        backend,
+    };
+
     let mut state = app_state::load(&app)?;
-    state.backend = Some(backend.clone());
+    state.backends.push(instance.clone());
     app_state::save(&app, &state)?;
 
-    let rendered = codegen::render(&backend).map_err(render_error_to_ipc)?;
-    let env = unwrap_env(rendered.env);
-    let yaml = render_with_overlays(rendered.yaml, &state);
-    crate::reload_collector(&app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
+    reload_for_backends(&app, &state)?;
+    Ok(instance)
+}
 
-    Ok(backend)
+/// Replace the [`BackendInstance`] with `id` using a fresh `draft`. The
+/// caller must re-supply secrets (we never read keychain values back
+/// into JS). Wipes the prior instance's keychain entries, stores the
+/// new ones under the same id-scoped account names, and reloads the
+/// supervisor.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn update_backend(
+    app: tauri::AppHandle,
+    id: String,
+    draft: BackendDraft,
+    label: Option<String>,
+) -> Result<BackendInstance, IpcError> {
+    let mut state = app_state::load(&app)?;
+    let slot_idx = state
+        .backends
+        .iter()
+        .position(|b| b.id == id)
+        .ok_or_else(|| IpcError::Internal {
+            reason: format!("no backend with id {id}"),
+        })?;
+
+    // Wipe the prior keychain entries before re-running drain_secrets,
+    // which (for OTLP-generic) may produce a different set of account
+    // names if the header list changed.
+    for account in backend_secret_accounts(&state.backends[slot_idx].backend) {
+        secrets::delete(&account)?;
+    }
+
+    let (backend, secrets_to_store) = drain_secrets_from_draft(draft, &id);
+    for secret in &secrets_to_store {
+        secrets::store(&secret.account, &secret.value)?;
+    }
+
+    let instance = BackendInstance {
+        id: id.clone(),
+        label: label.filter(|s| !s.trim().is_empty()),
+        backend,
+    };
+    state.backends[slot_idx] = instance.clone();
+    app_state::save(&app, &state)?;
+
+    reload_for_backends(&app, &state)?;
+    Ok(instance)
+}
+
+/// Remove the [`BackendInstance`] with `id` from the configured list.
+/// Deletes its keychain entries and recycles the supervisor. When the
+/// list becomes empty the collector reverts to the smoke (pass-through)
+/// config so harnesses still have an OTLP target to talk to.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn remove_backend(app: tauri::AppHandle, id: String) -> Result<(), IpcError> {
+    let mut state = app_state::load(&app)?;
+    let slot_idx = state.backends.iter().position(|b| b.id == id);
+    let Some(idx) = slot_idx else {
+        return Ok(());
+    };
+
+    let removed = state.backends.remove(idx);
+    for account in backend_secret_accounts(&removed.backend) {
+        secrets::delete(&account)?;
+    }
+    app_state::save(&app, &state)?;
+
+    reload_for_backends(&app, &state)?;
+    Ok(())
+}
+
+/// Re-render `collector.yaml` from `state.backends` and reload the
+/// supervisor. When the list is empty, fall back to the smoke config
+/// (the `OTel` collector refuses to start with a pipeline that lists no
+/// exporters). Used by every backend-mutating IPC command.
+fn reload_for_backends(app: &tauri::AppHandle, state: &AppState) -> Result<(), IpcError> {
+    if state.backends.is_empty() {
+        crate::reload_collector(app, crate::smoke_config_yaml(), HashMap::new())
+            .map_err(|e| boot_error_to_ipc(&e))?;
+        return Ok(());
+    }
+    let rendered = codegen::render(&state.backends).map_err(render_error_to_ipc)?;
+    let env = unwrap_env(rendered.env);
+    let yaml = render_with_overlays(rendered.yaml, state);
+    crate::reload_collector(app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
+    Ok(())
 }
 
 /// Wrap a freshly rendered Collector YAML with the active
@@ -649,23 +854,26 @@ pub async fn test_export(app: tauri::AppHandle) -> Result<TestExportResult, IpcE
     Ok(result)
 }
 
-/// Wipe the active backend: delete every keychain entry it referenced,
-/// null out `state.backend`, restore the smoke `collector.yaml`, and
-/// recycle the supervisor with no env vars set. Idempotent — a no-op
-/// when no backend is currently saved.
+/// Wipe every configured backend: delete every keychain entry, empty
+/// `state.backends`, restore the smoke `collector.yaml`, and recycle
+/// the supervisor with no env vars set. Idempotent — a no-op when the
+/// list is already empty.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn clear_backend(app: tauri::AppHandle) -> Result<(), IpcError> {
     let mut state = app_state::load(&app)?;
-    if let Some(backend) = state.backend.take() {
-        for account in backend_secret_accounts(&backend) {
+    if state.backends.is_empty() {
+        return Ok(());
+    }
+    let drained: Vec<BackendInstance> = std::mem::take(&mut state.backends);
+    for inst in &drained {
+        for account in backend_secret_accounts(&inst.backend) {
             secrets::delete(&account)?;
         }
-        app_state::save(&app, &state)?;
-
-        crate::reload_collector(&app, crate::smoke_config_yaml(), HashMap::new())
-            .map_err(|e| boot_error_to_ipc(&e))?;
     }
+    app_state::save(&app, &state)?;
+    crate::reload_collector(&app, crate::smoke_config_yaml(), HashMap::new())
+        .map_err(|e| boot_error_to_ipc(&e))?;
     Ok(())
 }
 
@@ -763,10 +971,10 @@ fn reload_collector_for_identity(
     app: &tauri::AppHandle,
     state: &AppState,
 ) -> Result<(), IpcError> {
-    let Some(backend) = state.backend.as_ref() else {
+    if state.backends.is_empty() {
         return Ok(());
-    };
-    let rendered = codegen::render(backend).map_err(render_error_to_ipc)?;
+    }
+    let rendered = codegen::render(&state.backends).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
     let yaml = render_with_overlays(rendered.yaml, state);
     crate::reload_collector(app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))
@@ -800,10 +1008,10 @@ pub fn apply_mappings(
     }
     state.mappings = mappings;
     app_state::save(&app, &state)?;
-    let Some(backend) = state.backend.as_ref() else {
+    if state.backends.is_empty() {
         return Ok(());
-    };
-    let rendered = codegen::render(backend).map_err(render_error_to_ipc)?;
+    }
+    let rendered = codegen::render(&state.backends).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
     let yaml = render_with_overlays(rendered.yaml, &state);
     crate::reload_collector(&app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))
@@ -911,6 +1119,10 @@ pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         HarnessId::Cline => cline::config_path(home),
         HarnessId::Aider => aider::config_path(home),
         HarnessId::CopilotCli => copilot_cli::config_path(home),
+        // Cowork's per-session audit logs root (no Trove-managed file
+        // lives there; the Harnesses tab uses this string only for the
+        // "config path" tooltip).
+        HarnessId::ClaudeDesktop => claude_desktop::config_path(home),
     }
 }
 
@@ -949,6 +1161,11 @@ fn external_resource_path(app: &tauri::AppHandle, id: HarnessId) -> Result<PathB
 /// Non-fatal: `state.json` errors and missing-id arms are logged at
 /// `warn!`; setup continues.
 pub fn respawn_persisted_watchers(app: &tauri::AppHandle) {
+    // First-run: auto-enable Claude Desktop so its audit-log tap fires
+    // out-of-the-box. Idempotent — a no-op once any explicit user
+    // choice (enable/disable) exists in state.json.
+    autoenable_claude_desktop_on_first_run(app);
+
     let state = match app_state::load(app) {
         Ok(s) => s,
         Err(e) => {
@@ -965,6 +1182,50 @@ pub fn respawn_persisted_watchers(app: &tauri::AppHandle) {
             continue;
         }
         spawn_tier3_watcher(app, harness.id, &home, &harness.options);
+    }
+}
+
+/// On a fresh install (no Claude Desktop entry in state.json), upsert
+/// an enabled `HarnessConfig` so the regular respawn loop picks it up.
+/// Idempotent: a no-op once any entry exists (the user's explicit
+/// enable/disable choice always wins). Failures are logged at `warn!`
+/// and swallowed — the worst case is the watcher just doesn't start
+/// this boot, which the user can fix by clicking Enable.
+fn autoenable_claude_desktop_on_first_run(app: &tauri::AppHandle) {
+    let state = match app_state::load(app) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "autoenable: state.json load failed");
+            return;
+        }
+    };
+    if state
+        .harnesses
+        .iter()
+        .any(|h| h.id == HarnessId::ClaudeDesktop)
+    {
+        return;
+    }
+    let Ok(home) = home_dir() else {
+        tracing::warn!("autoenable: HOME unresolvable; skipping claude-desktop");
+        return;
+    };
+    let opts = ApplyOptions::default();
+    let patch = match claude_desktop::apply(&home, &opts) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = ?e, "autoenable: claude_desktop::apply failed");
+            return;
+        }
+    };
+    let entry = harness_config_from_apply(
+        HarnessId::ClaudeDesktop,
+        &claude_desktop::config_path(&home),
+        opts,
+        patch,
+    );
+    if let Err(e) = app_state::upsert_harness(app, entry) {
+        tracing::warn!(error = %e, "autoenable: upsert_harness failed");
     }
 }
 
@@ -1002,6 +1263,15 @@ fn spawn_tier3_watcher(
             home.join(".gemini").join("tmp"),
             options.clone(),
             gemini_watcher::DEFAULT_POLL_INTERVAL,
+        )),
+        // Claude Desktop (Cowork) has no admin-OTLP path that actually
+        // works upstream (Anthropic #39471, #38984). We tail
+        // `audit.jsonl` files Cowork writes per session and synthesise
+        // Tier A metrics directly. See `claude_desktop_watcher`.
+        HarnessId::ClaudeDesktop => Some(claude_desktop_watcher::spawn(
+            claude_desktop_watcher::sessions_root(home),
+            options.clone(),
+            claude_desktop_watcher::DEFAULT_POLL_INTERVAL,
         )),
         HarnessId::ClaudeCode
         | HarnessId::CodexCli
@@ -1086,7 +1356,7 @@ mod tests {
         // the `_inner` variant so we can exercise the AppHandle-less
         // path with a tempdir-scoped state.
         let dir = tempfile::tempdir().unwrap();
-        let result = list_detected_harnesses_inner(dir.path()).unwrap();
+        let result = list_detected_harnesses_inner(dir.path(), &HashMap::new()).unwrap();
         let expected =
             HarnessId::tier_1().len() + HarnessId::tier_2().len() + HarnessId::tier_3().len();
         assert_eq!(result.len(), expected);
@@ -1118,7 +1388,7 @@ mod tests {
         };
         upsert_harness_in(dir.path(), entry).unwrap();
 
-        let rows = list_detected_harnesses_inner(dir.path()).unwrap();
+        let rows = list_detected_harnesses_inner(dir.path(), &HashMap::new()).unwrap();
         let cline_row = rows.iter().find(|r| r.id == HarnessId::Cline).unwrap();
         assert!(cline_row.trove_region_present, "cline should overlay enabled");
         assert_eq!(cline_row.telemetry, TelemetryStatus::On);
@@ -1129,6 +1399,69 @@ mod tests {
 
         let _ = AppState::default(); // keep import live
     }
+
+    #[test]
+    fn observed_telemetry_overlay_flips_claude_desktop_pill_to_on() {
+        // Claude Desktop's local detection always reports
+        // TelemetryStatus::Unknown (admin-managed). When the diag
+        // filter pipeline has observed at least one log record carrying
+        // its service.name, the overlay forces the row to On.
+        let dir = tempfile::tempdir().unwrap();
+        let mut observed = HashMap::new();
+        observed.insert(HarnessId::ClaudeDesktop, 7u64);
+        let rows = list_detected_harnesses_inner(dir.path(), &observed).unwrap();
+        let cd = rows
+            .iter()
+            .find(|r| r.id == HarnessId::ClaudeDesktop)
+            .expect("claude-desktop row missing from detection");
+        assert_eq!(cd.telemetry, TelemetryStatus::On);
+    }
+
+    #[test]
+    fn observed_telemetry_overlay_is_a_noop_at_zero_or_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut observed = HashMap::new();
+        // Zero count = no observed records = no overlay.
+        observed.insert(HarnessId::ClaudeDesktop, 0u64);
+        let rows = list_detected_harnesses_inner(dir.path(), &observed).unwrap();
+        let cd = rows
+            .iter()
+            .find(|r| r.id == HarnessId::ClaudeDesktop)
+            .unwrap();
+        assert_eq!(cd.telemetry, TelemetryStatus::Unknown);
+    }
+
+    #[test]
+    fn persisted_observations_keep_pill_on_even_when_live_counter_is_empty() {
+        // The sticky overlay: once a harness has emitted telemetry in
+        // *any* prior session, the persisted state.json carries that
+        // forward and the pill stays green from then on — even if the
+        // live diag-log counter is empty (e.g. Trove just restarted,
+        // or the harness has been idle for hours).
+        use crate::app_state::record_telemetry_observed_in;
+        let dir = tempfile::tempdir().unwrap();
+        record_telemetry_observed_in(dir.path(), [HarnessId::ClaudeDesktop], 1_715_000_000)
+            .unwrap();
+
+        let rows = list_detected_harnesses_inner(dir.path(), &HashMap::new()).unwrap();
+        let cd = rows
+            .iter()
+            .find(|r| r.id == HarnessId::ClaudeDesktop)
+            .unwrap();
+        assert_eq!(
+            cd.telemetry,
+            TelemetryStatus::On,
+            "persisted observation must flip pill to On regardless of live counter",
+        );
+    }
+
+    // Note: a negative test "persisted observation does not flip other
+    // harnesses to On" is intentionally absent here — `detect_all()`
+    // reads the host's real config, so any unrecorded harness might
+    // legitimately be `On` on a dev machine where the user has it
+    // configured. The positive test above plus the BTreeMap-keyed
+    // overlay code (`if state.telemetry_observed.contains_key(&row.id)`)
+    // make the per-id specificity self-evident.
 
     #[test]
     fn preview_patch_inner_routes_cline_through_adapter_without_resolver() {

@@ -107,10 +107,11 @@ describe('HarnessList', () => {
     expect(screen.getByText(/\.claude\/settings\.json/)).toBeDefined();
   });
 
-  it('disables the toggle for harnesses whose adapter is not yet implemented', () => {
-    // Sprint 7 PR 3: gating is now driven by the IPC-side adapterAvailable
-    // bool. Tier 3 harnesses (cline / aider / copilot-cli) report false
-    // until Sprint 9 wires their adapters.
+  it('renders no toggle for harnesses whose adapter is not yet implemented', () => {
+    // Sprint 7 PR 3: gating is driven by the IPC-side adapterAvailable
+    // bool. When no adapter is available and no setup guide is
+    // registered, Trove shows no right-side action at all — the row
+    // is detection-only.
     render(
       <HarnessList
         harnesses={[
@@ -122,9 +123,9 @@ describe('HarnessList', () => {
         loading={false}
       />,
     );
-    const toggle = screen.getByLabelText('toggle-cline') as HTMLButtonElement;
-    expect(toggle.disabled).toBe(true);
-    expect(toggle.textContent).toBe('Adapter not yet available');
+    expect(screen.queryByLabelText('toggle-cline')).toBeNull();
+    expect(screen.queryByLabelText('setup-cline')).toBeNull();
+    expect(screen.queryByText('Adapter not yet available')).toBeNull();
   });
 
   it('disables the toggle when the harness was not detected', () => {
@@ -419,5 +420,59 @@ describe('HarnessList', () => {
     const advisory = screen.getByTestId('harness-coverage-note-copilot-cli') as HTMLAnchorElement;
     expect(advisory.textContent).toBe('Best-effort coverage');
     expect(advisory.title).toContain('gh-copilot');
+  });
+
+  it('renders an Enable toggle and the audit-log subtext for claude-desktop', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'claude-desktop',
+            adapterAvailable: true,
+            detected: true,
+            detectionMethod: 'app-bundle',
+            configPath: null,
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    // No setup button (the admin-managed affordance is gone) and no
+    // orange coverage note — Claude Desktop now uses the standard
+    // toggle button that every adapter-backed harness has.
+    expect(screen.queryByLabelText('setup-claude-desktop')).toBeNull();
+    expect(screen.queryByTestId('harness-coverage-note-claude-desktop')).toBeNull();
+    const toggle = screen.getByLabelText('toggle-claude-desktop') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    expect(['Enable', 'Disable']).toContain(toggle.textContent);
+    // A short italic line under the pill still explains *how* Trove
+    // detects Claude Desktop (the audit log).
+    const hint = screen.getByTestId('harness-telemetry-hint-claude-desktop');
+    expect(hint.textContent).toMatch(/audit log/i);
+  });
+
+  it('does not render a telemetry-detection hint on harnesses without one', () => {
+    render(<HarnessList harnesses={[row({ id: 'claude-code' })]} loading={false} />);
+    expect(screen.queryByTestId('harness-telemetry-hint-claude-code')).toBeNull();
+  });
+
+  it('renders no button for an adapterless harness with no setup guide', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'qwen-code',
+            adapterAvailable: false,
+            detected: true,
+            detectionMethod: 'path-binary',
+            configPath: null,
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    expect(screen.queryByLabelText('toggle-qwen-code')).toBeNull();
+    expect(screen.queryByLabelText('setup-qwen-code')).toBeNull();
+    expect(screen.queryByText('Adapter not yet available')).toBeNull();
   });
 });

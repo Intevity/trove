@@ -89,11 +89,16 @@ fn save_then_load_is_byte_identical_for_each_backend_kind() {
         let dir = tempdir().unwrap();
         let state = AppState {
             schema_version: trove_app::app_state::CURRENT_SCHEMA_VERSION,
-            backend: Some(backend.clone()),
+            backends: vec![trove_app::app_state::BackendInstance {
+                id: "11111111-2222-3333-4444-555566667777".to_string(),
+                label: None,
+                backend: backend.clone(),
+            }],
             harnesses: vec![sample_config(HarnessId::ClaudeCode)],
             auto_update_enabled: false,
             identity: trove_app::app_state::Identity::default(),
             mappings: trove_app::mappings::default_state(),
+            telemetry_observed: std::collections::BTreeMap::new(),
         };
         save_to_dir(dir.path(), &state).unwrap();
         let revived = load_from_dir(dir.path()).unwrap();

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import type {
-  Backend,
+  BackendInstance,
   CollectorRunState,
   MetricsSnapshotWire,
   TestExportResult,
@@ -22,17 +22,19 @@ import { SyntheticSpanHints } from './wizard/SyntheticSpanHints.js';
 interface Props {
   state: CollectorRunState | null;
   metrics: MetricsSnapshotWire | null;
-  /** Backend currently configured. Used only to label the post-success
-   *  synthetic-span hints ("Look for this in {label}"). Null on the
-   *  brief window between collector startup and backend save, in which
-   *  case the hints fall back to a generic preamble. */
-  backend?: Backend | null | undefined;
+  /** Configured forwarding destinations. Used only by the synthetic-span
+   *  hints ("Look for this in {label}") after a successful Test Pipeline
+   *  run — the hint targets the first configured backend since the
+   *  payload is broadcast to every destination. Empty list falls back
+   *  to a generic preamble. */
+  backends: BackendInstance[];
 }
 
 /** Collector / sidecar dashboard tile. Surfaces the supervisor's
  *  current run state, summary counts from the metrics tap, and the
  *  "Test Pipeline" affordance the e2e exercises. */
-export function SidecarPanel({ state, metrics, backend }: Props): JSX.Element {
+export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
+  const primaryBackendKind = backends[0]?.backend.kind;
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TestExportResult | null>(null);
   const [error, setError] = useState<TroveIpcError | null>(null);
@@ -111,7 +113,7 @@ export function SidecarPanel({ state, metrics, backend }: Props): JSX.Element {
             <span className="text-[12px] text-ios-red">Test failed: {error.cause.kind}</span>
           ) : null}
         </div>
-        {result?.status === 'ok' ? <SyntheticSpanHints backendKind={backend?.kind} /> : null}
+        {result?.status === 'ok' ? <SyntheticSpanHints backendKind={primaryBackendKind} /> : null}
       </div>
     </Card>
   );

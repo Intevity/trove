@@ -214,34 +214,52 @@ fn set_owner_only_perms(_p: &Path) -> std::io::Result<()> {
 /// Canonical account-name builders. Centralised here so the wizard UI,
 /// codegen, `clear_backend`, and tests can't drift on the convention.
 pub mod accounts {
-    /// `backend.signoz.ingestion-key`.
-    #[must_use]
-    pub fn signoz_ingestion_key() -> String {
-        "backend.signoz.ingestion-key".to_string()
+    /// Append a backend-instance scope to the legacy account base name.
+    /// The empty id maps to the pre-multi-platform form (e.g.
+    /// `backend.signoz.ingestion-key`) so a v6 state.json round-trips
+    /// without re-prompting the user for credentials. Non-empty ids
+    /// produce `<base>.<id>` (e.g.
+    /// `backend.signoz.ingestion-key.7a3f4b2c-...`) so two instances of
+    /// the same kind never collide on a single keychain entry.
+    fn scope(base: &str, instance_id: &str) -> String {
+        if instance_id.is_empty() {
+            base.to_string()
+        } else {
+            format!("{base}.{instance_id}")
+        }
     }
 
-    /// `backend.honeycomb.team`.
+    /// `backend.signoz.ingestion-key[.<id>]`.
     #[must_use]
-    pub fn honeycomb_team() -> String {
-        "backend.honeycomb.team".to_string()
+    pub fn signoz_ingestion_key(instance_id: &str) -> String {
+        scope("backend.signoz.ingestion-key", instance_id)
     }
 
-    /// `backend.grafana-cloud.auth`.
+    /// `backend.honeycomb.team[.<id>]`.
     #[must_use]
-    pub fn grafana_cloud_auth() -> String {
-        "backend.grafana-cloud.auth".to_string()
+    pub fn honeycomb_team(instance_id: &str) -> String {
+        scope("backend.honeycomb.team", instance_id)
     }
 
-    /// `backend.datadog.api-key`.
+    /// `backend.grafana-cloud.auth[.<id>]`.
     #[must_use]
-    pub fn datadog_api_key() -> String {
-        "backend.datadog.api-key".to_string()
+    pub fn grafana_cloud_auth(instance_id: &str) -> String {
+        scope("backend.grafana-cloud.auth", instance_id)
     }
 
-    /// `backend.otlp-generic.header.<headerName>`.
+    /// `backend.datadog.api-key[.<id>]`.
     #[must_use]
-    pub fn otlp_generic_header(header_name: &str) -> String {
-        format!("backend.otlp-generic.header.{header_name}")
+    pub fn datadog_api_key(instance_id: &str) -> String {
+        scope("backend.datadog.api-key", instance_id)
+    }
+
+    /// `backend.otlp-generic.header.<headerName>[.<id>]`.
+    #[must_use]
+    pub fn otlp_generic_header(instance_id: &str, header_name: &str) -> String {
+        scope(
+            &format!("backend.otlp-generic.header.{header_name}"),
+            instance_id,
+        )
     }
 }
 
@@ -252,13 +270,27 @@ mod tests {
 
     #[test]
     fn account_names_match_documented_convention() {
-        assert_eq!(accounts::signoz_ingestion_key(), "backend.signoz.ingestion-key");
-        assert_eq!(accounts::honeycomb_team(), "backend.honeycomb.team");
-        assert_eq!(accounts::grafana_cloud_auth(), "backend.grafana-cloud.auth");
-        assert_eq!(accounts::datadog_api_key(), "backend.datadog.api-key");
+        // Empty instance id reproduces the pre-multi-platform format
+        // so v6 migration leaves existing keychain entries intact.
+        assert_eq!(accounts::signoz_ingestion_key(""), "backend.signoz.ingestion-key");
+        assert_eq!(accounts::honeycomb_team(""), "backend.honeycomb.team");
+        assert_eq!(accounts::grafana_cloud_auth(""), "backend.grafana-cloud.auth");
+        assert_eq!(accounts::datadog_api_key(""), "backend.datadog.api-key");
         assert_eq!(
-            accounts::otlp_generic_header("x-honeycomb-team"),
+            accounts::otlp_generic_header("", "x-honeycomb-team"),
             "backend.otlp-generic.header.x-honeycomb-team"
+        );
+
+        // Non-empty instance id scopes each account per-instance so two
+        // instances of the same kind never overwrite each other.
+        let id = "11111111-1111-1111-1111-111111111111";
+        assert_eq!(
+            accounts::signoz_ingestion_key(id),
+            "backend.signoz.ingestion-key.11111111-1111-1111-1111-111111111111"
+        );
+        assert_eq!(
+            accounts::otlp_generic_header(id, "x-honeycomb-team"),
+            "backend.otlp-generic.header.x-honeycomb-team.11111111-1111-1111-1111-111111111111"
         );
     }
 

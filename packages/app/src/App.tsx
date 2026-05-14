@@ -3,7 +3,6 @@ import { useCallback } from 'react';
 import { BackendWizard } from './components/wizard/BackendWizard.js';
 import { Dashboard } from './components/Dashboard.js';
 import { useAppState } from './hooks/useAppState.js';
-import { clearBackend } from './lib/ipc.js';
 
 export function App(): JSX.Element {
   const { appState, loading: appStateLoading, refresh: refreshAppState } = useAppState();
@@ -12,15 +11,10 @@ export function App(): JSX.Element {
     await refreshAppState();
   }, [refreshAppState]);
 
-  const handleChangeBackend = useCallback(async () => {
-    await clearBackend();
-    await refreshAppState();
-  }, [refreshAppState]);
-
-  // First-run: the wizard takes over until a backend is saved. We wait
-  // for state.json to load so we don't flash the wizard for users with
-  // an existing backend.
-  const showWizard = !appStateLoading && (appState === null || appState.backend === null);
+  // First-run: the wizard takes over until the user has configured at
+  // least one platform. We wait for state.json to load so we don't
+  // flash the wizard for users who already have a destination saved.
+  const showWizard = !appStateLoading && (appState === null || appState.backends.length === 0);
 
   if (showWizard) {
     return (
@@ -32,7 +26,8 @@ export function App(): JSX.Element {
             </h1>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
               Pick a destination for your AI coding harness telemetry — Trove forwards every harness
-              through a local collector to whichever backend you choose.
+              through a local collector to whichever backend you choose. You can add more platforms
+              later from the Platforms tab.
             </p>
           </header>
 
@@ -47,7 +42,11 @@ export function App(): JSX.Element {
   return (
     <Dashboard
       appState={appState}
-      onChangeBackend={() => void handleChangeBackend()}
+      // No-op deep link target — Dashboard switches its own activeTab
+      // when the user wants to manage platforms; this callback exists
+      // so OverviewTab can request the jump without owning the tab
+      // state.
+      onOpenPlatforms={() => {}}
       onAppStateRefresh={() => void refreshAppState()}
     />
   );

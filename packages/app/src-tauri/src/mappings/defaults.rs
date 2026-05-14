@@ -31,6 +31,7 @@ pub fn default_state() -> MappingState {
         schema_version: MAPPING_SCHEMA_VERSION,
         harnesses: vec![
             defaults_for(HarnessId::ClaudeCode),
+            defaults_for(HarnessId::ClaudeDesktop),
             defaults_for(HarnessId::GeminiCli),
             defaults_for(HarnessId::CodexCli),
             defaults_for(HarnessId::QwenCode),
@@ -50,6 +51,7 @@ pub fn default_state() -> MappingState {
 pub fn defaults_for(id: HarnessId) -> HarnessMapping {
     match id {
         HarnessId::ClaudeCode => claude_code_defaults(),
+        HarnessId::ClaudeDesktop => claude_desktop_defaults(),
         HarnessId::GeminiCli => gemini_cli_defaults(),
         HarnessId::CodexCli => codex_cli_defaults(),
         HarnessId::QwenCode => qwen_code_defaults(),
@@ -109,6 +111,124 @@ fn claude_code_defaults() -> HarnessMapping {
                 // rewrites the attribute key inline.
                 attribute_map: BTreeMap::from([("type".into(), "direction".into())]),
                 inject_attributes: BTreeMap::new(),
+            },
+        ],
+        cost_overrides: BTreeMap::new(),
+    }
+}
+
+/// Claude Desktop (formerly Claude Cowork) emits OTLP **logs**, not
+/// counters, to the user's admin-configured collector endpoint. The
+/// five documented event names (see
+/// <https://claude.com/docs/cowork/monitoring#events>) map cleanly onto
+/// Tier A; rows below are keyed by the literal `event.name` Anthropic
+/// emits. A downstream collector connector (e.g. `count`,
+/// `signaltometrics`, or a Trove-shipped logs-to-metrics processor)
+/// will translate these events into the Tier A counter/histogram
+/// surface — until that wiring lands the rows are documentation that
+/// also lets the user toggle individual events on/off without re-typing.
+///
+/// Anti-double-count rules:
+///
+/// - `user_prompt` and `api_request` both correlate with one chat turn.
+///   `api_request` carries the model + token totals + duration, so it's
+///   the canonical `chat.turn` emitter; `user_prompt` therefore emits
+///   `None` (informational only).
+/// - `tool_decision` and `tool_result` both fire per tool invocation
+///   (permission grant, then execution). `tool_result` is the canonical
+///   `tool.call` emitter; `tool_decision` emits `None`.
+fn claude_desktop_defaults() -> HarnessMapping {
+    HarnessMapping {
+        harness_id: HarnessId::ClaudeDesktop,
+        enabled: true,
+        sources: vec![
+            // `user_prompt` — fires when the user submits a prompt.
+            // Documented attributes: prompt_length, prompt. Suppressed
+            // here so api_request is the sole `chat.turn` emitter.
+            MappingSource::HookRule {
+                when: "user_prompt".into(),
+                emit: None,
+            },
+            // `tool_result` — fires on every tool execution completion.
+            // Documented attributes: tool_name, success, duration_ms,
+            // error, decision_type, decision_source,
+            // tool_result_size_bytes, mcp_server_scope, tool_parameters,
+            // tool_input. Maps onto Tier A `events` as the canonical
+            // tool.call emitter; tool_decision is suppressed to avoid
+            // double-counting.
+            MappingSource::HookRule {
+                when: "tool_result".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Events,
+                    attributes: attr("event.kind", "tool.call"),
+                }),
+            },
+            // `api_request` — fires on every successful Claude API call.
+            // Documented attributes: model, cost_usd, duration_ms,
+            // input_tokens, output_tokens, cache_read_tokens,
+            // cache_creation_tokens, speed. Fans out into four Tier A
+            // metrics:
+            //
+            //   1. events (event.kind=chat.turn) — one chat turn per
+            //      successful api_request.
+            //   2. tokens — the connector inspects input_tokens /
+            //      output_tokens / cache_* and emits one Tier A row
+            //      per direction (direction=input/output). The
+            //      validator allows multiple HookRule rows for the
+            //      same `when` as long as each targets a distinct
+            //      TierAMetric, so all four lines below coexist.
+            //   3. cost.usd (cost.method=exact) — Anthropic computes
+            //      the per-call cost server-side, so the Tier A
+            //      cost.method is `exact` (not the estimated rate-card
+            //      math Trove does for other harnesses).
+            //   4. turn.duration — duration_ms / 1000 → seconds.
+            MappingSource::HookRule {
+                when: "api_request".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Events,
+                    attributes: attr("event.kind", "chat.turn"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "api_request".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens,
+                    attributes: BTreeMap::new(),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "api_request".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::CostUsd,
+                    attributes: attr("cost.method", "exact"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "api_request".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::TurnDuration,
+                    attributes: attr("event.kind", "chat.turn"),
+                }),
+            },
+            // `api_error` — fires on Claude API failures. Documented
+            // attributes: model, error, status_code, duration_ms,
+            // attempt, speed. Maps onto Tier A `errors`; the
+            // logs-to-metrics connector will classify error.kind from
+            // status_code at conversion time (4xx → policy/auth, 429
+            // → rate_limit, 5xx → network, otherwise unknown).
+            MappingSource::HookRule {
+                when: "api_error".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Errors,
+                    attributes: attr("error.kind", "unknown"),
+                }),
+            },
+            // `tool_decision` — fires when a tool's permission is
+            // granted or denied. Suppressed here because tool_result
+            // already counts the tool.call.
+            MappingSource::HookRule {
+                when: "tool_decision".into(),
+                emit: None,
             },
         ],
         cost_overrides: BTreeMap::new(),
@@ -443,6 +563,7 @@ mod tests {
             ids,
             vec![
                 HarnessId::ClaudeCode,
+                HarnessId::ClaudeDesktop,
                 HarnessId::GeminiCli,
                 HarnessId::CodexCli,
                 HarnessId::QwenCode,
@@ -454,6 +575,105 @@ mod tests {
                 HarnessId::CopilotCli,
             ]
         );
+    }
+
+    #[test]
+    fn claude_desktop_maps_all_five_documented_events() {
+        // Every event name Anthropic's Cowork docs list appears in the
+        // mapping table — either as a real emitter or as an explicit
+        // None to document why it's suppressed.
+        let m = claude_desktop_defaults();
+        let whens: Vec<&str> = m
+            .sources
+            .iter()
+            .filter_map(|s| match s {
+                MappingSource::HookRule { when, .. } => Some(when.as_str()),
+                MappingSource::SynthesizeFromNative { .. } => None,
+            })
+            .collect();
+        for expected in [
+            "user_prompt",
+            "tool_result",
+            "api_request",
+            "api_error",
+            "tool_decision",
+        ] {
+            assert!(
+                whens.contains(&expected),
+                "claude-desktop defaults missing `{expected}`; got {whens:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn claude_desktop_api_request_fans_into_four_tier_a_metrics() {
+        // api_request carries model + token totals + cost_usd + duration
+        // — verify the four-row fan-out one-by-one. The validator
+        // enforces (when, metric) uniqueness, so collision-by-mistake
+        // is caught at apply time.
+        let m = claude_desktop_defaults();
+        let emitted_metrics: Vec<TierAMetric> = m
+            .sources
+            .iter()
+            .filter_map(|s| match s {
+                MappingSource::HookRule {
+                    when,
+                    emit: Some(e),
+                } if when == "api_request" => Some(e.metric),
+                _ => None,
+            })
+            .collect();
+        for expected in [
+            TierAMetric::Events,
+            TierAMetric::Tokens,
+            TierAMetric::CostUsd,
+            TierAMetric::TurnDuration,
+        ] {
+            assert!(
+                emitted_metrics.contains(&expected),
+                "api_request should fan into {expected:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn claude_desktop_suppresses_user_prompt_and_tool_decision() {
+        // Both events fire alongside a "canonical" emitter (api_request
+        // for chat.turn, tool_result for tool.call). Emitting them too
+        // would double-count chat turns and tool invocations.
+        let m = claude_desktop_defaults();
+        for when in ["user_prompt", "tool_decision"] {
+            let row = m
+                .sources
+                .iter()
+                .find(|s| matches!(s, MappingSource::HookRule { when: w, .. } if w == when))
+                .unwrap_or_else(|| panic!("missing row for {when}"));
+            match row {
+                MappingSource::HookRule { emit, .. } => {
+                    assert!(emit.is_none(), "{when} should be informational (emit None)");
+                }
+                MappingSource::SynthesizeFromNative { .. } => panic!("expected HookRule"),
+            }
+        }
+    }
+
+    #[test]
+    fn claude_desktop_default_passes_validation() {
+        // The mapping has multiple HookRule rows keyed by `api_request`
+        // each targeting a distinct TierAMetric. The validator must
+        // accept this shape — `same_when_different_metric_is_allowed`
+        // pins the contract; this test pins it specifically for
+        // claude-desktop so a future regression doesn't slip through.
+        let mut state = MappingState {
+            schema_version: MAPPING_SCHEMA_VERSION,
+            harnesses: vec![claude_desktop_defaults()],
+        };
+        super::super::validate::validate(&state).expect("claude-desktop defaults must validate");
+
+        // Also confirm the full default_state validates as a sanity
+        // check that ClaudeDesktop doesn't conflict with siblings.
+        state = default_state();
+        super::super::validate::validate(&state).expect("default_state must validate");
     }
 
     #[test]

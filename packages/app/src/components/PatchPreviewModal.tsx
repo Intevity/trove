@@ -9,6 +9,7 @@ import { Button, Sheet, StatusDot } from './ui/index.js';
 
 const HARNESS_LABELS: Record<HarnessId, string> = {
   'claude-code': 'Claude Code',
+  'claude-desktop': 'Claude Desktop',
   'gemini-cli': 'Gemini CLI',
   'codex-cli': 'OpenAI Codex CLI',
   'qwen-code': 'Qwen Code',

@@ -3,6 +3,7 @@ import { z } from 'zod';
 /** Discriminated union of supported AI coding harness identifiers (MVP set). */
 export const HarnessId = z.enum([
   'claude-code',
+  'claude-desktop',
   'gemini-cli',
   'codex-cli',
   'qwen-code',
@@ -109,8 +110,11 @@ export type PatchFormat = z.infer<typeof PatchFormat>;
 export const TrovePatch = z.object({
   /** sha256 hex of the canonical payload at last write. */
   managedBlockHash: z.string().min(1),
-  /** sha256 hex of the entire host file at last write. */
-  fileHashAtLastWrite: z.string().min(1),
+  /** sha256 hex of the entire host file at last write. Adapterless
+   *  harnesses (Cline, Claude Desktop) don't patch a host file and
+   *  persist this as the empty string — the conflict UI keys off
+   *  `lastWrittenRegionPayload` instead. */
+  fileHashAtLastWrite: z.string(),
   /** Format of the host config file. */
   format: PatchFormat,
   /** Canonical region payload string Trove wrote at last apply.
@@ -256,24 +260,40 @@ export const MappingState = z.object({
 });
 export type MappingState = z.infer<typeof MappingState>;
 
+/** One configured forwarding destination. Wraps a {@link Backend} with
+ *  a stable identifier and an optional display label so the UI can
+ *  edit/remove a specific instance without depending on `kind` (two
+ *  instances of the same kind are valid). The Rust mirror is
+ *  `app_state::BackendInstance`; both sides use UUID v4 string ids. */
+export const BackendInstance = z.object({
+  id: z.string().min(1),
+  label: z.string().optional(),
+  backend: Backend,
+});
+export type BackendInstance = z.infer<typeof BackendInstance>;
+
 /** Persisted application state. Secrets are referenced via SecretRef only.
- *  Schema version bumped to 6 in Sprint 13 alongside the new
- *  `mappings` field that holds per-harness Tier A configuration.
- *  Migrations are centralised in the Rust loader: v2..=v5 documents
- *  load cleanly via `serde(default)` defaults and the loader re-stamps
- *  schemaVersion to 6 so the next save persists v6 to disk. Older
- *  consumers cannot read v6 files. The `mappings` field on the TS side
- *  is `optional()` so an older AppState document validated through
- *  this Zod schema doesn't reject — but the Rust loader auto-populates
- *  it with per-harness defaults via `crate::mappings::default_state`,
- *  so any state the IPC layer hands back already has it set. */
+ *  Schema version bumped to 7 alongside the multi-platform refactor:
+ *  the single nullable `backend` slot is replaced with a list of
+ *  `backends`, broadcasting every signal to every configured platform.
+ *  Migrations are centralised in the Rust loader: v6 documents with a
+ *  single backend are auto-wrapped into a one-element list; the
+ *  loader re-stamps schemaVersion to 7 so the next save persists v7 to
+ *  disk. Older consumers cannot read v7 files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(6),
-  backend: Backend.nullable(),
+  schemaVersion: z.literal(7),
+  backends: z.array(BackendInstance),
   harnesses: z.array(HarnessConfig),
   autoUpdateEnabled: z.boolean(),
   identity: Identity,
   mappings: MappingState,
+  /** Sticky "first telemetry observed at" timestamp (Unix seconds)
+   *  per harness id. Once any harness has emitted telemetry, its entry
+   *  lands here and persists across restarts; the Harnesses dashboard
+   *  reads this to keep the pill green even when the live counter
+   *  resets. Defaults to `{}` for forward-compat with v7 docs written
+   *  before this field existed. */
+  telemetryObserved: z.record(HarnessId, z.number().int()).default({}),
 });
 export type AppState = z.infer<typeof AppState>;
 

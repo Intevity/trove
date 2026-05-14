@@ -36,9 +36,10 @@ import {
 } from './schemas.js';
 
 describe('HarnessId', () => {
-  it('accepts each MVP harness identifier', () => {
+  it('accepts each supported harness identifier', () => {
     for (const id of [
       'claude-code',
+      'claude-desktop',
       'gemini-cli',
       'codex-cli',
       'qwen-code',
@@ -226,6 +227,19 @@ describe('TrovePatch', () => {
     expect(() => TrovePatch.parse({ managedBlockHash: 'x', format: 'json' })).toThrow();
     expect(() => TrovePatch.parse({ managedBlockHash: 'x', fileHashAtLastWrite: 'y' })).toThrow();
   });
+
+  it('accepts an empty fileHashAtLastWrite for adapterless harnesses', () => {
+    // Cline and Claude Desktop don't patch a host file, so their
+    // `fileHashAtLastWrite` is persisted as the empty string. The
+    // conflict UI keys off `lastWrittenRegionPayload` for those rows.
+    const patch = {
+      managedBlockHash: 'a'.repeat(64),
+      fileHashAtLastWrite: '',
+      format: 'json' as const,
+      lastWrittenRegionPayload: '{"harness":"claude-desktop"}',
+    };
+    expect(TrovePatch.parse(patch).fileHashAtLastWrite).toBe('');
+  });
 });
 
 describe('ConflictState', () => {
@@ -304,17 +318,17 @@ describe('AppState', () => {
     harnesses: [],
   };
 
-  it('parses a minimal v6 state with default identity off and empty mappings', () => {
+  it('parses a minimal v7 state with default identity off and empty mappings', () => {
     const parsed = AppState.parse({
-      schemaVersion: 6,
-      backend: null,
+      schemaVersion: 7,
+      backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
       identity: defaultIdentity,
       mappings: emptyMappings,
     });
-    expect(parsed.schemaVersion).toBe(6);
-    expect(parsed.backend).toBeNull();
+    expect(parsed.schemaVersion).toBe(7);
+    expect(parsed.backends).toEqual([]);
     expect(parsed.harnesses).toEqual([]);
     expect(parsed.autoUpdateEnabled).toBe(false);
     expect(parsed.identity.enabled).toBe(false);
@@ -322,10 +336,10 @@ describe('AppState', () => {
     expect(parsed.mappings.harnesses).toEqual([]);
   });
 
-  it('parses a v6 state with autoUpdateEnabled true and identity tagging on', () => {
+  it('parses a v7 state with autoUpdateEnabled true and identity tagging on', () => {
     const parsed = AppState.parse({
-      schemaVersion: 6,
-      backend: null,
+      schemaVersion: 7,
+      backends: [],
       harnesses: [],
       autoUpdateEnabled: true,
       identity: {
@@ -343,10 +357,10 @@ describe('AppState', () => {
     expect(parsed.identity.email).toBe('ada@example.com');
   });
 
-  it('parses a v6 state with populated mapping rows', () => {
+  it('parses a v7 state with populated mapping rows', () => {
     const parsed = AppState.parse({
-      schemaVersion: 6,
-      backend: null,
+      schemaVersion: 7,
+      backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
       identity: defaultIdentity,
@@ -415,15 +429,16 @@ describe('AppState', () => {
     ).toThrow();
   });
 
-  it('rejects v2/v3/v4/v5 wire payloads (Rust loader migrates them to v6 before IPC return)', () => {
-    // Sprint 13 bumped the on-the-wire schema to v6. Earlier payloads are
-    // an internal concern of `app_state::load_from_dir`; they should never
-    // appear at the IPC boundary, so the Zod literal rejects them outright.
-    for (const schemaVersion of [2, 3, 4, 5]) {
+  it('rejects v2..v6 wire payloads (Rust loader migrates them to v7 before IPC return)', () => {
+    // The multi-platform refactor bumped the on-the-wire schema to v7.
+    // Earlier payloads are an internal concern of
+    // `app_state::load_from_dir`; they should never appear at the IPC
+    // boundary, so the Zod literal rejects them outright.
+    for (const schemaVersion of [2, 3, 4, 5, 6]) {
       expect(() =>
         AppState.parse({
           schemaVersion,
-          backend: null,
+          backends: [],
           harnesses: [],
           autoUpdateEnabled: false,
           identity: defaultIdentity,

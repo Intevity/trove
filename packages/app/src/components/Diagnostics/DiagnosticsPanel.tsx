@@ -318,16 +318,17 @@ export function deriveBackendRow(
   busy: boolean,
   metrics: MetricsSnapshotWire | null,
 ): DiagnosticRow {
-  const fix = 'backend-banner';
-  if (!appState.backend) {
+  const fix = 'configure-platform-nudge';
+  if (appState.backends.length === 0) {
     return {
       id: 'backend',
       label: 'Backend',
       status: 'red',
-      detail: 'no backend configured — finish the wizard',
+      detail: 'no platform configured — open Platforms to add one',
       fixTargetTestid: fix,
     };
   }
+  const primaryLabel = backendsLabel(appState.backends);
   if (busy) {
     return {
       id: 'backend',
@@ -350,9 +351,7 @@ export function deriveBackendRow(
       id: 'backend',
       label: 'Backend',
       status: 'green',
-      detail: `${appState.backend.kind} — exporting (${sentTotal} record${
-        sentTotal === 1 ? '' : 's'
-      } sent)`,
+      detail: `${primaryLabel} — exporting (${sentTotal} record${sentTotal === 1 ? '' : 's'} sent)`,
       fixTargetTestid: null,
     };
   }
@@ -378,7 +377,18 @@ export function deriveBackendRow(
     id: 'backend',
     label: 'Backend',
     status: 'amber',
-    detail: `${appState.backend.kind} configured — awaiting first export to verify`,
+    detail: `${primaryLabel} configured — awaiting first export to verify`,
     fixTargetTestid: null,
   };
+}
+
+/** Describe the configured forwarding list in one line. Single
+ *  destinations get their kind verbatim; multi-platform configurations
+ *  collapse into "{first.kind} + N more" so the diagnostic stays
+ *  compact. */
+function backendsLabel(backends: AppState['backends']): string {
+  if (backends.length === 0) return 'none';
+  const first = backends[0]!.backend.kind;
+  if (backends.length === 1) return first;
+  return `${first} + ${backends.length - 1} more`;
 }

@@ -24,7 +24,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 
-use trove_app::app_state::{Backend, OtlpProtocol, SecretRef};
+use trove_app::app_state::{Backend, BackendInstance, OtlpProtocol, SecretRef};
 use trove_app::collector::codegen::{render_with, RenderError, RenderedCollector};
 use trove_app::collector::{
     CollectorState, Supervisor, SupervisorChannels, SupervisorHandle, SupervisorOptions,
@@ -220,7 +220,12 @@ fn otlp_generic_at(endpoint: &str) -> Backend {
 }
 
 fn render(backend: &Backend) -> RenderedCollector {
-    render_with(backend, &empty_resolver).expect("render with empty resolver")
+    let list = vec![BackendInstance {
+        id: "11111111-2222-3333-4444-555566667777".to_string(),
+        label: None,
+        backend: backend.clone(),
+    }];
+    render_with(&list, &empty_resolver).expect("render with empty resolver")
 }
 
 fn write_yaml_and_env(
@@ -372,7 +377,7 @@ async fn datadog_preset_dials_through_stub() {
     run_test_export_for_preset(
         backend,
         stub_url.clone(),
-        &[("TROVE_DATADOG_ENDPOINT", stub_url.clone())],
+        &[("TROVE_DATADOG_ENDPOINT_11111111", stub_url.clone())],
         &[],
     )
     .await;
@@ -391,7 +396,7 @@ async fn grafana_cloud_preset_dials_through_stub() {
     run_test_export_for_preset(
         backend,
         stub_url.clone(),
-        &[("TROVE_GRAFANA_ENDPOINT", stub_url.clone())],
+        &[("TROVE_GRAFANA_ENDPOINT_11111111", stub_url.clone())],
         &[],
     )
     .await;
@@ -436,11 +441,14 @@ fn signoz_preset_renders_canonical_yaml_and_env_keys() {
         ingestion_key: SecretRef::for_account("backend.signoz.ingestion-key"),
     };
     let rendered = render(&backend);
-    assert!(rendered.yaml.contains("otlp/signoz"));
-    assert!(rendered.yaml.contains("${env:TROVE_SIGNOZ_ENDPOINT}"));
-    assert!(rendered.yaml.contains("${env:TROVE_SIGNOZ_INGESTION_KEY}"));
-    assert!(rendered.env.contains_key("TROVE_SIGNOZ_ENDPOINT"));
-    assert!(rendered.env.contains_key("TROVE_SIGNOZ_INGESTION_KEY"));
+    // Multi-platform renderer suffixes exporter names and env vars with
+    // the first 8 hex chars of the instance id (`11111111` from
+    // wrap_single's fixed UUID).
+    assert!(rendered.yaml.contains("otlp/signoz-11111111"));
+    assert!(rendered.yaml.contains("${env:TROVE_SIGNOZ_ENDPOINT_11111111}"));
+    assert!(rendered.yaml.contains("${env:TROVE_SIGNOZ_INGESTION_KEY_11111111}"));
+    assert!(rendered.env.contains_key("TROVE_SIGNOZ_ENDPOINT_11111111"));
+    assert!(rendered.env.contains_key("TROVE_SIGNOZ_INGESTION_KEY_11111111"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

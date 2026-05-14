@@ -206,6 +206,13 @@ fn separate_harnesses_get_separate_entries() {
     assert_eq!(state.harnesses.len(), 4);
     let ids: Vec<HarnessId> = state.harnesses.iter().map(|h| h.id).collect();
     for id in HarnessId::tier_1() {
+        // ClaudeDesktop is adapter-backed by the audit-log tap but
+        // this test didn't apply it (it only applies the four
+        // explicitly named above). It's auto-enabled by a separate
+        // path on first app boot, not by `apply_then_persist`.
+        if *id == HarnessId::ClaudeDesktop {
+            continue;
+        }
         assert!(ids.contains(id), "missing entry for {id:?}");
     }
 }

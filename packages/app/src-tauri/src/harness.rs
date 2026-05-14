@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 /// Discriminated union of supported AI coding harness identifiers.
 /// Sprint 3 only detects + patches Tier 1 (the first four variants).
 /// Tier 2 detection lands in Sprint 7; Tier 3 in Sprint 9.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HarnessId {
     ClaudeCode,
+    ClaudeDesktop,
     GeminiCli,
     CodexCli,
     QwenCode,
@@ -31,6 +32,7 @@ impl HarnessId {
     pub fn label(self) -> &'static str {
         match self {
             Self::ClaudeCode => "Claude Code",
+            Self::ClaudeDesktop => "Claude Desktop",
             Self::GeminiCli => "Gemini CLI",
             Self::CodexCli => "OpenAI Codex CLI",
             Self::QwenCode => "Qwen Code",
@@ -44,12 +46,36 @@ impl HarnessId {
     }
 
     /// Tier 1 harnesses — those with native OTEL the configurator knows
-    /// how to detect today. Sprint 3 ships detection for all four;
-    /// Sprint 3 ships *adapters* for the first two only.
+    /// how to detect today. Sprint 3 ships detection + adapters for the
+    /// Every supported harness id, in declaration order. Convenient for
+    /// iteration where the tier split isn't relevant (e.g. mapping a
+    /// codegen-name suffix back to a [`HarnessId`]).
+    #[must_use]
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::ClaudeCode,
+            Self::ClaudeDesktop,
+            Self::GeminiCli,
+            Self::CodexCli,
+            Self::QwenCode,
+            Self::Opencode,
+            Self::CursorIde,
+            Self::CursorCli,
+            Self::Cline,
+            Self::Aider,
+            Self::CopilotCli,
+        ]
+    }
+
+    /// first batch; Claude Desktop (formerly Claude Cowork) is detected
+    /// here too but has no local adapter because its OTLP setup lives in
+    /// the Claude admin web UI rather than a config file Trove can patch.
+    /// See [`Self::has_adapter`].
     #[must_use]
     pub fn tier_1() -> &'static [Self] {
         &[
             Self::ClaudeCode,
+            Self::ClaudeDesktop,
             Self::GeminiCli,
             Self::CodexCli,
             Self::QwenCode,
@@ -74,12 +100,15 @@ impl HarnessId {
         &[Self::Cline, Self::Aider, Self::CopilotCli]
     }
 
-    /// Whether Trove currently ships an adapter for this harness. As of
-    /// Sprint 9 PR 3, every supported harness (all of Tier 1 / 2 / 3)
-    /// has an adapter — this returns `true` unconditionally for now
-    /// but the per-tier slice membership stays in case a future
-    /// adapter is removed or temporarily disabled. The dashboard
-    /// surfaces this as part of each `DetectedHarness` row.
+    /// Whether Trove currently ships an adapter for this harness. The
+    /// dashboard surfaces this as part of each `DetectedHarness` row —
+    /// `false` disables the Enable/Disable toggle so the user knows the
+    /// row is informational only.
+    ///
+    /// Every Tier 1 / 2 / 3 harness has an adapter today. Claude Desktop
+    /// is adapter-backed by an audit-log tap (no host config to patch),
+    /// modelled on Cline's `preview`/`apply`/`revert` shape; toggling
+    /// the row simply spawns or aborts the tap.
     #[must_use]
     pub fn has_adapter(self) -> bool {
         Self::tier_1().contains(&self)
@@ -112,11 +141,12 @@ mod tests {
     }
 
     #[test]
-    fn tier_1_contains_first_four_variants_in_plan_order() {
+    fn tier_1_lists_native_otel_harnesses_in_plan_order() {
         assert_eq!(
             HarnessId::tier_1(),
             &[
                 HarnessId::ClaudeCode,
+                HarnessId::ClaudeDesktop,
                 HarnessId::GeminiCli,
                 HarnessId::CodexCli,
                 HarnessId::QwenCode,
@@ -173,6 +203,17 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_is_tier_1_and_now_adapter_backed_via_audit_log_tap() {
+        // Sprint refactor: ClaudeDesktop moved from "no adapter" to
+        // adapter-backed by an audit.jsonl tap (the watcher in
+        // `adapters::claude_desktop_watcher`). It still has no host
+        // config to patch, but the user can Enable/Disable the tap the
+        // same way as every other harness.
+        assert!(HarnessId::tier_1().contains(&HarnessId::ClaudeDesktop));
+        assert!(HarnessId::ClaudeDesktop.has_adapter());
+    }
+
+    #[test]
     fn has_adapter_is_true_for_every_tier_3_harness_after_pr_3() {
         for id in HarnessId::tier_3() {
             assert!(id.has_adapter(), "{id:?} should have an adapter at PR 3");
@@ -185,6 +226,7 @@ mod tests {
         // documents that no variant returns an empty string by accident.
         for id in [
             HarnessId::ClaudeCode,
+            HarnessId::ClaudeDesktop,
             HarnessId::GeminiCli,
             HarnessId::CodexCli,
             HarnessId::QwenCode,

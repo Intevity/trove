@@ -2,17 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   TroveIpcError,
+  addBackend,
   applyPatch,
   checkForUpdates,
   clearBackend,
   getAppState,
   listDetectedHarnesses,
   previewPatch,
+  removeBackend,
   resolveConflict,
   revertPatch,
-  saveBackend,
   setAutoUpdateEnabled,
   testExport,
+  updateBackend,
 } from './ipc.js';
 
 const invokeMock = vi.fn();
@@ -183,8 +185,8 @@ describe('getAppState', () => {
 
   it('returns the parsed AppState on success', async () => {
     const expected = {
-      schemaVersion: 6 as const,
-      backend: null,
+      schemaVersion: 7 as const,
+      backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
       identity: { enabled: false, source: 'auto' as const, name: '', email: '' },
@@ -192,6 +194,7 @@ describe('getAppState', () => {
         schemaVersion: 1 as const,
         harnesses: [],
       },
+      telemetryObserved: {},
     };
     invokeMock.mockResolvedValueOnce(expected);
     const result = await getAppState();
@@ -205,33 +208,85 @@ describe('getAppState', () => {
   });
 });
 
-describe('saveBackend', () => {
+describe('addBackend', () => {
   beforeEach(() => {
     invokeMock.mockReset();
   });
 
-  it('forwards the draft and parses the persisted Backend', async () => {
+  it('forwards the draft and parses the persisted BackendInstance', async () => {
     const draft = {
       kind: 'signoz' as const,
       endpoint: 'ingest.us.signoz.cloud:443',
       ingestionKey: 'raw-secret-DO-NOT-PERSIST',
     };
     const persisted = {
-      kind: 'signoz' as const,
-      endpoint: 'ingest.us.signoz.cloud:443',
-      ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
+      id: '11111111-1111-1111-1111-111111111111',
+      backend: {
+        kind: 'signoz' as const,
+        endpoint: 'ingest.us.signoz.cloud:443',
+        ingestionKey: {
+          service: 'trove',
+          account: 'backend.signoz.ingestion-key.11111111-1111-1111-1111-111111111111',
+        },
+      },
     };
     invokeMock.mockResolvedValueOnce(persisted);
-    const result = await saveBackend(draft);
+    const result = await addBackend(draft);
     expect(result).toEqual(persisted);
-    expect(invokeMock).toHaveBeenCalledWith('save_backend', { draft });
+    expect(invokeMock).toHaveBeenCalledWith('add_backend', { draft, label: undefined });
   });
 
   it('rethrows internal errors as TroveIpcError', async () => {
     invokeMock.mockRejectedValueOnce({ kind: 'internal', reason: 'keychain locked' });
     await expect(
-      saveBackend({ kind: 'datadog', site: 'datadoghq.eu', apiKey: 'k' }),
+      addBackend({ kind: 'datadog', site: 'datadoghq.eu', apiKey: 'k' }),
     ).rejects.toBeInstanceOf(TroveIpcError);
+  });
+});
+
+describe('updateBackend', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('forwards the id + draft and parses the persisted instance', async () => {
+    const id = '22222222-2222-2222-2222-222222222222';
+    const draft = {
+      kind: 'datadog' as const,
+      site: 'datadoghq.eu',
+      apiKey: 'fresh-key',
+    };
+    const persisted = {
+      id,
+      backend: {
+        kind: 'datadog' as const,
+        site: 'datadoghq.eu',
+        apiKey: {
+          service: 'trove',
+          account: `backend.datadog.api-key.${id}`,
+        },
+      },
+    };
+    invokeMock.mockResolvedValueOnce(persisted);
+    const result = await updateBackend(id, draft);
+    expect(result).toEqual(persisted);
+    expect(invokeMock).toHaveBeenCalledWith('update_backend', {
+      id,
+      draft,
+      label: undefined,
+    });
+  });
+});
+
+describe('removeBackend', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('resolves on null and forwards the id', async () => {
+    invokeMock.mockResolvedValueOnce(null);
+    await expect(removeBackend('abc')).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith('remove_backend', { id: 'abc' });
   });
 });
 

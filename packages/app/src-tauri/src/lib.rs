@@ -60,7 +60,9 @@ pub fn run() {
             ipc::commands::revert_patch,
             ipc::commands::resolve_conflict,
             ipc::commands::get_app_state,
-            ipc::commands::save_backend,
+            ipc::commands::add_backend,
+            ipc::commands::update_backend,
+            ipc::commands::remove_backend,
             ipc::commands::clear_backend,
             ipc::commands::test_export,
             ipc::commands::set_auto_update_enabled,
@@ -109,7 +111,7 @@ pub fn run() {
 
             // Always register a SupervisorState slot — even when the
             // initial spawn fails (missing sidecar binary in dev, etc.).
-            // save_backend can spawn a fresh supervisor into the empty
+            // add_backend can spawn a fresh supervisor into the empty
             // slot once the user finishes the wizard.
             let initial = match start_collector(app.handle(), channels.clone()) {
                 Ok(handle) => Some(handle),
@@ -240,8 +242,9 @@ fn start_collector(
 }
 
 /// Atomically rewrite `collector.yaml` and recycle the supervised
-/// sidecar. Sprint 5 PR 2 calls this from `save_backend` (with codegen
-/// output) and `clear_backend` (with the smoke config). The shutdown
+/// sidecar. Called from `add_backend`/`update_backend`/`remove_backend`
+/// (with codegen output) and `clear_backend` (with the smoke config when
+/// the list goes empty). The shutdown
 /// of the previous child happens outside the [`SupervisorState`] lock
 /// so we never hold a [`std::sync::Mutex`] across an await.
 ///
@@ -408,60 +411,62 @@ fn prepare_collector_runtime(
 ) -> Result<(PathBuf, std::collections::HashMap<String, String>), CollectorBootError> {
     let config_path = collector_config_path(app)?;
     let (yaml, env) = match app_state::load(app) {
-        Ok(state) => match &state.backend {
-            None => (SMOKE_CONFIG_YAML.to_string(), std::collections::HashMap::new()),
-            Some(backend) => match collector::codegen::render(backend) {
-                Ok(rendered) => {
-                    let env: std::collections::HashMap<String, String> = rendered
-                        .env
-                        .into_iter()
-                        .map(|(k, v)| (k, v.to_string()))
-                        .collect();
-                    // Apply opt-in identity overlay. Detection sweep
-                    // runs synchronously here so per-harness probes
-                    // (currently stubs) see the same harness state the
-                    // dashboard does. With identity disabled, the
-                    // overlay returns yaml unchanged.
-                    let harnesses = if state.identity.enabled {
-                        detect::detect_all()
-                    } else {
-                        Vec::new()
-                    };
-                    let resolved = identity::resolve(&state.identity, &harnesses);
-                    let yaml_with_identity = if state.identity.enabled {
-                        collector::codegen::apply_identity_overlay(rendered.yaml, &resolved)
-                    } else {
-                        rendered.yaml
-                    };
-                    // Layer the Tier A mapping overlay on top of the
-                    // identity overlay. Order matters: the mapping
-                    // overlay's pipeline-list edit anchors on both the
-                    // baseline and the identity-augmented form, so it's
-                    // order-independent, but running identity first
-                    // keeps `resource/identity` at the tail of the
-                    // pipeline (it tags every emission, including the
-                    // synthesized Tier A metrics).
-                    let yaml = collector::codegen::apply_mapping_overlay(
-                        yaml_with_identity,
-                        &state.mappings,
-                    );
-                    (yaml, env)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "could not render collector config from saved state; using smoke fallback",
-                    );
-                    (SMOKE_CONFIG_YAML.to_string(), std::collections::HashMap::new())
-                }
-            },
+        Ok(state) if state.backends.is_empty() => (
+            SMOKE_CONFIG_YAML.to_string(),
+            std::collections::HashMap::new(),
+        ),
+        Ok(state) => match collector::codegen::render(&state.backends) {
+            Ok(rendered) => {
+                let env: std::collections::HashMap<String, String> = rendered
+                    .env
+                    .into_iter()
+                    .map(|(k, v)| (k, v.to_string()))
+                    .collect();
+                // Apply opt-in identity overlay. Detection sweep runs
+                // synchronously here so per-harness probes see the same
+                // harness state the dashboard does. With identity
+                // disabled, the overlay returns yaml unchanged.
+                let harnesses = if state.identity.enabled {
+                    detect::detect_all()
+                } else {
+                    Vec::new()
+                };
+                let resolved = identity::resolve(&state.identity, &harnesses);
+                let yaml_with_identity = if state.identity.enabled {
+                    collector::codegen::apply_identity_overlay(rendered.yaml, &resolved)
+                } else {
+                    rendered.yaml
+                };
+                // Layer the Tier A mapping overlay on top. Identity
+                // runs first so `resource/identity` ends up at the tail
+                // of every pipeline list (it tags the synthesized Tier
+                // A metrics too).
+                let yaml = collector::codegen::apply_mapping_overlay(
+                    yaml_with_identity,
+                    &state.mappings,
+                );
+                (yaml, env)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "could not render collector config from saved state; using smoke fallback",
+                );
+                (
+                    SMOKE_CONFIG_YAML.to_string(),
+                    std::collections::HashMap::new(),
+                )
+            }
         },
         Err(e) => {
             tracing::warn!(
                 error = %e,
                 "could not load app state at boot; using smoke collector config",
             );
-            (SMOKE_CONFIG_YAML.to_string(), std::collections::HashMap::new())
+            (
+                SMOKE_CONFIG_YAML.to_string(),
+                std::collections::HashMap::new(),
+            )
         }
     };
     safety::atomic::write_atomic(&config_path, yaml.as_bytes())?;
@@ -518,7 +523,7 @@ pub enum CollectorBootError {
     Start(#[from] crate::collector::StartError),
     /// The supervisor spawned successfully but did not reach
     /// `CollectorState::Running` within the deadline. Returned by
-    /// [`reload_collector`] so callers (notably `save_backend`) don't
+    /// [`reload_collector`] so callers (notably `add_backend`) don't
     /// hand control back to the UI while the new child is still binding
     /// its OTLP ports.
     #[error("collector did not become ready within {0:?}")]

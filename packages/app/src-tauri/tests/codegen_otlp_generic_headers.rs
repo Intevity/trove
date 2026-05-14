@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use trove_app::app_state::{Backend, OtlpProtocol, SecretRef};
+use trove_app::app_state::{Backend, BackendInstance, OtlpProtocol, SecretRef};
 use trove_app::collector::codegen::{RenderError, RenderedCollector, render_with};
 use zeroize::Zeroizing;
 
@@ -23,8 +23,20 @@ fn echo(account: &str) -> Result<Zeroizing<String>, RenderError> {
     Ok(Zeroizing::new(format!("test-secret-for[{account}]")))
 }
 
+/// Wrap a single `Backend` in the one-element `BackendInstance` list
+/// the multi-platform renderer accepts. Fixed UUID id keeps env-var /
+/// exporter-name suffixes deterministic across tests.
+fn wrap_single(backend: &Backend) -> Vec<BackendInstance> {
+    vec![BackendInstance {
+        id: "11111111-2222-3333-4444-555566667777".to_string(),
+        label: None,
+        backend: backend.clone(),
+    }]
+}
+
 fn render(backend: &Backend) -> RenderedCollector {
-    render_with(backend, &echo).expect("render should succeed with canned resolver")
+    let list = wrap_single(backend);
+    render_with(&list, &echo).expect("render should succeed with canned resolver")
 }
 
 fn header(name: &str) -> SecretRef {
@@ -40,11 +52,11 @@ fn http_exporter_uses_otlphttp_user_component() {
     };
     let r = render(&backend);
     assert!(
-        r.yaml.contains("otlphttp/user:"),
+        r.yaml.contains("otlphttp/user-11111111:"),
         "yaml missing otlphttp/user exporter:\n{}",
         r.yaml
     );
-    assert!(!r.yaml.contains("otlp/user:")); // no gRPC variant
+    assert!(!r.yaml.contains("otlp/user-11111111:")); // no gRPC variant
 }
 
 #[test]
@@ -56,11 +68,11 @@ fn grpc_exporter_uses_otlp_user_component() {
     };
     let r = render(&backend);
     assert!(
-        r.yaml.contains("otlp/user:"),
+        r.yaml.contains("otlp/user-11111111:"),
         "yaml missing otlp/user exporter:\n{}",
         r.yaml
     );
-    assert!(!r.yaml.contains("otlphttp/user:"));
+    assert!(!r.yaml.contains("otlphttp/user-11111111:"));
 }
 
 #[test]
@@ -72,7 +84,7 @@ fn empty_headers_map_yields_one_env_var_for_endpoint_only() {
     };
     let r = render(&backend);
     assert_eq!(r.env.len(), 1);
-    assert!(r.env.contains_key("TROVE_OTLP_ENDPOINT"));
+    assert!(r.env.contains_key("TROVE_OTLP_ENDPOINT_11111111"));
     // No `headers:` block emitted when the map is empty.
     assert!(!r.yaml.contains("    headers:"));
 }
@@ -93,9 +105,9 @@ fn each_header_becomes_one_env_var_with_sanitized_name() {
 
     // 3 headers + 1 endpoint = 4 env vars.
     assert_eq!(r.env.len(), 4);
-    assert!(r.env.contains_key("TROVE_OTLP_HEADER_X_API_KEY"));
-    assert!(r.env.contains_key("TROVE_OTLP_HEADER_X_TENANT_ID"));
-    assert!(r.env.contains_key("TROVE_OTLP_HEADER_AUTHORIZATION"));
+    assert!(r.env.contains_key("TROVE_OTLP_HEADER_X_API_KEY_11111111"));
+    assert!(r.env.contains_key("TROVE_OTLP_HEADER_X_TENANT_ID_11111111"));
+    assert!(r.env.contains_key("TROVE_OTLP_HEADER_AUTHORIZATION_11111111"));
 }
 
 #[test]
@@ -142,7 +154,7 @@ fn rendered_yaml_does_not_contain_secret_values() {
         r.yaml,
     );
     // Header references the env var, not the inlined value.
-    assert!(r.yaml.contains("x-api-key: ${env:TROVE_OTLP_HEADER_X_API_KEY}"));
+    assert!(r.yaml.contains("x-api-key: ${env:TROVE_OTLP_HEADER_X_API_KEY_11111111}"));
 }
 
 #[test]
@@ -170,7 +182,7 @@ fn endpoint_is_passed_through_to_env_value_unchanged() {
     };
     let r = render(&backend);
     assert_eq!(
-        r.env.get("TROVE_OTLP_ENDPOINT").unwrap().to_string(),
+        r.env.get("TROVE_OTLP_ENDPOINT_11111111").unwrap().to_string(),
         "https://my.collector.example.com:8443/v1",
     );
 }

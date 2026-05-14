@@ -1,14 +1,14 @@
-//! Backend-specific `collector.yaml` codegen.
+//! Multi-backend `collector.yaml` codegen.
 //!
-//! [`render`] takes a persisted [`Backend`] and produces:
+//! [`render`] takes a non-empty slice of [`BackendInstance`] and produces:
 //!
 //! 1. The YAML the supervisor will hand to the `trove-otelcol` child as
-//!    its `--config`. For five of the six backend kinds the YAML is the
-//!    matching static template under `packages/collector-presets/`,
-//!    referenced via [`include_str!`] so it ships baked into the binary
-//!    (no separate file the user can wedge). For OTLP-generic — the
-//!    only variadic-headers kind — the YAML is generated inline so
-//!    the headers block can be sized to the user's input.
+//!    its `--config`. The shared receivers / processors / service blocks
+//!    are emitted byte-stably; each backend contributes one exporter
+//!    block (with an instance-id-suffixed name so two instances of the
+//!    same kind cannot collide), and every pipeline (`metrics`, `logs`,
+//!    `traces`) lists every exporter so each signal fans out to every
+//!    configured platform.
 //!
 //! 2. A `HashMap<String, Zeroizing<String>>` of env vars the supervisor
 //!    sets on the spawned child. The Collector's native `${env:VAR}`
@@ -20,8 +20,11 @@
 //!    delivered it (never via argv).
 //!
 //! Pure-functional: no I/O on disk, no spawn — that lives in
-//! `lifecycle.rs` and `lib.rs`. Hermetic golden-file tests in
-//! `tests/codegen_*.rs` snapshot every variant.
+//! `lifecycle.rs` and `lib.rs`. The static preset templates in
+//! `packages/collector-presets/templates/` remain as documentation /
+//! reference (and as the source for the synthetic-span hints UI); the
+//! production YAML is always assembled inline so multi-backend fan-out
+//! and per-instance env scoping work uniformly.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -29,22 +32,11 @@ use std::fmt::Write as _;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use crate::app_state::{Backend, OtlpProtocol};
+use crate::app_state::{Backend, BackendInstance, OtlpProtocol};
 use crate::harness::HarnessId;
 use crate::identity::{Resolved, ResolvedSource};
 use crate::mappings::{HarnessMapping, MappingSource, MappingState};
 use crate::secrets;
-
-const SIGNOZ_TEMPLATE: &str =
-    include_str!("../../../../collector-presets/templates/signoz.yaml");
-const HONEYCOMB_TEMPLATE: &str =
-    include_str!("../../../../collector-presets/templates/honeycomb.yaml");
-const GRAFANA_CLOUD_TEMPLATE: &str =
-    include_str!("../../../../collector-presets/templates/grafana-cloud.yaml");
-const DATADOG_TEMPLATE: &str =
-    include_str!("../../../../collector-presets/templates/datadog.yaml");
-const OTELCOL_PASSTHROUGH_TEMPLATE: &str =
-    include_str!("../../../../collector-presets/templates/otelcol-passthrough.yaml");
 
 /// What [`render`] returns. The supervisor writes [`Self::yaml`] to
 /// `collector.yaml` atomically and passes [`Self::env`] to
@@ -76,8 +68,15 @@ pub enum RenderError {
 /// Render the active `collector.yaml` and the env map the supervisor
 /// must set on the spawned child. Production entry point: pulls every
 /// secret from the OS keychain via [`crate::secrets::retrieve`].
-pub fn render(backend: &Backend) -> Result<RenderedCollector, RenderError> {
-    render_with(backend, &|account| {
+///
+/// **Precondition:** `backends` must be non-empty. Callers (lib.rs's
+/// `prepare_collector_runtime`, the IPC reload paths) check the list
+/// length first and fall back to [`crate::smoke_config_yaml`] when no
+/// platform is configured — the `OTel` collector refuses to start if a
+/// pipeline references zero exporters, so emitting an empty pipeline
+/// list here would always fail at spawn.
+pub fn render(backends: &[BackendInstance]) -> Result<RenderedCollector, RenderError> {
+    render_with(backends, &|account| {
         secrets::retrieve(account).map_err(|source| RenderError::Keychain {
             account: account.to_string(),
             source,
@@ -87,160 +86,44 @@ pub fn render(backend: &Backend) -> Result<RenderedCollector, RenderError> {
 
 /// Test-friendly variant of [`render`] that takes an explicit resolver
 /// for secret-bearing fields. The resolver is called once per
-/// `SecretRef.account` referenced by the backend; whatever it returns
-/// is what the env map ends up holding (typically a canned value in
-/// tests, the real keychain entry in production).
+/// `SecretRef.account` referenced by any backend in the list; whatever
+/// it returns is what the env map ends up holding (typically a canned
+/// value in tests, the real keychain entry in production).
 pub fn render_with(
-    backend: &Backend,
+    backends: &[BackendInstance],
     resolver: &dyn Fn(&str) -> Result<Zeroizing<String>, RenderError>,
 ) -> Result<RenderedCollector, RenderError> {
-    match backend {
-        Backend::Signoz {
-            endpoint,
-            ingestion_key,
-        } => {
-            let mut env = HashMap::new();
-            env.insert(
-                "TROVE_SIGNOZ_ENDPOINT".to_string(),
-                Zeroizing::new(endpoint.clone()),
-            );
-            env.insert(
-                "TROVE_SIGNOZ_INGESTION_KEY".to_string(),
-                resolver(&ingestion_key.account)?,
-            );
-            Ok(RenderedCollector {
-                yaml: SIGNOZ_TEMPLATE.to_string(),
-                env,
-            })
-        }
+    assert!(
+        !backends.is_empty(),
+        "render requires at least one backend; callers must check is_empty() first",
+    );
 
-        Backend::Honeycomb { team, dataset } => {
-            let mut env = HashMap::new();
-            env.insert(
-                "TROVE_HONEYCOMB_TEAM".to_string(),
-                resolver(&team.account)?,
-            );
-            env.insert(
-                "TROVE_HONEYCOMB_DATASET".to_string(),
-                Zeroizing::new(dataset.clone()),
-            );
-            Ok(RenderedCollector {
-                yaml: HONEYCOMB_TEMPLATE.to_string(),
-                env,
-            })
-        }
+    let mut env: HashMap<String, Zeroizing<String>> = HashMap::new();
+    let mut exporter_yaml = String::new();
+    let mut exporter_names: Vec<String> = Vec::new();
 
-        Backend::GrafanaCloud { endpoint, auth } => {
-            let mut env = HashMap::new();
-            env.insert(
-                "TROVE_GRAFANA_ENDPOINT".to_string(),
-                Zeroizing::new(endpoint.clone()),
-            );
-            env.insert("TROVE_GRAFANA_AUTH".to_string(), resolver(&auth.account)?);
-            Ok(RenderedCollector {
-                yaml: GRAFANA_CLOUD_TEMPLATE.to_string(),
-                env,
-            })
-        }
-
-        Backend::Datadog { site, api_key } => {
-            let mut env = HashMap::new();
-            env.insert(
-                "TROVE_DATADOG_ENDPOINT".to_string(),
-                // Datadog OTLP intake URL is per-site. Construct it
-                // here rather than baking it into the template so
-                // adding a new site is a one-line change in Rust
-                // rather than a fanout of YAML files.
-                Zeroizing::new(format!("https://api.{site}/api/intake/otlp/v1")),
-            );
-            env.insert(
-                "TROVE_DATADOG_API_KEY".to_string(),
-                resolver(&api_key.account)?,
-            );
-            Ok(RenderedCollector {
-                yaml: DATADOG_TEMPLATE.to_string(),
-                env,
-            })
-        }
-
-        Backend::OtlpGeneric {
-            endpoint,
-            protocol,
-            headers,
-        } => {
-            // The headers block is variadic, so we render the YAML
-            // inline rather than from a static template. Each header
-            // value is still routed through `${env:...}` so the secret
-            // bytes never appear in the on-disk YAML.
-            let mut env: HashMap<String, Zeroizing<String>> = HashMap::new();
-            env.insert(
-                "TROVE_OTLP_ENDPOINT".to_string(),
-                Zeroizing::new(endpoint.clone()),
-            );
-
-            let mut header_lines = String::new();
-            // Iterate in BTreeMap order so the YAML is byte-stable
-            // across re-renders.
-            for (name, secret_ref) in headers {
-                let env_key = format!("TROVE_OTLP_HEADER_{}", sanitize_for_env(name));
-                env.insert(env_key.clone(), resolver(&secret_ref.account)?);
-                let _ = writeln!(header_lines, "      {name}: ${{env:{env_key}}}");
-            }
-
-            let yaml = render_otlp_generic_yaml(*protocol, &header_lines);
-            Ok(RenderedCollector { yaml, env })
-        }
-
-        Backend::OtelcolPassthrough { endpoint } => {
-            let mut env = HashMap::new();
-            env.insert(
-                "TROVE_PASSTHROUGH_ENDPOINT".to_string(),
-                Zeroizing::new(endpoint.clone()),
-            );
-            Ok(RenderedCollector {
-                yaml: OTELCOL_PASSTHROUGH_TEMPLATE.to_string(),
-                env,
-            })
+    for instance in backends {
+        let suffix = env_suffix_for(&instance.id);
+        let (name, block, instance_env) =
+            render_exporter_block(&instance.backend, &suffix, resolver)?;
+        exporter_names.push(name);
+        exporter_yaml.push_str(&block);
+        for (k, v) in instance_env {
+            env.insert(k, v);
         }
     }
-}
 
-/// Sanitize a header name into a POSIX-safe env var suffix:
-/// uppercase, with any non-`[A-Z0-9_]` byte replaced by `_`.
-fn sanitize_for_env(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            let upper = c.to_ascii_uppercase();
-            if upper.is_ascii_alphanumeric() || upper == '_' {
-                upper
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
+    let exporters_list = exporter_names.join(", ");
+    let backend_count = backends.len();
 
-/// Build the `otlp-generic` YAML on the fly. The receiver/processor
-/// sections are identical to the other presets; only the exporter
-/// changes (gRPC vs HTTP, dynamic headers).
-fn render_otlp_generic_yaml(protocol: OtlpProtocol, header_lines: &str) -> String {
-    let exporter_name = match protocol {
-        OtlpProtocol::Grpc => "otlp/user",
-        OtlpProtocol::Http => "otlphttp/user",
-    };
-
-    let headers_block = if header_lines.is_empty() {
-        String::new()
-    } else {
-        format!("    headers:\n{header_lines}")
-    };
-
-    format!(
-        "# trove-otelcol — generic OTLP preset (rendered).\n\
+    let yaml = format!(
+        "# trove-otelcol — auto-generated multi-backend config.\n\
          #\n\
-         # Generated by trove from a user-configured Backend::OtlpGeneric.\n\
-         # Headers come from the keychain via ${{env:...}}; the endpoint and\n\
-         # protocol are fixed at codegen time.\n\
+         # Forwards every signal to {backend_count} configured platform(s).\n\
+         # Pipelines list every exporter name so each signal type fans out\n\
+         # to every destination; ${{env:...}} placeholders are populated by\n\
+         # the Rust supervisor at spawn time (keychain secrets + persisted\n\
+         # non-secret fields). Trove never writes raw secrets into this file.\n\
          \n\
          extensions:\n\
          \x20\x20health_check:\n\
@@ -264,12 +147,10 @@ fn render_otlp_generic_yaml(protocol: OtlpProtocol, header_lines: &str) -> Strin
          \x20\x20\x20\x20\x20\x20- {{ key: prompt.text, action: delete }}\n\
          \x20\x20resource/source:\n\
          \x20\x20\x20\x20attributes:\n\
-         \x20\x20\x20\x20\x20\x20- {{ key: trove.source, value: otlp-generic, action: insert }}\n\
+         \x20\x20\x20\x20\x20\x20- {{ key: trove.source, value: trove, action: insert }}\n\
          \n\
          exporters:\n\
-         \x20\x20{exporter_name}:\n\
-         \x20\x20\x20\x20endpoint: ${{env:TROVE_OTLP_ENDPOINT}}\n\
-         {headers_block}\
+         {exporter_yaml}\
          \n\
          service:\n\
          \x20\x20extensions: [health_check]\n\
@@ -277,22 +158,19 @@ fn render_otlp_generic_yaml(protocol: OtlpProtocol, header_lines: &str) -> Strin
          \x20\x20\x20\x20metrics:\n\
          \x20\x20\x20\x20\x20\x20receivers: [otlp]\n\
          \x20\x20\x20\x20\x20\x20processors: [batch, attributes/redact, resource/source]\n\
-         \x20\x20\x20\x20\x20\x20exporters: [{exporter_name}]\n\
+         \x20\x20\x20\x20\x20\x20exporters: [{exporters_list}]\n\
          \x20\x20\x20\x20logs:\n\
          \x20\x20\x20\x20\x20\x20receivers: [otlp]\n\
          \x20\x20\x20\x20\x20\x20processors: [batch, attributes/redact, resource/source]\n\
-         \x20\x20\x20\x20\x20\x20exporters: [{exporter_name}]\n\
+         \x20\x20\x20\x20\x20\x20exporters: [{exporters_list}]\n\
          \x20\x20\x20\x20traces:\n\
          \x20\x20\x20\x20\x20\x20receivers: [otlp]\n\
          \x20\x20\x20\x20\x20\x20processors: [batch, attributes/redact, resource/source]\n\
-         \x20\x20\x20\x20\x20\x20exporters: [{exporter_name}]\n\
+         \x20\x20\x20\x20\x20\x20exporters: [{exporters_list}]\n\
          \x20\x20telemetry:\n\
          \x20\x20\x20\x20logs:\n\
          \x20\x20\x20\x20\x20\x20level: info\n\
          \x20\x20\x20\x20\x20\x20encoding: console\n\
-         \x20\x20\x20\x20# Sprint 6: Prometheus endpoint for trove's metrics_tap (loopback only).\n\
-         \x20\x20\x20\x20# Use the `readers` schema; collector v0.151+ rejects the legacy\n\
-         \x20\x20\x20\x20# `address` scalar via its migration helper.\n\
          \x20\x20\x20\x20metrics:\n\
          \x20\x20\x20\x20\x20\x20level: basic\n\
          \x20\x20\x20\x20\x20\x20readers:\n\
@@ -301,7 +179,166 @@ fn render_otlp_generic_yaml(protocol: OtlpProtocol, header_lines: &str) -> Strin
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20prometheus:\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20host: '127.0.0.1'\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20port: 8888\n",
-    )
+    );
+
+    Ok(RenderedCollector { yaml, env })
+}
+
+/// Derive the per-instance env-var / exporter-name suffix from a UUID
+/// `id`. Uses the first 8 hex chars (32-bit namespace; birthday-bound
+/// collision probability is ~0.001% at 100 backends), uppercased for
+/// env var keys and lowercased for exporter names. Strips dashes so
+/// POSIX `[A-Z_][A-Z0-9_]*` is satisfied even if the caller passed a
+/// UUID with hyphens.
+fn env_suffix_for(id: &str) -> String {
+    let cleaned: String = id
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(8)
+        .collect();
+    if cleaned.is_empty() {
+        "default".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// `(exporter_name, yaml_block, env_map)` — the tuple
+/// [`render_exporter_block`] returns. Pulled into a `type` to keep
+/// clippy's `type_complexity` quiet.
+type ExporterBlock = (String, String, HashMap<String, Zeroizing<String>>);
+
+/// Render the exporter YAML block + env-var contributions for a single
+/// backend instance. Returns `(exporter_name, yaml_block, env_map)`
+/// where `exporter_name` is the unique identifier used in the
+/// pipelines' `exporters: [...]` list, `yaml_block` is the chunk
+/// inserted under the top-level `exporters:` map (pre-indented), and
+/// `env_map` carries every `${env:...}` placeholder the block
+/// references.
+fn render_exporter_block(
+    backend: &Backend,
+    suffix: &str,
+    resolver: &dyn Fn(&str) -> Result<Zeroizing<String>, RenderError>,
+) -> Result<ExporterBlock, RenderError> {
+    let env_suffix_upper = suffix.to_ascii_uppercase();
+    let suffix_lower = suffix.to_ascii_lowercase();
+    let mut env: HashMap<String, Zeroizing<String>> = HashMap::new();
+
+    let (name, block) = match backend {
+        Backend::Signoz {
+            endpoint,
+            ingestion_key,
+        } => {
+            let endpoint_var = format!("TROVE_SIGNOZ_ENDPOINT_{env_suffix_upper}");
+            let key_var = format!("TROVE_SIGNOZ_INGESTION_KEY_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            env.insert(key_var.clone(), resolver(&ingestion_key.account)?);
+            let name = format!("otlp/signoz-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    tls:\n      insecure: false\n    headers:\n      signoz-ingestion-key: ${{env:{key_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Honeycomb { team, dataset } => {
+            let team_var = format!("TROVE_HONEYCOMB_TEAM_{env_suffix_upper}");
+            let dataset_var = format!("TROVE_HONEYCOMB_DATASET_{env_suffix_upper}");
+            env.insert(team_var.clone(), resolver(&team.account)?);
+            env.insert(dataset_var.clone(), Zeroizing::new(dataset.clone()));
+            let name = format!("otlphttp/honeycomb-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: https://api.honeycomb.io\n    headers:\n      x-honeycomb-team: ${{env:{team_var}}}\n      x-honeycomb-dataset: ${{env:{dataset_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::GrafanaCloud { endpoint, auth } => {
+            let endpoint_var = format!("TROVE_GRAFANA_ENDPOINT_{env_suffix_upper}");
+            let auth_var = format!("TROVE_GRAFANA_AUTH_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            env.insert(auth_var.clone(), resolver(&auth.account)?);
+            let name = format!("otlphttp/grafana-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      Authorization: ${{env:{auth_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Datadog { site, api_key } => {
+            let endpoint_var = format!("TROVE_DATADOG_ENDPOINT_{env_suffix_upper}");
+            let key_var = format!("TROVE_DATADOG_API_KEY_{env_suffix_upper}");
+            // Datadog OTLP intake URL is per-site. Construct it here
+            // rather than baking it into a template so adding a new site
+            // is a one-line change.
+            env.insert(
+                endpoint_var.clone(),
+                Zeroizing::new(format!("https://api.{site}/api/intake/otlp/v1")),
+            );
+            env.insert(key_var.clone(), resolver(&api_key.account)?);
+            let name = format!("otlphttp/datadog-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      DD-API-KEY: ${{env:{key_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::OtlpGeneric {
+            endpoint,
+            protocol,
+            headers,
+        } => {
+            let endpoint_var = format!("TROVE_OTLP_ENDPOINT_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            let mut header_lines = String::new();
+            // BTreeMap iteration is sorted → byte-stable YAML.
+            for (header_name, secret_ref) in headers {
+                let env_key = format!(
+                    "TROVE_OTLP_HEADER_{}_{env_suffix_upper}",
+                    sanitize_for_env(header_name),
+                );
+                env.insert(env_key.clone(), resolver(&secret_ref.account)?);
+                let _ = writeln!(
+                    header_lines,
+                    "      {header_name}: ${{env:{env_key}}}",
+                );
+            }
+            let name = match protocol {
+                OtlpProtocol::Grpc => format!("otlp/user-{suffix_lower}"),
+                OtlpProtocol::Http => format!("otlphttp/user-{suffix_lower}"),
+            };
+            let headers_block = if header_lines.is_empty() {
+                String::new()
+            } else {
+                format!("    headers:\n{header_lines}")
+            };
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n{headers_block}",
+            );
+            (name, block)
+        }
+        Backend::OtelcolPassthrough { endpoint } => {
+            let endpoint_var = format!("TROVE_PASSTHROUGH_ENDPOINT_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            let name = format!("otlphttp/passthrough-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n",
+            );
+            (name, block)
+        }
+    };
+
+    Ok((name, block, env))
+}
+
+/// Sanitize a header name into a POSIX-safe env var suffix:
+/// uppercase, with any non-`[A-Z0-9_]` byte replaced by `_`.
+fn sanitize_for_env(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            let upper = c.to_ascii_uppercase();
+            if upper.is_ascii_alphanumeric() || upper == '_' {
+                upper
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Inject an opt-in `resource/identity` processor into `yaml` when
@@ -413,6 +450,10 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // `codex-cli`.
         HarnessId::CodexCli => &["codex-cli", "codex"],
         HarnessId::Opencode => &["opencode"],
+        // Claude Desktop (Cowork) sends OTLP logs whose resource carries
+        // `service.name=claude-cowork` or `claude-desktop`. Tag both so
+        // future renames don't silently drop `harness.id` assignment.
+        HarnessId::ClaudeDesktop => &["claude-desktop", "claude-cowork"],
         // Hook/watcher harnesses tag `harness.id` themselves in their
         // OTLP payload — no inference needed.
         HarnessId::CursorIde
@@ -427,13 +468,15 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
 /// and `metricstransform/tierA-*` processor names. The collector
 /// accepts `/` as the segment separator; the suffix mirrors the
 /// kebab-case wire format of [`HarnessId`].
-fn harness_id_suffix(id: HarnessId) -> &'static str {
+#[must_use]
+pub fn harness_id_suffix(id: HarnessId) -> &'static str {
     match id {
         HarnessId::ClaudeCode => "claude-code",
         HarnessId::GeminiCli => "gemini-cli",
         HarnessId::CodexCli => "codex-cli",
         HarnessId::QwenCode => "qwen-code",
         HarnessId::Opencode => "opencode",
+        HarnessId::ClaudeDesktop => "claude-desktop",
         // Not used today (hook/watcher harnesses emit Tier A inline)
         // but provided for symmetry should a hybrid emerge.
         HarnessId::CursorIde => "cursor-ide",
@@ -473,12 +516,22 @@ fn harness_id_suffix(id: HarnessId) -> &'static str {
 /// `synthesize-from-native` rows (the typical hook-only configuration).
 #[must_use]
 pub fn apply_mapping_overlay(yaml: String, mappings: &MappingState) -> String {
+    // Anything with a native service.name (Tier-1 emitters) needs a
+    // harness-tag entry, even if it has no SynthesizeFromNative rows.
+    // Otherwise records from e.g. Claude Desktop arrive at the exporter
+    // without `harness.id` set and don't filter on the dashboard.
+    let tag_harnesses: Vec<&HarnessMapping> = mappings
+        .all_harnesses()
+        .iter()
+        .copied()
+        .filter(|h| h.enabled && !native_service_name_candidates(h.harness_id).is_empty())
+        .collect();
     let synth_harnesses: Vec<&HarnessMapping> = mappings.native_synthesis_harnesses();
-    if synth_harnesses.is_empty() {
+    if tag_harnesses.is_empty() && synth_harnesses.is_empty() {
         return yaml;
     }
 
-    let tag_block = build_harness_tag_block(&synth_harnesses);
+    let tag_block = build_harness_tag_block(&tag_harnesses);
     let tier_a_blocks: Vec<(String, String)> = synth_harnesses
         .iter()
         .filter_map(|h| {
@@ -516,7 +569,297 @@ pub fn apply_mapping_overlay(yaml: String, mappings: &MappingState) -> String {
 
     let metrics_updated = replace_pipeline_processors(&with_blocks, "metrics", &metrics_inserts);
     let logs_updated = replace_pipeline_processors(&metrics_updated, "logs", &other_inserts);
-    replace_pipeline_processors(&logs_updated, "traces", &other_inserts)
+    let pipelines_updated = replace_pipeline_processors(&logs_updated, "traces", &other_inserts);
+
+    // For each Tier-1 native emitter without a local adapter, inject a
+    // diagnostics pipeline that filters logs down to records carrying
+    // the harness's known `service.name` and sinks them to the debug
+    // exporter. The pipeline's per-processor outgoing-items counter
+    // gives the UI a clean per-harness "telemetry observed" signal that
+    // the global receiver counter can't provide (it aggregates across
+    // every harness, including Trove's own watchers).
+    let with_diag = apply_diag_pipelines(pipelines_updated, &tag_harnesses);
+
+    // If Claude Desktop is enabled, also wire the signaltometrics
+    // connector so its log records produce Tier A metrics that hit the
+    // same backend exporters every other harness uses.
+    apply_cowork_logs_to_metrics(with_diag, &tag_harnesses)
+}
+
+/// Names of the harnesses we want a diagnostic logs pipeline for.
+/// Currently this is just `ClaudeDesktop` — the only Tier-1 native
+/// emitter we ship that has no local adapter (so the UI has no other
+/// way to flip its telemetry pill).
+fn diag_harnesses<'a>(tag_harnesses: &'a [&'a HarnessMapping]) -> Vec<&'a HarnessMapping> {
+    tag_harnesses
+        .iter()
+        .copied()
+        .filter(|h| !h.harness_id.has_adapter())
+        .collect()
+}
+
+/// When Claude Desktop is enabled, inject the `signaltometrics/cowork`
+/// connector + the pipeline plumbing that bridges its Cowork log
+/// records into the Tier A metric surface.
+///
+/// Pattern: signaltometrics is listed as an exporter on the logs
+/// pipeline (so it consumes every log record) and as a receiver on
+/// the metrics pipeline (so the synthesised counters/histograms flow
+/// through every existing backend exporter, picking up `harness.id`
+/// tagging and Trove's resource attributes along the way).
+///
+/// The OTTL conditions in the connector restrict the synthesis to
+/// Cowork records only — every other harness's logs pass through
+/// untouched and don't trigger the connector.
+///
+/// Field-name assumptions, per <https://claude.com/docs/cowork/monitoring>
+/// (attribute list documented; event-name carrier is not — we match on
+/// both `body` and `attributes["event.name"]` to be resilient):
+///   `api_request`: `input_tokens`, `output_tokens`, `cost_usd`,
+///                `duration_ms`, `model`
+///   `api_error`:   `status_code`, `error`, `model`
+///   `tool_result`: `tool_name`, `duration_ms`, `success`
+/// YAML chunk inserted at top-level when Claude Desktop is enabled.
+/// Defines the `signaltometrics/cowork` connector that translates the
+/// five documented Cowork event types into Tier A metric specifications.
+const COWORK_CONNECTOR_BLOCK: &str = r#"
+connectors:
+  signaltometrics/cowork:
+    logs:
+      # tool_result → trove.harness.events{event.kind=tool.call}
+      - name: trove.harness.events
+        description: Tier A event count (Cowork tool_result).
+        conditions:
+          - 'body == "tool_result" or attributes["event.name"] == "tool_result"'
+        attributes:
+          - key: event.kind
+            default_value: tool.call
+        sum:
+          value: "1"
+
+      # api_request → trove.harness.events{event.kind=chat.turn}
+      - name: trove.harness.events
+        description: Tier A event count (Cowork api_request).
+        conditions:
+          - 'body == "api_request" or attributes["event.name"] == "api_request"'
+        attributes:
+          - key: event.kind
+            default_value: chat.turn
+        sum:
+          value: "1"
+
+      # api_request → trove.harness.tokens{direction=input}
+      - name: trove.harness.tokens
+        description: Tier A token count, input direction.
+        conditions:
+          - 'body == "api_request" or attributes["event.name"] == "api_request"'
+        attributes:
+          - key: direction
+            default_value: input
+          - key: model
+        sum:
+          value: 'attributes["input_tokens"]'
+
+      # api_request → trove.harness.tokens{direction=output}
+      - name: trove.harness.tokens
+        description: Tier A token count, output direction.
+        conditions:
+          - 'body == "api_request" or attributes["event.name"] == "api_request"'
+        attributes:
+          - key: direction
+            default_value: output
+          - key: model
+        sum:
+          value: 'attributes["output_tokens"]'
+
+      # api_request → trove.harness.cost.usd
+      - name: trove.harness.cost.usd
+        description: Tier A model spend (USD), exact figure from Cowork.
+        conditions:
+          - 'body == "api_request" or attributes["event.name"] == "api_request"'
+        attributes:
+          - key: cost.method
+            default_value: exact
+          - key: model
+        sum:
+          value: 'attributes["cost_usd"]'
+
+      # api_request → trove.harness.turn.duration (ms histogram)
+      - name: trove.harness.turn.duration
+        description: Tier A chat-turn duration histogram (milliseconds).
+        unit: ms
+        conditions:
+          - 'body == "api_request" or attributes["event.name"] == "api_request"'
+        attributes:
+          - key: event.kind
+            default_value: chat.turn
+          - key: model
+        histogram:
+          value: 'attributes["duration_ms"]'
+
+      # api_error → trove.harness.errors
+      - name: trove.harness.errors
+        description: Tier A error count (Cowork api_error).
+        conditions:
+          - 'body == "api_error" or attributes["event.name"] == "api_error"'
+        attributes:
+          - key: error.kind
+            default_value: unknown
+          - key: model
+        sum:
+          value: "1"
+"#;
+
+fn apply_cowork_logs_to_metrics(yaml: String, tag_harnesses: &[&HarnessMapping]) -> String {
+    let cowork_enabled = tag_harnesses
+        .iter()
+        .any(|h| h.harness_id == HarnessId::ClaudeDesktop);
+    if !cowork_enabled {
+        return yaml;
+    }
+
+    // Insert the connector block at the top level — append it before
+    // the `service:` block so it sits alongside extensions / receivers /
+    // exporters / processors. Falls back to a no-op if `service:` isn't
+    // a unique top-level key (shouldn't happen for any preset).
+    let with_connectors = if let Some(idx) = yaml.find("\nservice:") {
+        let mut out = String::with_capacity(yaml.len() + COWORK_CONNECTOR_BLOCK.len());
+        out.push_str(&yaml[..idx]);
+        out.push_str(COWORK_CONNECTOR_BLOCK);
+        out.push_str(&yaml[idx..]);
+        out
+    } else {
+        return yaml;
+    };
+
+    // Append `signaltometrics/cowork` as an exporter on the logs
+    // pipeline and as a receiver on the metrics pipeline. Idempotent
+    // string replaces against the anchors emitted by `render`.
+    append_pipeline_exporter(
+        &with_connectors,
+        "logs",
+        "signaltometrics/cowork",
+    )
+    .and_then(|s| append_pipeline_receiver(&s, "metrics", "signaltometrics/cowork"))
+    .unwrap_or(with_connectors)
+}
+
+/// Append `entry` to the `exporters: [...]` array of the named
+/// pipeline. Returns `None` if the anchor isn't found (so the caller
+/// can fall back without panicking).
+fn append_pipeline_exporter(yaml: &str, pipeline: &str, entry: &str) -> Option<String> {
+    append_pipeline_list(yaml, pipeline, "exporters", entry)
+}
+
+fn append_pipeline_receiver(yaml: &str, pipeline: &str, entry: &str) -> Option<String> {
+    append_pipeline_list(yaml, pipeline, "receivers", entry)
+}
+
+fn append_pipeline_list(
+    yaml: &str,
+    pipeline: &str,
+    list_kind: &str,
+    entry: &str,
+) -> Option<String> {
+    // Find the pipeline's named block inside `service.pipelines`. The
+    // `pipelines:` key sits at 2-space indent; each pipeline name at
+    // 4-space. Scope the search to that section so we don't mis-anchor
+    // on a `logs:` key buried inside a processor config (e.g. the
+    // filter/diag-claude-desktop block uses `logs:` for signal-typing).
+    let pipelines_section_start = yaml.find("\n  pipelines:\n")?;
+    let pipelines_offset = pipelines_section_start + "\n  pipelines:\n".len();
+    let pipeline_anchor = format!("    {pipeline}:\n");
+    let rel = yaml[pipelines_offset..].find(&pipeline_anchor)?;
+    let pipeline_header_idx = pipelines_offset + rel;
+    let pipeline_body_start = pipeline_header_idx + pipeline_anchor.len();
+    let pipeline_body = &yaml[pipeline_body_start..];
+
+    // Stop at the next top-level pipeline ("    <name>:") or block
+    // ("  ", e.g. `  telemetry:` at 2-space indent) so we don't
+    // accidentally edit the wrong section.
+    let mut search_end = pipeline_body.len();
+    for (i, line) in pipeline_body.split('\n').enumerate() {
+        if i == 0 {
+            continue;
+        }
+        if !line.starts_with("      ") && !line.is_empty() {
+            search_end = pipeline_body
+                .split('\n')
+                .take(i)
+                .map(|l| l.len() + 1)
+                .sum::<usize>()
+                .saturating_sub(1);
+            break;
+        }
+    }
+    let pipeline_section = &pipeline_body[..search_end];
+    let list_prefix = format!("      {list_kind}: [");
+    let list_start_rel = pipeline_section.find(&list_prefix)?;
+    let list_open_abs = pipeline_body_start + list_start_rel + list_prefix.len() - 1;
+    let close_rel = yaml[list_open_abs..].find(']')?;
+    let close_abs = list_open_abs + close_rel;
+    let inner = yaml[list_open_abs + 1..close_abs].trim();
+    let new_inner = if inner.is_empty() {
+        entry.to_string()
+    } else if inner.split(',').any(|s| s.trim() == entry) {
+        // Already present — idempotent.
+        return Some(yaml.to_string());
+    } else {
+        format!("{inner}, {entry}")
+    };
+    let mut out = String::with_capacity(yaml.len() + entry.len() + 2);
+    out.push_str(&yaml[..=list_open_abs]);
+    out.push_str(&new_inner);
+    out.push_str(&yaml[close_abs..]);
+    Some(out)
+}
+
+fn apply_diag_pipelines(yaml: String, tag_harnesses: &[&HarnessMapping]) -> String {
+    let diag = diag_harnesses(tag_harnesses);
+    if diag.is_empty() {
+        return yaml;
+    }
+
+    // Build the filter processor block(s) and the matching pipeline
+    // entries. One processor per harness keeps the
+    // `otelcol_processor_outgoing_items_total{processor=...}` counter
+    // attributable.
+    let mut processor_defs = String::new();
+    let mut pipeline_entries = String::new();
+    for h in &diag {
+        let suffix = harness_id_suffix(h.harness_id);
+        let names = native_service_name_candidates(h.harness_id);
+        let drop_clause = names
+            .iter()
+            .map(|n| format!("resource.attributes[\"service.name\"] != \"{n}\""))
+            .collect::<Vec<_>>()
+            .join(" and ");
+
+        let _ = writeln!(processor_defs, "  filter/diag-{suffix}:");
+        let _ = writeln!(processor_defs, "    error_mode: ignore");
+        let _ = writeln!(processor_defs, "    logs:");
+        let _ = writeln!(processor_defs, "      log_record:");
+        let _ = writeln!(processor_defs, "        - '{drop_clause}'");
+
+        let _ = writeln!(pipeline_entries, "    logs/diag-{suffix}:");
+        let _ = writeln!(pipeline_entries, "      receivers: [otlp]");
+        let _ = writeln!(pipeline_entries, "      processors: [filter/diag-{suffix}]");
+        let _ = writeln!(pipeline_entries, "      exporters: [debug/diag-noop]");
+    }
+
+    let exporter_def = "  debug/diag-noop:\n    verbosity: basic\n";
+
+    yaml.replacen(
+        "processors:\n",
+        &format!("processors:\n{processor_defs}"),
+        1,
+    )
+    .replacen("exporters:\n", &format!("exporters:\n{exporter_def}"), 1)
+    .replacen(
+        "  pipelines:\n",
+        &format!("  pipelines:\n{pipeline_entries}"),
+        1,
+    )
 }
 
 /// Rewrite the `processors:` line of a single named pipeline. The
@@ -659,6 +1002,65 @@ fn build_tier_a_block(harness: &HarnessMapping) -> Option<String> {
 mod tests {
     use super::*;
 
+    use crate::app_state::{Backend, BackendInstance, OtlpProtocol, SecretRef};
+
+    /// Stub keychain resolver: returns the account name itself wrapped
+    /// in `Zeroizing<String>`. Tests don't care about the actual secret
+    /// bytes; they care that the right account was queried and the right
+    /// env var ended up populated.
+    // The Result wrap is mandated by `render_with`'s `&dyn Fn(...) ->
+    // Result<Zeroizing<String>, RenderError>` resolver type, so we keep
+    // it even though this stub can't fail.
+    #[allow(clippy::unnecessary_wraps)]
+    fn passthrough_resolver(account: &str) -> Result<Zeroizing<String>, RenderError> {
+        Ok(Zeroizing::new(account.to_string()))
+    }
+
+    fn signoz_instance(id: &str) -> BackendInstance {
+        BackendInstance {
+            id: id.to_string(),
+            label: None,
+            backend: Backend::Signoz {
+                endpoint: "ingest.us.signoz.cloud:443".into(),
+                ingestion_key: SecretRef::for_account(format!(
+                    "backend.signoz.ingestion-key.{id}",
+                )),
+            },
+        }
+    }
+
+    fn datadog_instance(id: &str) -> BackendInstance {
+        BackendInstance {
+            id: id.to_string(),
+            label: None,
+            backend: Backend::Datadog {
+                site: "datadoghq.com".into(),
+                api_key: SecretRef::for_account(format!(
+                    "backend.datadog.api-key.{id}",
+                )),
+            },
+        }
+    }
+
+    fn honeycomb_instance(id: &str) -> BackendInstance {
+        BackendInstance {
+            id: id.to_string(),
+            label: None,
+            backend: Backend::Honeycomb {
+                team: SecretRef::for_account(format!("backend.honeycomb.team.{id}")),
+                dataset: "prod".into(),
+            },
+        }
+    }
+
+    fn rendered_yaml(backends: &[BackendInstance]) -> String {
+        render_with(backends, &passthrough_resolver).unwrap().yaml
+    }
+
+    // -----------------------------------------------------------------
+    // sanitize_for_env helpers
+    // -----------------------------------------------------------------
+
     #[test]
     fn sanitize_uppercases_and_replaces_dashes() {
         assert_eq!(sanitize_for_env("x-honeycomb-team"), "X_HONEYCOMB_TEAM");
@@ -672,17 +1074,189 @@ mod tests {
         assert_eq!(sanitize_for_env("X_TOKEN_123"), "X_TOKEN_123");
     }
 
+    // -----------------------------------------------------------------
+    // env_suffix_for
+    // -----------------------------------------------------------------
+
     #[test]
-    fn passthrough_yaml_template_contains_env_var_marker() {
-        assert!(OTELCOL_PASSTHROUGH_TEMPLATE.contains("${env:TROVE_PASSTHROUGH_ENDPOINT}"));
-        assert!(!OTELCOL_PASSTHROUGH_TEMPLATE.contains("INGESTION_KEY"));
+    fn env_suffix_takes_first_eight_alnum_chars() {
+        let uuid = "7a3f4b2c-1234-5678-9abc-def012345678";
+        assert_eq!(env_suffix_for(uuid), "7a3f4b2c");
     }
 
     #[test]
-    fn signoz_template_includes_ingestion_key_env_var() {
-        assert!(SIGNOZ_TEMPLATE.contains("${env:TROVE_SIGNOZ_INGESTION_KEY}"));
-        assert!(SIGNOZ_TEMPLATE.contains("${env:TROVE_SIGNOZ_ENDPOINT}"));
+    fn env_suffix_strips_non_alnum() {
+        assert_eq!(env_suffix_for("ab-cd-ef-12345"), "abcdef12");
     }
+
+    #[test]
+    fn env_suffix_falls_back_to_default_for_empty() {
+        assert_eq!(env_suffix_for(""), "default");
+        assert_eq!(env_suffix_for("---"), "default");
+    }
+
+    // -----------------------------------------------------------------
+    // render(&[BackendInstance])
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn render_single_signoz_emits_one_exporter_and_three_pipelines() {
+        let instances = vec![signoz_instance("7a3f4b2c-1111-2222-3333-444455556666")];
+        let out = render_with(&instances, &passthrough_resolver).unwrap();
+        // Exporter name uses the first 8 hex chars of the uuid.
+        assert!(out.yaml.contains("otlp/signoz-7a3f4b2c:"));
+        // Three pipelines all reference the same exporter list.
+        let pipeline_hits = out
+            .yaml
+            .matches("exporters: [otlp/signoz-7a3f4b2c]")
+            .count();
+        assert_eq!(pipeline_hits, 3, "metrics/logs/traces each list the exporter");
+        // Env contains the endpoint + ingestion-key vars with the
+        // uppercased suffix.
+        assert!(out.env.contains_key("TROVE_SIGNOZ_ENDPOINT_7A3F4B2C"));
+        assert!(out.env.contains_key("TROVE_SIGNOZ_INGESTION_KEY_7A3F4B2C"));
+    }
+
+    #[test]
+    fn render_two_same_kind_emits_two_distinct_exporters_with_fan_out() {
+        let instances = vec![
+            signoz_instance("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            signoz_instance("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        ];
+        let out = render_with(&instances, &passthrough_resolver).unwrap();
+        assert!(out.yaml.contains("otlp/signoz-aaaaaaaa:"));
+        assert!(out.yaml.contains("otlp/signoz-bbbbbbbb:"));
+        // Both exporters appear in every pipeline's `exporters: [...]` list.
+        let pipeline_hits = out
+            .yaml
+            .matches("exporters: [otlp/signoz-aaaaaaaa, otlp/signoz-bbbbbbbb]")
+            .count();
+        assert_eq!(pipeline_hits, 3);
+        // Per-instance env vars don't collide.
+        assert!(out.env.contains_key("TROVE_SIGNOZ_INGESTION_KEY_AAAAAAAA"));
+        assert!(out.env.contains_key("TROVE_SIGNOZ_INGESTION_KEY_BBBBBBBB"));
+    }
+
+    #[test]
+    fn render_mixed_kinds_fan_out_into_every_pipeline() {
+        let instances = vec![
+            datadog_instance("11111111-1111-1111-1111-111111111111"),
+            honeycomb_instance("22222222-2222-2222-2222-222222222222"),
+        ];
+        let out = render_with(&instances, &passthrough_resolver).unwrap();
+        assert!(out.yaml.contains("otlphttp/datadog-11111111:"));
+        assert!(out.yaml.contains("otlphttp/honeycomb-22222222:"));
+        let pipeline_hits = out
+            .yaml
+            .matches("exporters: [otlphttp/datadog-11111111, otlphttp/honeycomb-22222222]")
+            .count();
+        assert_eq!(pipeline_hits, 3);
+        // Datadog intake URL is per-site, built in Rust.
+        let endpoint_value = out
+            .env
+            .get("TROVE_DATADOG_ENDPOINT_11111111")
+            .expect("endpoint env var");
+        assert_eq!(
+            endpoint_value.as_str(),
+            "https://api.datadoghq.com/api/intake/otlp/v1",
+        );
+    }
+
+    #[test]
+    fn render_otlp_generic_emits_each_header_with_scoped_env_var() {
+        use std::collections::BTreeMap;
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "X-Auth".to_string(),
+            SecretRef::for_account("backend.otlp-generic.header.X-Auth.cc11"),
+        );
+        let instances = vec![BackendInstance {
+            id: "cc11dd22-3333-4444-5555-666677778888".into(),
+            label: None,
+            backend: Backend::OtlpGeneric {
+                endpoint: "https://example.test/v1/otlp".into(),
+                protocol: OtlpProtocol::Http,
+                headers,
+            },
+        }];
+        let out = render_with(&instances, &passthrough_resolver).unwrap();
+        assert!(out.yaml.contains("otlphttp/user-cc11dd22:"));
+        assert!(out.yaml.contains("X-Auth: ${env:TROVE_OTLP_HEADER_X_AUTH_CC11DD22}"));
+        assert!(out.env.contains_key("TROVE_OTLP_HEADER_X_AUTH_CC11DD22"));
+    }
+
+    #[test]
+    fn render_resolver_is_called_per_secret_account() {
+        use std::cell::RefCell;
+        let calls: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let resolver = |account: &str| {
+            calls.borrow_mut().push(account.to_string());
+            Ok(Zeroizing::new("redacted".to_string()))
+        };
+        let instances = vec![signoz_instance("11112222-3333-4444-5555-666677778888")];
+        let _ = render_with(&instances, &resolver).unwrap();
+        let calls = calls.into_inner();
+        assert_eq!(
+            calls,
+            vec!["backend.signoz.ingestion-key.11112222-3333-4444-5555-666677778888"],
+        );
+    }
+
+    #[test]
+    fn render_output_parses_as_valid_yaml_for_every_kind() {
+        let cases: Vec<(&str, Vec<BackendInstance>)> = vec![
+            ("signoz", vec![signoz_instance("aaaa1111-2222-3333-4444-555566667777")]),
+            ("honeycomb", vec![honeycomb_instance("bbbb1111-2222-3333-4444-555566667777")]),
+            ("datadog", vec![datadog_instance("cccc1111-2222-3333-4444-555566667777")]),
+            (
+                "grafana-cloud",
+                vec![BackendInstance {
+                    id: "dddd1111-2222-3333-4444-555566667777".into(),
+                    label: None,
+                    backend: Backend::GrafanaCloud {
+                        endpoint: "https://otlp-gateway.grafana.net/otlp".into(),
+                        auth: SecretRef::for_account("backend.grafana-cloud.auth.dddd1111"),
+                    },
+                }],
+            ),
+            (
+                "otelcol-passthrough",
+                vec![BackendInstance {
+                    id: "eeee1111-2222-3333-4444-555566667777".into(),
+                    label: None,
+                    backend: Backend::OtelcolPassthrough {
+                        endpoint: "http://127.0.0.1:4318".into(),
+                    },
+                }],
+            ),
+            (
+                "multi",
+                vec![
+                    signoz_instance("11111111-2222-3333-4444-555566667777"),
+                    datadog_instance("22221111-2222-3333-4444-555566667777"),
+                ],
+            ),
+        ];
+        for (label, instances) in cases {
+            let yaml = rendered_yaml(&instances);
+            let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&yaml);
+            assert!(
+                parsed.is_ok(),
+                "render produced invalid YAML for {label}: {:?}\n--- yaml ---\n{yaml}",
+                parsed.err(),
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one backend")]
+    fn render_panics_on_empty_list() {
+        let _ = render_with(&[], &passthrough_resolver);
+    }
+
+    // -----------------------------------------------------------------
+    // apply_identity_overlay (operates on the rendered YAML)
+    // -----------------------------------------------------------------
 
     fn resolved(name: &str, email: &str) -> Resolved {
         Resolved {
@@ -694,40 +1268,35 @@ mod tests {
 
     #[test]
     fn identity_overlay_is_a_noop_when_source_is_none() {
-        let original = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let r = Resolved {
             name: String::new(),
             email: String::new(),
             source: ResolvedSource::None,
         };
-        assert_eq!(apply_identity_overlay(original.clone(), &r), original);
+        assert_eq!(apply_identity_overlay(yaml.clone(), &r), yaml);
     }
 
     #[test]
     fn identity_overlay_is_a_noop_when_both_values_empty() {
-        let original = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let r = resolved("", "");
-        assert_eq!(apply_identity_overlay(original.clone(), &r), original);
+        assert_eq!(apply_identity_overlay(yaml.clone(), &r), yaml);
     }
 
     #[test]
     fn identity_overlay_injects_processor_and_appends_to_pipelines() {
-        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let baseline_pipeline_hits = yaml
             .matches("processors: [batch, attributes/redact, resource/source]")
             .count();
-        // Three pipeline lines (metrics/logs/traces) on every template.
-        assert_eq!(baseline_pipeline_hits, 3, "preset template invariant changed");
+        assert_eq!(baseline_pipeline_hits, 3, "rendered yaml invariant changed");
 
         let r = resolved("Ada Lovelace", "ada@example.com");
         let out = apply_identity_overlay(yaml, &r);
-
-        // Block injected once at the top-level processors map.
         assert_eq!(out.matches("resource/identity:").count(), 1);
         assert!(out.contains("- { key: user.name, value: \"Ada Lovelace\", action: upsert }"));
         assert!(out.contains("- { key: user.email, value: \"ada@example.com\", action: upsert }"));
-
-        // Every pipeline line picks up the new processor.
         let original_pipeline_line =
             "processors: [batch, attributes/redact, resource/source]";
         let new_pipeline_line =
@@ -738,12 +1307,10 @@ mod tests {
 
     #[test]
     fn identity_overlay_handles_name_only_or_email_only() {
-        let yaml = HONEYCOMB_TEMPLATE.to_string();
-
+        let yaml = rendered_yaml(&[honeycomb_instance("dddd1111-2222-3333-4444-555566667777")]);
         let with_name = apply_identity_overlay(yaml.clone(), &resolved("Ada", ""));
         assert!(with_name.contains("user.name"));
         assert!(!with_name.contains("user.email"));
-
         let with_email = apply_identity_overlay(yaml, &resolved("", "ada@example.com"));
         assert!(with_email.contains("user.email"));
         assert!(!with_email.contains("user.name"));
@@ -751,25 +1318,10 @@ mod tests {
 
     #[test]
     fn identity_overlay_yaml_escapes_quotes_and_backslashes_in_values() {
-        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let r = resolved("o\"\\dd", "ada@example.com");
         let out = apply_identity_overlay(yaml, &r);
-        // Backslash and quote are escaped inside the double-quoted YAML scalar.
         assert!(out.contains(r#"value: "o\"\\dd", action: upsert"#));
-    }
-
-    #[test]
-    fn identity_overlay_does_not_touch_unrelated_template_bytes() {
-        // Smoke-test: the smoke-test/passthrough template lacks the
-        // canonical pipeline line, so the overlay must be a no-op
-        // beyond injecting the top-level block if pipelines are
-        // missing. Confirms we don't accidentally double-apply.
-        let custom = "extensions:\nprocessors:\n  noop:\nservice:\n  pipelines:\n    traces:\n      processors: [noop]\n".to_string();
-        let r = resolved("Ada", "ada@x");
-        let out = apply_identity_overlay(custom, &r);
-        assert!(out.contains("resource/identity:"));
-        // Pipeline line didn't match our verbatim anchor — left alone.
-        assert!(out.contains("processors: [noop]"));
     }
 
     // -----------------------------------------------------------------
@@ -782,46 +1334,143 @@ mod tests {
             schema_version: 1,
             harnesses: vec![],
         };
-        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         assert_eq!(apply_mapping_overlay(yaml.clone(), &empty), yaml);
     }
 
     #[test]
-    fn mapping_overlay_is_a_noop_when_no_harness_has_synthesis_rows() {
-        // A state populated only with hook-rule mappings doesn't need
-        // any collector transforms — those harnesses emit Tier A inline.
+    fn mapping_overlay_emits_only_tag_block_for_hook_only_native_emitters() {
+        // Tier-1 hook-only harnesses (e.g. Claude Desktop) ship a known
+        // service.name but no SynthesizeFromNative rows. The overlay
+        // must still emit the harness-tag block so the records arrive at
+        // the exporter with `harness.id` set — but it must NOT emit any
+        // `metricstransform/tierA-*` block, because there is nothing to
+        // synthesize.
         let mut state = crate::mappings::default_state();
         state.harnesses.retain(|h| {
             !h.sources
                 .iter()
                 .any(|s| matches!(s, MappingSource::SynthesizeFromNative { .. }))
         });
-        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_mapping_overlay(yaml, &state);
+        assert_eq!(out.matches("transform/harness-tag:").count(), 1);
+        assert!(out.contains("\"service.name\"] == \"claude-desktop\""));
+        assert!(out.contains("\"service.name\"] == \"claude-cowork\""));
+        assert!(!out.contains("metricstransform/tierA-"));
+    }
+
+    #[test]
+    fn mapping_overlay_skips_diag_pipeline_when_every_harness_has_an_adapter() {
+        // After Claude Desktop moved to adapter-backed (audit-log tap),
+        // there are no adapterless native emitters left in the default
+        // mapping table, so `apply_diag_pipelines` must short-circuit
+        // and emit no `filter/diag-*` processor or pipeline. The watcher
+        // bumps its own in-process counter for detection; the diag-log
+        // counter is unused for claude-desktop today.
+        let state = crate::mappings::default_state();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_mapping_overlay(yaml, &state);
+        assert!(!out.contains("filter/diag-claude-desktop:"));
+        assert!(!out.contains("logs/diag-claude-desktop:"));
+        assert!(!out.contains("debug/diag-noop:"));
+    }
+
+    #[test]
+    fn mapping_overlay_emits_cowork_signaltometrics_connector_when_claude_desktop_enabled() {
+        // The signaltometrics connector translates Cowork's OTLP log
+        // emission into Tier A metrics. Verify the connector block is
+        // present, every Tier A metric name appears, the logs pipeline
+        // exports to it, and the metrics pipeline receives from it.
+        let state = crate::mappings::default_state();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_mapping_overlay(yaml, &state);
+
+        // Connector definition emitted.
+        assert!(out.contains("signaltometrics/cowork:"));
+        for metric in [
+            "trove.harness.events",
+            "trove.harness.tokens",
+            "trove.harness.cost.usd",
+            "trove.harness.turn.duration",
+            "trove.harness.errors",
+        ] {
+            assert!(out.contains(metric), "missing metric {metric}");
+        }
+
+        // Each of the 5 Cowork event-name conditions appears at least
+        // once in the OTTL body.
+        for event in ["api_request", "api_error", "tool_result"] {
+            assert!(
+                out.contains(&format!("\"{event}\"")),
+                "missing condition reference to event {event}"
+            );
+        }
+
+        // Pipeline plumbing: connector listed as exporter on logs,
+        // receiver on metrics. The render baseline has
+        // `exporters: [otlp/signoz-...]` — after wiring, the cowork
+        // connector should be appended.
+        assert!(
+            out.contains("signaltometrics/cowork]")
+                || out.contains("signaltometrics/cowork,"),
+            "connector not appended to logs.exporters or metrics.receivers"
+        );
+    }
+
+    #[test]
+    fn mapping_overlay_omits_cowork_connector_when_claude_desktop_disabled() {
+        let mut state = crate::mappings::default_state();
+        for h in &mut state.harnesses {
+            if h.harness_id == HarnessId::ClaudeDesktop {
+                h.enabled = false;
+            }
+        }
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_mapping_overlay(yaml, &state);
+        assert!(!out.contains("signaltometrics/cowork"));
+    }
+
+    #[test]
+    fn mapping_overlay_omits_diag_pipeline_when_claude_desktop_disabled() {
+        let mut state = crate::mappings::default_state();
+        for h in &mut state.harnesses {
+            if h.harness_id == HarnessId::ClaudeDesktop {
+                h.enabled = false;
+            }
+        }
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_mapping_overlay(yaml, &state);
+        assert!(!out.contains("filter/diag-claude-desktop"));
+        assert!(!out.contains("debug/diag-noop"));
+        assert!(!out.contains("logs/diag-claude-desktop"));
+    }
+
+    #[test]
+    fn mapping_overlay_is_a_noop_when_no_harness_emits_natively_or_synthesizes() {
+        // If every harness is disabled (or has no native service.name
+        // and no synthesis rows), there is nothing to overlay.
+        let mut state = crate::mappings::default_state();
+        for h in &mut state.harnesses {
+            h.enabled = false;
+        }
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         assert_eq!(apply_mapping_overlay(yaml.clone(), &state), yaml);
     }
 
     #[test]
     fn mapping_overlay_injects_harness_tag_and_per_harness_tier_a_blocks() {
         let state = crate::mappings::default_state();
-        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let out = apply_mapping_overlay(yaml, &state);
-
-        // Single harness-tag block at the top.
         assert_eq!(out.matches("transform/harness-tag:").count(), 1);
-        // One metricstransform per native-OTel harness with default
-        // synthesis rows. Claude Code, Gemini, Codex, Qwen all qualify
-        // — Opencode's default mapping is empty pending verification.
         for expected in [
             "metricstransform/tierA-claude-code:",
             "metricstransform/tierA-gemini-cli:",
             "metricstransform/tierA-codex-cli:",
             "metricstransform/tierA-qwen-code:",
         ] {
-            assert_eq!(
-                out.matches(expected).count(),
-                1,
-                "missing transform block for {expected}"
-            );
+            assert_eq!(out.matches(expected).count(), 1, "missing {expected}");
         }
         assert_eq!(out.matches("metricstransform/tierA-opencode:").count(), 0);
     }
@@ -829,208 +1478,65 @@ mod tests {
     #[test]
     fn mapping_overlay_appends_to_every_pipeline_processors_list() {
         let state = crate::mappings::default_state();
-        let yaml = SIGNOZ_TEMPLATE.to_string();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let out = apply_mapping_overlay(yaml, &state);
-
-        // Baseline pipeline lines (3, one per signal type) all picked
-        // up the new processors and now include `transform/harness-tag`.
         let new_baseline = out
             .matches("[batch, attributes/redact, resource/source, transform/harness-tag")
             .count();
-        assert_eq!(new_baseline, 3, "expected 3 pipeline lines to be rewritten");
-        // The unmodified baseline line should no longer be present.
+        assert_eq!(new_baseline, 3);
         assert_eq!(
             out.matches("processors: [batch, attributes/redact, resource/source]")
                 .count(),
-            0
+            0,
         );
-    }
-
-    #[test]
-    fn mapping_overlay_uses_insert_action_to_preserve_tier_b_passthrough() {
-        // MAPPING_PLAN.md §Defaults says Tier B passes through unchanged.
-        // metricstransform's `insert` action means the native metric stays
-        // intact while a renamed copy lands on Tier A. A regression to
-        // `update` (rename) would silently break Tier B dashboards.
-        let state = crate::mappings::default_state();
-        let out = apply_mapping_overlay(SIGNOZ_TEMPLATE.to_string(), &state);
-        assert!(out.contains("action: insert"));
-        // Reject the rename-style action being accidentally generated.
-        assert_eq!(out.matches("action: update\n").count(), 0);
-    }
-
-    #[test]
-    fn mapping_overlay_emits_attribute_relabel_for_gen_ai_token_type() {
-        // Gemini/Qwen/Codex defaults map `gen_ai.token.type` → `direction`.
-        // The metricstransform `update_label` operation renames the
-        // attribute on the synthesized metric without touching the
-        // native one (insert keeps both).
-        let state = crate::mappings::default_state();
-        let out = apply_mapping_overlay(SIGNOZ_TEMPLATE.to_string(), &state);
-        assert!(out.contains("- action: update_label"));
-        assert!(out.contains("label: gen_ai.token.type"));
-        assert!(out.contains("new_label: direction"));
     }
 
     #[test]
     fn mapping_overlay_composes_with_identity_overlay() {
-        // Both overlays in either order must produce a pipeline list that
-        // contains every expected processor name in order. Identity ran
-        // first here; the mapping overlay sees the post-identity pipeline
-        // line and threads its processors in *before* `resource/identity`
-        // so identity tags the synthesized Tier A metrics too.
-        let yaml = SIGNOZ_TEMPLATE.to_string();
-        let r = resolved("Ada", "ada@example.com");
-        let with_identity = apply_identity_overlay(yaml, &r);
-        let final_yaml =
-            apply_mapping_overlay(with_identity, &crate::mappings::default_state());
-
-        // Confirm both overlays' definitions are present at the top.
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let with_identity = apply_identity_overlay(yaml, &resolved("Ada", "ada@example.com"));
+        let final_yaml = apply_mapping_overlay(with_identity, &crate::mappings::default_state());
         assert!(final_yaml.contains("resource/identity:"));
         assert!(final_yaml.contains("transform/harness-tag:"));
-
-        // Pipeline list: harness-tag and tierA-* come before
-        // resource/identity (so identity sees the synthesized metrics).
-        // Match the full canonical line shape.
         assert!(
             final_yaml.contains(
                 "processors: [batch, attributes/redact, resource/source, transform/harness-tag"
             ),
-            "harness-tag should appear after resource/source"
         );
-        assert_eq!(
-            final_yaml.matches(", resource/identity]").count(),
-            3,
-            "identity must remain at the tail of every pipeline"
-        );
+        assert_eq!(final_yaml.matches(", resource/identity]").count(), 3);
     }
 
     #[test]
-    fn mapping_overlay_byte_stable_across_two_runs_with_same_input() {
-        // Golden-file tests rely on the YAML being deterministic across
-        // re-renders — BTreeMap iteration order and vec iteration order
-        // are both stable by construction, but the test pins the
-        // invariant so a future map swap doesn't silently break it.
+    fn mapping_overlay_output_parses_as_valid_yaml() {
         let state = crate::mappings::default_state();
-        let a = apply_mapping_overlay(SIGNOZ_TEMPLATE.to_string(), &state);
-        let b = apply_mapping_overlay(SIGNOZ_TEMPLATE.to_string(), &state);
-        assert_eq!(a, b);
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_mapping_overlay(yaml, &state);
+        let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&out);
+        assert!(parsed.is_ok(), "invalid YAML: {:?}\n{out}", parsed.err());
     }
 
     #[test]
-    fn metricstransform_tier_a_is_only_added_to_the_metrics_pipeline() {
-        // metricstransform doesn't support log/trace signal types; the
-        // collector exits 1 at startup if we wire it into the logs or
-        // traces pipelines. Pin the invariant so a future refactor
-        // can't accidentally regress.
-        let state = crate::mappings::default_state();
-        let out = apply_mapping_overlay(SIGNOZ_TEMPLATE.to_string(), &state);
-
-        let metrics_line = out
-            .lines()
-            .find(|l| l.contains("processors: ["))
-            .expect("at least one pipeline processors line");
-        assert!(
-            metrics_line.contains("metricstransform/tierA-claude-code"),
-            "metrics pipeline should include tierA blocks: {metrics_line}"
-        );
-
-        // The lines come after `metrics:`, `logs:`, `traces:` in template
-        // order. Lines 1 and 2 are logs and traces.
-        let pipeline_lines: Vec<&str> = out
-            .lines()
-            .filter(|l| l.contains("processors: ["))
-            .collect();
-        assert_eq!(pipeline_lines.len(), 3, "three pipelines expected");
-
-        for (i, line) in pipeline_lines.iter().enumerate().skip(1) {
-            assert!(
-                !line.contains("metricstransform/"),
-                "non-metrics pipeline {i} must not include metricstransform: {line}"
-            );
-            assert!(
-                line.contains("transform/harness-tag"),
-                "non-metrics pipeline {i} should still carry harness-tag: {line}"
-            );
-        }
-    }
-
-    #[test]
-    fn harness_tag_emits_a_statement_per_candidate_service_name() {
-        // Gemini's harness-tag block should fire for both "gemini-cli"
-        // and the unprefixed "gemini" service.name. Guards against
-        // upstream rebranding silently breaking detection.
-        let state = crate::mappings::default_state();
-        let out = apply_mapping_overlay(SIGNOZ_TEMPLATE.to_string(), &state);
-        assert!(out.contains(
-            r#"set(attributes["harness.id"], "gemini-cli") where attributes["service.name"] == "gemini-cli""#
-        ));
-        assert!(out.contains(
-            r#"set(attributes["harness.id"], "gemini-cli") where attributes["service.name"] == "gemini""#
-        ));
-        assert!(out.contains(
-            r#"set(attributes["harness.id"], "codex-cli") where attributes["service.name"] == "codex""#
-        ));
-    }
-
-    #[test]
-    fn mapping_overlay_output_parses_as_valid_yaml_against_every_preset() {
-        // The bytes the supervisor hands to the otelcol child are the
-        // overlay's output. If we ever emit a syntax error (mismatched
-        // indentation, unquoted special character, etc.), the
-        // collector exits 1 at startup with a cryptic message. Catch
-        // that at codegen time instead.
-        let state = crate::mappings::default_state();
-        for (name, tpl) in [
-            ("signoz", SIGNOZ_TEMPLATE),
-            ("honeycomb", HONEYCOMB_TEMPLATE),
-            ("grafana-cloud", GRAFANA_CLOUD_TEMPLATE),
-            ("datadog", DATADOG_TEMPLATE),
-            ("otelcol-passthrough", OTELCOL_PASSTHROUGH_TEMPLATE),
-        ] {
-            let out = apply_mapping_overlay(tpl.to_string(), &state);
-            let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&out);
-            assert!(
-                parsed.is_ok(),
-                "mapping overlay produced invalid YAML for preset {name}: {:?}\n--- yaml ---\n{out}",
-                parsed.err()
-            );
-        }
-    }
-
-    #[test]
-    fn mapping_overlay_combined_with_identity_overlay_parses_as_valid_yaml() {
-        // Stack both overlays — the order the supervisor uses in
-        // `prepare_collector_runtime` — and parse the result. Identity
-        // is OK to render unconditionally; with empty values it's a
-        // no-op.
-        let state = crate::mappings::default_state();
-        let r = resolved("Ada Lovelace", "ada@example.com");
-        let with_identity = apply_identity_overlay(SIGNOZ_TEMPLATE.to_string(), &r);
-        let final_yaml = apply_mapping_overlay(with_identity, &state);
+    fn combined_overlays_parse_as_valid_yaml() {
+        let yaml = rendered_yaml(&[
+            signoz_instance("aaaaaaaa-1111-2222-3333-444455556666"),
+            datadog_instance("bbbbbbbb-1111-2222-3333-444455556666"),
+        ]);
+        let with_identity = apply_identity_overlay(yaml, &resolved("Ada", "ada@example.com"));
+        let final_yaml = apply_mapping_overlay(with_identity, &crate::mappings::default_state());
         let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&final_yaml);
         assert!(
             parsed.is_ok(),
-            "combined overlays produced invalid YAML: {:?}\n--- yaml ---\n{final_yaml}",
-            parsed.err()
+            "combined overlays produced invalid YAML: {:?}\n{final_yaml}",
+            parsed.err(),
         );
     }
 
     #[test]
-    fn mapping_overlay_handles_every_preset_template() {
-        // Every preset uses the same baseline pipeline anchor. Sanity
-        // check that the overlay produces a non-empty diff for each.
+    fn mapping_overlay_byte_stable_across_two_runs() {
         let state = crate::mappings::default_state();
-        for tpl in [
-            SIGNOZ_TEMPLATE,
-            HONEYCOMB_TEMPLATE,
-            GRAFANA_CLOUD_TEMPLATE,
-            DATADOG_TEMPLATE,
-            OTELCOL_PASSTHROUGH_TEMPLATE,
-        ] {
-            let out = apply_mapping_overlay(tpl.to_string(), &state);
-            assert_ne!(out, tpl, "preset template did not pick up overlay");
-            assert!(out.contains("transform/harness-tag:"));
-        }
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let a = apply_mapping_overlay(yaml.clone(), &state);
+        let b = apply_mapping_overlay(yaml, &state);
+        assert_eq!(a, b);
     }
 }

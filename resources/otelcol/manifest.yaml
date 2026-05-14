@@ -41,3 +41,12 @@ processors:
   # copy (action: insert) of each declared native metric.
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.151.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/metricstransformprocessor v0.151.0
+
+connectors:
+  # Bridges OTLP logs into OTLP metrics. Used to translate Claude
+  # Cowork's log-only emission (admin-configured OTLP from Anthropic's
+  # web UI) into the cross-harness Tier A metric surface
+  # (`trove.harness.events` / `tokens` / `cost.usd` / `turn.duration` /
+  # `errors`). Listed as an exporter on the logs pipeline and a
+  # receiver on the metrics pipeline by the codegen overlay.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/connector/signaltometricsconnector v0.151.0

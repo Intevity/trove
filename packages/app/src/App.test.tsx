@@ -30,12 +30,13 @@ const EMPTY_MAPPINGS = {
   harnesses: [],
 };
 
-/** Default state.json shape: schemaVersion 6, no backend yet. App
+/** Default state.json shape: schemaVersion 7, no platforms yet. App
  *  swaps in the wizard for this case. The detection-related tests
- *  override `backend` to a SigNoz stub so the dashboard view renders. */
+ *  override `backends` to a one-element list so the dashboard view
+ *  renders. */
 const FRESH_APP_STATE = {
-  schemaVersion: 6,
-  backend: null,
+  schemaVersion: 7,
+  backends: [],
   harnesses: [],
   autoUpdateEnabled: false,
   identity: DEFAULT_IDENTITY,
@@ -43,12 +44,17 @@ const FRESH_APP_STATE = {
 };
 
 const SIGNOZ_STATE = {
-  schemaVersion: 6,
-  backend: {
-    kind: 'signoz' as const,
-    endpoint: 'ingest.us.signoz.cloud:443',
-    ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
-  },
+  schemaVersion: 7,
+  backends: [
+    {
+      id: '11111111-1111-1111-1111-111111111111',
+      backend: {
+        kind: 'signoz' as const,
+        endpoint: 'ingest.us.signoz.cloud:443',
+        ingestionKey: { service: 'trove', account: 'backend.signoz.ingestion-key' },
+      },
+    },
+  ],
   harnesses: [],
   autoUpdateEnabled: false,
   identity: DEFAULT_IDENTITY,
@@ -179,7 +185,7 @@ describe('App', () => {
     expect(screen.getByTestId('preset-picker')).toBeDefined();
   });
 
-  it('renders the BackendBanner with the saved backend label', async () => {
+  it('lists configured platforms on the Platforms tab', async () => {
     invokeMock.mockImplementation(
       dispatch({
         get_app_state: SIGNOZ_STATE,
@@ -188,10 +194,14 @@ describe('App', () => {
     );
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByTestId('backend-banner')).toBeDefined();
+      expect(screen.getByTestId('tab-platforms')).toBeDefined();
     });
-    const banner = screen.getByTestId('backend-banner');
-    expect(banner.textContent).toContain('SigNoz Cloud');
-    expect(banner.textContent).toContain('ingest.us.signoz.cloud:443');
+    fireEvent.click(screen.getByTestId('tab-platforms'));
+    await waitFor(() => {
+      expect(screen.getByTestId('platforms-list')).toBeDefined();
+    });
+    const list = screen.getByTestId('platforms-list');
+    expect(list.textContent).toContain('SigNoz Cloud');
+    expect(list.textContent).toContain('ingest.us.signoz.cloud:443');
   });
 });
