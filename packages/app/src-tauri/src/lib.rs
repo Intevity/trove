@@ -73,6 +73,7 @@ pub fn run() {
             ipc::commands::resolve_identity_preview,
             ipc::commands::apply_mappings,
             ipc::commands::reset_mappings_to_defaults,
+            ipc::commands::simulate_mapping,
             ipc::collector_status::get_collector_status,
             ipc::collector_status::get_metrics_snapshot,
             ipc::collector_status::get_collector_log_tail,
@@ -108,6 +109,17 @@ pub fn run() {
             // commands can `app.state::<TierThreeWatchers>()` without
             // a presence check.
             app.manage::<TierThreeWatchers>(TierThreeWatchers::new());
+
+            // v2 mapping editor: live MappingState store. Seeded from
+            // disk so watchers spawned in `respawn_persisted_watchers`
+            // below see the persisted catalog + rules on first borrow.
+            // The `apply_mappings` IPC pushes updates here so
+            // already-running watchers see edits without a restart.
+            let seed_mappings = crate::app_state::load(app.handle())
+                .map_or_else(|_| crate::mappings::default_state(), |s| s.mappings);
+            app.manage::<crate::mappings::MappingStateStore>(
+                crate::mappings::MappingStateStore::new(seed_mappings),
+            );
 
             // Always register a SupervisorState slot — even when the
             // initial spawn fails (missing sidecar binary in dev, etc.).

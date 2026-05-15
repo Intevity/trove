@@ -93,6 +93,37 @@ pub fn revert(home: &Path) -> Result<(), IpcError> {
     common::revert(&SPEC, home)
 }
 
+/// v2: regenerate the JSON sidecar the bundled Cursor hook script
+/// reads at startup to discover the user's current rules. Called from
+/// `apply_mappings` whenever the catalog or any rule changes so the
+/// next Cursor hook invocation honors the live state without requiring
+/// the user to re-apply the harness.
+///
+/// Path: `~/.cursor/trove-hook-rules.json`. The bundled
+/// `cursor-otel-hook.cjs` script loads this file lazily and falls back
+/// to a sensible default when absent (so the script still works on
+/// hosts that haven't yet seen an `apply_mappings` call).
+///
+/// Errors are best-effort: hook regeneration failure shouldn't block
+/// the `apply_mappings` IPC.
+pub fn regenerate_hooks_for_rules(
+    app: &tauri::AppHandle,
+    mapping_state: &crate::mappings::MappingState,
+) -> Result<(), std::io::Error> {
+    use tauri::Manager as _;
+    let Ok(home) = app.path().home_dir() else {
+        return Ok(());
+    };
+    let dir = home.join(".cursor");
+    if !dir.exists() {
+        return Ok(());
+    }
+    let target = dir.join("trove-hook-rules.json");
+    let snapshot = crate::adapters::cursor_hook_codegen::serialize_for_hook(mapping_state);
+    let body = serde_json::to_vec_pretty(&snapshot).map_err(std::io::Error::other)?;
+    crate::safety::atomic::write_atomic(&target, &body)
+}
+
 /// Build the [`ManagedRegion`] for the Cursor hooks.json patch.
 /// Public so the harness-specific adapters and tests can assert on the
 /// canonical hash directly without going through `apply`.

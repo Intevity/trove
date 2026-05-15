@@ -26,7 +26,8 @@ const DEFAULT_IDENTITY = {
 };
 
 const EMPTY_MAPPINGS = {
-  schemaVersion: 1 as const,
+  schemaVersion: 2 as const,
+  metrics: [],
   harnesses: [],
 };
 

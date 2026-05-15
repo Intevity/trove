@@ -191,7 +191,8 @@ describe('getAppState', () => {
       autoUpdateEnabled: false,
       identity: { enabled: false, source: 'auto' as const, name: '', email: '' },
       mappings: {
-        schemaVersion: 1 as const,
+        schemaVersion: 2 as const,
+        metrics: [],
         harnesses: [],
       },
       telemetryObserved: {},

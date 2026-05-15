@@ -314,7 +314,8 @@ describe('AppState', () => {
   };
 
   const emptyMappings = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
+    metrics: [],
     harnesses: [],
   };
 
@@ -365,7 +366,8 @@ describe('AppState', () => {
       autoUpdateEnabled: false,
       identity: defaultIdentity,
       mappings: {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        metrics: [],
         harnesses: [
           {
             harnessId: 'gemini-cli',

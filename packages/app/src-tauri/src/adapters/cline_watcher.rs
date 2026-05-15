@@ -56,6 +56,7 @@ struct TaskWatermark {
 pub fn spawn(
     tasks_dir: impl Into<PathBuf>,
     opts: ApplyOptions,
+    mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
 ) -> WatcherHandle {
     let tasks_dir = tasks_dir.into();
@@ -63,6 +64,7 @@ pub fn spawn(
         run(
             tasks_dir,
             opts,
+            mappings,
             poll_interval,
             |payload: Value| async move { otlp_emit::post_logs_json(&payload).await },
             |payload: Value| async move { otlp_emit::post_metrics_json(&payload).await },
@@ -80,6 +82,7 @@ pub fn spawn(
 pub async fn run<FLog, FutLog, FMetric, FutMetric>(
     tasks_dir: PathBuf,
     opts: ApplyOptions,
+    mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
     emit_log: FLog,
     emit_metric: FMetric,
@@ -91,8 +94,19 @@ pub async fn run<FLog, FutLog, FMetric, FutMetric>(
 {
     let mut watermarks: HashMap<String, TaskWatermark> = HashMap::new();
     loop {
-        if let Err(e) =
-            scan_once(&tasks_dir, &opts, &mut watermarks, &emit_log, &emit_metric).await
+        // Snapshot the live mapping state at the top of each scan so
+        // user edits via apply_mappings take effect on the next tick
+        // without a watcher restart.
+        let mapping_snapshot = mappings.current();
+        if let Err(e) = scan_once(
+            &tasks_dir,
+            &opts,
+            mapping_snapshot,
+            &mut watermarks,
+            &emit_log,
+            &emit_metric,
+        )
+        .await
         {
             tracing::warn!(error = %e, ?tasks_dir, "cline watcher tick errored");
         }
@@ -107,6 +121,7 @@ pub async fn run<FLog, FutLog, FMetric, FutMetric>(
 async fn scan_once<FLog, FutLog, FMetric, FutMetric>(
     tasks_dir: &Path,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
     watermarks: &mut HashMap<String, TaskWatermark>,
     emit_log: &FLog,
     emit_metric: &FMetric,
@@ -171,6 +186,7 @@ where
             &content,
             previous.last_emitted_index,
             opts,
+            mappings.clone(),
         ) {
             if let Err(e) = emit_metric(metric_payload).await {
                 tracing::warn!(error = %e, %task_id, "cline watcher metric emit failed");
@@ -249,65 +265,46 @@ fn custom_attributes_iter(
     attrs.iter().map(|(k, v)| (k.as_str(), v.as_str()))
 }
 
-/// One Tier A bucket the watcher derives from a Cline `ui_messages.json`
-/// entry. Returned by [`classify_message`].
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum Classification {
-    /// `trove.harness.events` with `event.kind = <kind>`.
-    Event(&'static str),
-    /// `trove.harness.errors` with `error.kind = "unknown"`. Cline's
-    /// `say.error` messages don't carry a structured failure mode, so
-    /// every error lands in the catch-all bucket today.
-    Error,
-}
-
-/// Map a single Cline `ui_messages.json` entry onto a Tier A bucket.
-/// Returns `None` for messages Trove doesn't synthesize (e.g. `ask`
-/// prompts the user has to answer, `command_output` payloads,
-/// `api_req_started` records — those carry API metadata, not a turn
-/// boundary).
+/// Map a single Cline `ui_messages.json` entry onto a `(when_key, extra_attrs)`
+/// pair the [`crate::mappings::runtime`] accumulator understands.
 ///
-/// The classifications mirror the hook-rule rows in
-/// [`crate::mappings::defaults`]'s `cline` defaults. If you edit one,
-/// edit the other so the Mappings UI and the watcher stay aligned.
+/// `when_key` matches the strings used in [`crate::mappings::defaults`]'s
+/// `cline` defaults — `say.text`, `say.tool`, `say.command`, `say.error`.
+/// Users can rewire any of these to a different target metric via the
+/// Mappings editor; the rules drive aggregation at emit time, so this
+/// function does no per-event interpretation beyond classification.
+///
+/// Returns `None` for messages Trove doesn't classify (`ask` prompts,
+/// `command_output` payloads, `api_req_started` records).
 #[must_use]
-fn classify_message(msg: &Value) -> Option<Classification> {
+fn classify_when(msg: &Value) -> Option<&'static str> {
     let kind = msg.get("type").and_then(Value::as_str)?;
     if kind != "say" {
         return None;
     }
     let say = msg.get("say").and_then(Value::as_str)?;
     match say {
-        "text" => Some(Classification::Event("chat.turn")),
-        "tool" => Some(Classification::Event("tool.call")),
-        "command" => Some(Classification::Event("shell.exec")),
-        "error" => Some(Classification::Error),
+        "text" => Some("say.text"),
+        "tool" => Some("say.tool"),
+        "command" => Some("say.command"),
+        "error" => Some("say.error"),
         _ => None,
     }
 }
 
 /// Build an OTLP/HTTP/JSON metrics payload covering every message at
-/// index `from_index..` that classifies into a Tier A bucket. Returns
-/// `None` when no new messages classify (so the watcher doesn't post an
-/// empty metrics payload) or when the file is unparseable.
-///
-/// Today emits two metrics:
-/// - `trove.harness.events` with one data point per classified event,
-///   tagged `event.kind`.
-/// - `trove.harness.errors` with one data point per `say.error`,
-///   tagged `error.kind = "unknown"`.
-///
-/// Token and cost synthesis depend on parsing `api_req_finished`
-/// payloads, which carry per-turn token counts and cost in a stringified
-/// JSON blob inside `text`. Deferred to a follow-up pass once the
-/// upstream schema is verified against a real Cline session (see plan
-/// open question #4).
+/// index `from_index..`. The current [`MappingState`] drives target
+/// metric names, kinds, and attribute injections — so a user that
+/// remaps `say.tool` to a custom metric in the editor sees that custom
+/// metric on the wire here too. Returns `None` when no rule produces
+/// any observation (so the watcher doesn't post an empty payload).
 #[must_use]
 pub fn parse_task_metric_payload(
     task_id: &str,
     ui_messages_bytes: &[u8],
     from_index: usize,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
 ) -> Option<Value> {
     let messages: Value = serde_json::from_slice(ui_messages_bytes).ok()?;
     let arr = messages.as_array()?;
@@ -316,20 +313,20 @@ pub fn parse_task_metric_payload(
     }
     let new_slice = &arr[from_index..];
 
-    let mut event_kinds: BTreeMap<&'static str, u64> = BTreeMap::new();
-    let mut error_count: u64 = 0;
+    let mut acc = crate::mappings::runtime::MetricsAccumulator::new(
+        mappings,
+        crate::harness::HarnessId::Cline,
+    );
+
+    let mut task_attr = BTreeMap::new();
+    task_attr.insert("cline.task_id".to_string(), task_id.to_string());
+
     for msg in new_slice {
-        match classify_message(msg) {
-            Some(Classification::Event(kind)) => {
-                *event_kinds.entry(kind).or_insert(0) += 1;
-            }
-            Some(Classification::Error) => {
-                error_count += 1;
-            }
-            None => {}
-        }
+        let Some(when) = classify_when(msg) else { continue };
+        acc.observe_count(when, 1, &task_attr);
     }
-    if event_kinds.is_empty() && error_count == 0 {
+
+    if acc.is_empty() {
         return None;
     }
 
@@ -337,55 +334,9 @@ pub fn parse_task_metric_payload(
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos())
         .to_string();
-    let start_ns = now_ns.clone();
-
-    let mut metrics: Vec<Value> = Vec::new();
-
-    if !event_kinds.is_empty() {
-        let data_points: Vec<Value> = event_kinds
-            .into_iter()
-            .map(|(kind, count)| {
-                json!({
-                    "startTimeUnixNano": start_ns,
-                    "timeUnixNano": now_ns,
-                    "asInt": count.to_string(),
-                    "attributes": [
-                        {"key": "event.kind", "value": {"stringValue": kind}},
-                        {"key": "cline.task_id", "value": {"stringValue": task_id}},
-                    ],
-                })
-            })
-            .collect();
-        metrics.push(json!({
-            "name": "trove.harness.events",
-            "unit": "1",
-            "description": "Count of harness events processed by Trove.",
-            "sum": {
-                "aggregationTemporality": 1,
-                "isMonotonic": true,
-                "dataPoints": data_points,
-            }
-        }));
-    }
-    if error_count > 0 {
-        metrics.push(json!({
-            "name": "trove.harness.errors",
-            "unit": "1",
-            "description": "Count of harness errors observed by Trove.",
-            "sum": {
-                "aggregationTemporality": 1,
-                "isMonotonic": true,
-                "dataPoints": [{
-                    "startTimeUnixNano": start_ns,
-                    "timeUnixNano": now_ns,
-                    "asInt": error_count.to_string(),
-                    "attributes": [
-                        {"key": "error.kind", "value": {"stringValue": "unknown"}},
-                        {"key": "cline.task_id", "value": {"stringValue": task_id}},
-                    ],
-                }]
-            }
-        }));
+    let metrics = acc.build(&now_ns, &now_ns);
+    if metrics.is_empty() {
+        return None;
     }
 
     let mut resource_attrs = vec![
@@ -417,6 +368,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    fn rules_arc() -> std::sync::Arc<crate::mappings::MappingState> {
+        std::sync::Arc::new(crate::mappings::default_state())
+    }
+    fn rules_sub() -> crate::mappings::SharedMappingState {
+        crate::mappings::MappingStateStore::new(crate::mappings::default_state()).subscribe()
+    }
     use super::*;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -542,6 +499,7 @@ mod tests {
             run(
                 tasks_dir.clone(),
                 ApplyOptions::default(),
+                rules_sub(),
                 Duration::from_millis(50),
                 emit_log,
                 emit_metric,
@@ -633,6 +591,7 @@ mod tests {
             run(
                 tasks_dir,
                 ApplyOptions::default(),
+                rules_sub(),
                 Duration::from_millis(30),
                 emit_log,
                 emit_metric,
@@ -690,6 +649,7 @@ mod tests {
             run(
                 tasks_dir,
                 ApplyOptions::default(),
+                rules_sub(),
                 Duration::from_millis(30),
                 emit_log,
                 emit_metric,
@@ -736,30 +696,34 @@ mod tests {
     }
 
     #[test]
-    fn classify_message_recognizes_known_say_subtypes() {
+    fn classify_when_recognizes_known_say_subtypes() {
+        // v2 reworked the classifier to return a `when` key (string)
+        // that matches the corresponding HookRule's `when` in
+        // `mappings::defaults::cline_defaults`. Each `when` lets the
+        // user edit, retarget, or disable the rule independently.
         assert_eq!(
-            classify_message(&json!({"type": "say", "say": "text"})),
-            Some(Classification::Event("chat.turn"))
+            classify_when(&json!({"type": "say", "say": "text"})),
+            Some("say.text")
         );
         assert_eq!(
-            classify_message(&json!({"type": "say", "say": "tool"})),
-            Some(Classification::Event("tool.call"))
+            classify_when(&json!({"type": "say", "say": "tool"})),
+            Some("say.tool")
         );
         assert_eq!(
-            classify_message(&json!({"type": "say", "say": "command"})),
-            Some(Classification::Event("shell.exec"))
+            classify_when(&json!({"type": "say", "say": "command"})),
+            Some("say.command")
         );
         assert_eq!(
-            classify_message(&json!({"type": "say", "say": "error"})),
-            Some(Classification::Error)
+            classify_when(&json!({"type": "say", "say": "error"})),
+            Some("say.error")
         );
     }
 
     #[test]
-    fn classify_message_ignores_ask_and_unknown_say_subtypes() {
-        assert!(classify_message(&json!({"type": "ask", "ask": "tool"})).is_none());
-        assert!(classify_message(&json!({"type": "say", "say": "api_req_started"})).is_none());
-        assert!(classify_message(&json!({"text": "noise"})).is_none());
+    fn classify_when_ignores_ask_and_unknown_say_subtypes() {
+        assert!(classify_when(&json!({"type": "ask", "ask": "tool"})).is_none());
+        assert!(classify_when(&json!({"type": "say", "say": "api_req_started"})).is_none());
+        assert!(classify_when(&json!({"text": "noise"})).is_none());
     }
 
     #[test]
@@ -769,7 +733,7 @@ mod tests {
             {"type": "say", "say": "api_req_started"}
         ]))
         .unwrap();
-        let r = parse_task_metric_payload("t", &messages, 0, &ApplyOptions::default());
+        let r = parse_task_metric_payload("t", &messages, 0, &ApplyOptions::default(), rules_arc());
         assert!(r.is_none());
     }
 
@@ -779,7 +743,7 @@ mod tests {
             {"type": "say", "say": "text"},
         ]))
         .unwrap();
-        let r = parse_task_metric_payload("t", &messages, 5, &ApplyOptions::default());
+        let r = parse_task_metric_payload("t", &messages, 5, &ApplyOptions::default(), rules_arc());
         assert!(r.is_none());
     }
 
@@ -792,7 +756,7 @@ mod tests {
         ]))
         .unwrap();
         let p =
-            parse_task_metric_payload("t", &messages, 0, &ApplyOptions::default()).unwrap();
+            parse_task_metric_payload("t", &messages, 0, &ApplyOptions::default(), rules_arc()).unwrap();
         let m = &p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"];
         let events = m
             .as_array()
@@ -832,7 +796,7 @@ mod tests {
         let mut opts = ApplyOptions::default();
         opts.custom_attributes
             .insert("team".into(), "platform".into());
-        let p = parse_task_metric_payload("t", &messages, 0, &opts).unwrap();
+        let p = parse_task_metric_payload("t", &messages, 0, &opts, rules_arc()).unwrap();
         let attrs = p["resourceMetrics"][0]["resource"]["attributes"].as_array().unwrap();
         assert!(attrs
             .iter()
@@ -877,6 +841,7 @@ mod tests {
             run(
                 tasks_dir,
                 ApplyOptions::default(),
+                rules_sub(),
                 Duration::from_millis(50),
                 emit_log,
                 emit_metric,

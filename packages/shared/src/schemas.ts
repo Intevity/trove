@@ -193,12 +193,41 @@ export type ResolvedIdentity = z.infer<typeof ResolvedIdentity>;
 // Sprint 13 — Tier A mapping configuration
 // ---------------------------------------------------------------------------
 
-/** The five Tier A metrics. Literal values match the suffix after
- *  `trove.harness.` on the wire. Mirrors the Rust `TierAMetric` enum
- *  (which uses per-variant `#[serde(rename)]` to allow the dotted forms
- *  `cost.usd` and `turn.duration`). */
+/** Helper enum naming the five builtin metrics. Kept as a TS-side
+ *  enum (the v1 wire form) for backward compatibility with consumers
+ *  that still pattern-match on these literals, but the persisted
+ *  `targetMetric`/`metric` fields now reference any `TroveMetricDefinition.id`
+ *  string in the catalog, builtin or custom. Mirrors the Rust
+ *  `TierAMetric` helper. */
 export const TierAMetric = z.enum(['events', 'tokens', 'cost.usd', 'turn.duration', 'errors']);
 export type TierAMetric = z.infer<typeof TierAMetric>;
+
+/** OTLP signal shape for a {@link TroveMetricDefinition}. Drives the
+ *  codegen + watcher emission path. Mirrors the Rust `TroveMetricKind`. */
+export const TroveMetricKind = z.enum(['counter', 'gauge', 'histogram']);
+export type TroveMetricKind = z.infer<typeof TroveMetricKind>;
+
+/** One entry in the metric catalog. The five builtin Tier A metrics
+ *  ship with `builtin: true` and are locked in the UI (rename / delete
+ *  disabled). Users may add custom entries with their own name, kind,
+ *  and required attribute list. Mirrors the Rust
+ *  `TroveMetricDefinition`. */
+export const TroveMetricDefinition = z.object({
+  /** Stable reference used by {@link MappingSource} target fields and
+   *  {@link HookEmit.metric}. For builtins this is the legacy short
+   *  string (`"events"`, `"tokens"`, `"cost.usd"`, `"turn.duration"`,
+   *  `"errors"`) so v1 docs migrate forward without rewriting any
+   *  target references. */
+  id: z.string().min(1),
+  /** Full OTLP metric name as it appears on the wire. For builtins
+   *  this is `trove.harness.<id>`. */
+  name: z.string().min(1),
+  kind: TroveMetricKind,
+  description: z.string().default(''),
+  requiredAttributes: z.array(z.string()).default([]),
+  builtin: z.boolean().default(false),
+});
+export type TroveMetricDefinition = z.infer<typeof TroveMetricDefinition>;
 
 /** Per-model cost-rate override row. Both rates are USD per 1,000
  *  tokens. Mirrors the Rust `CostOverride` struct. */
@@ -211,9 +240,11 @@ export type CostOverride = z.infer<typeof CostOverride>;
 /** Payload a `hook-rule` row tells its driver to emit when the rule's
  *  `when` event fires. `null` (in `MappingSource.emit`) means "do not
  *  emit anything" — used by before-event rules to avoid double-counting
- *  against after-event rules. Mirrors the Rust `HookEmit` struct. */
+ *  against after-event rules. Mirrors the Rust `HookEmit` struct. The
+ *  `metric` is a {@link TroveMetricDefinition.id} string ref; validation
+ *  on the Rust side rejects refs that don't resolve to a catalog entry. */
 export const HookEmit = z.object({
-  metric: TierAMetric,
+  metric: z.string().min(1),
   attributes: z.record(z.string(), z.string()),
 });
 export type HookEmit = z.infer<typeof HookEmit>;
@@ -229,12 +260,15 @@ export const MappingSource = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('synthesize-from-native'),
     nativeMetric: z.string(),
-    targetMetric: TierAMetric,
+    /** Catalog id of the metric this row writes into. For builtins
+     *  this is the short string from {@link TierAMetric}; for custom
+     *  metrics, whatever slug the user picked. */
+    targetMetric: z.string().min(1),
     attributeMap: z.record(z.string(), z.string()),
     /** Static labels injected on the synthesized metric via
-     *  metricstransform's `add_label`. Use for required Tier A
-     *  attributes the native source doesn't carry (e.g. event.kind,
-     *  error.kind). Defaults to empty map. */
+     *  metricstransform's `add_label`. Use for required attributes
+     *  the native source doesn't carry (e.g. event.kind, error.kind).
+     *  Defaults to empty map. */
     injectAttributes: z.record(z.string(), z.string()).default({}),
   }),
 ]);
@@ -253,9 +287,14 @@ export type HarnessMapping = z.infer<typeof HarnessMapping>;
 /** The whole mapping config, persisted under `AppState.mappings`. The
  *  inner `schemaVersion` is independent of the outer `AppState`
  *  schemaVersion — the inner one only moves when the mapping schema
- *  itself changes. Mirrors the Rust `MappingState`. */
+ *  itself changes. Mirrors the Rust `MappingState`.
+ *
+ *  v2 introduces the user-customizable `metrics` catalog (sibling of
+ *  `harnesses`). On-disk v1 documents are migrated forward by the Rust
+ *  loader — the TS side only ever sees v2 over IPC. */
 export const MappingState = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
+  metrics: z.array(TroveMetricDefinition).default([]),
   harnesses: z.array(HarnessMapping),
 });
 export type MappingState = z.infer<typeof MappingState>;

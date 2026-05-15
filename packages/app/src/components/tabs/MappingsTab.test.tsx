@@ -25,6 +25,25 @@ function appStateWithMappings(mappings: MappingState): AppState {
   };
 }
 
+const builtinCatalog: MappingState['metrics'] = [
+  {
+    id: 'events',
+    name: 'trove.harness.events',
+    kind: 'counter',
+    description: '',
+    requiredAttributes: ['event.kind'],
+    builtin: true,
+  },
+  {
+    id: 'tokens',
+    name: 'trove.harness.tokens',
+    kind: 'counter',
+    description: '',
+    requiredAttributes: ['direction'],
+    builtin: true,
+  },
+];
+
 describe('MappingsTab', () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -34,50 +53,49 @@ describe('MappingsTab', () => {
     vi.restoreAllMocks();
   });
 
+  it('renders the metrics catalog with builtin metrics', () => {
+    const state = appStateWithMappings({
+      schemaVersion: 2,
+      metrics: builtinCatalog,
+      harnesses: [],
+    });
+
+    render(<MappingsTab appState={state} onAppStateRefresh={vi.fn()} />);
+    expect(screen.getByText('Metrics catalog')).toBeDefined();
+    expect(screen.getByText('trove.harness.events')).toBeDefined();
+    expect(screen.getByText('trove.harness.tokens')).toBeDefined();
+  });
+
   it('renders one card per harness in the mapping state', () => {
     const state = appStateWithMappings({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      metrics: builtinCatalog,
       harnesses: [
         {
           harnessId: 'claude-code',
           enabled: true,
-          sources: [
-            {
-              kind: 'synthesize-from-native',
-              nativeMetric: 'claude_code.token.usage',
-              targetMetric: 'tokens',
-              attributeMap: { type: 'direction' },
-              injectAttributes: {},
-            },
-          ],
+          sources: [],
           costOverrides: {},
         },
         {
           harnessId: 'cursor-ide',
           enabled: true,
-          sources: [
-            {
-              kind: 'hook-rule',
-              when: 'afterAgentResponse',
-              emit: {
-                metric: 'events',
-                attributes: { 'event.kind': 'chat.turn' },
-              },
-            },
-          ],
+          sources: [],
           costOverrides: {},
         },
       ],
     });
 
     render(<MappingsTab appState={state} onAppStateRefresh={vi.fn()} />);
-    expect(screen.getByTestId('mapping-card-claude-code')).toBeDefined();
-    expect(screen.getByTestId('mapping-card-cursor-ide')).toBeDefined();
+    // Each harness id renders as a CardTitle in monospace.
+    expect(screen.getByText('claude-code')).toBeDefined();
+    expect(screen.getByText('cursor-ide')).toBeDefined();
   });
 
-  it('renders synthesis row with native and Tier A metric names', () => {
+  it('renders the synthesis-row summary with native and target metric', () => {
     const state = appStateWithMappings({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      metrics: builtinCatalog,
       harnesses: [
         {
           harnessId: 'gemini-cli',
@@ -97,17 +115,16 @@ describe('MappingsTab', () => {
     });
 
     render(<MappingsTab appState={state} onAppStateRefresh={vi.fn()} />);
-    const card = screen.getByTestId('mapping-card-gemini-cli');
-    // The synthesis details summary is rendered; the row itself lives
-    // inside it. Confirm the native name and the Tier A name both
-    // appear inside this card's DOM tree.
-    expect(card.textContent).toContain('gemini_cli.session.count');
-    expect(card.textContent).toContain('trove.harness.events');
+    expect(screen.getByText('gemini_cli.session.count')).toBeDefined();
+    // Catalog name renders for the target; multiple instances allowed.
+    const occurrences = screen.getAllByText('trove.harness.events');
+    expect(occurrences.length).toBeGreaterThan(0);
   });
 
-  it('renders hook-rule row with null emit as "no emission"', () => {
+  it('renders a hook-rule with null emit as "no emission"', () => {
     const state = appStateWithMappings({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      metrics: builtinCatalog,
       harnesses: [
         {
           harnessId: 'cursor-ide',
@@ -119,58 +136,13 @@ describe('MappingsTab', () => {
     });
 
     render(<MappingsTab appState={state} onAppStateRefresh={vi.fn()} />);
-    const card = screen.getByTestId('mapping-card-cursor-ide');
-    expect(card.textContent).toContain('no emission');
+    expect(screen.getByText('no emission')).toBeDefined();
   });
 
-  it('clicking the enable checkbox calls apply_mappings with the toggled value', async () => {
-    invokeMock.mockResolvedValue(null);
-    const onRefresh = vi.fn();
+  it('toggling enabled marks the harness card as Modified', () => {
     const state = appStateWithMappings({
-      schemaVersion: 1,
-      harnesses: [
-        {
-          harnessId: 'aider',
-          enabled: true,
-          sources: [],
-          costOverrides: {},
-        },
-      ],
-    });
-
-    render(<MappingsTab appState={state} onAppStateRefresh={onRefresh} />);
-    fireEvent.click(screen.getByTestId('mapping-enabled-aider'));
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalled();
-    });
-    const [command, payload] = invokeMock.mock.calls[0]!;
-    expect(command).toBe('apply_mappings');
-    expect(payload).toMatchObject({
-      mappings: {
-        schemaVersion: 1,
-        harnesses: [expect.objectContaining({ harnessId: 'aider', enabled: false })],
-      },
-    });
-    expect(onRefresh).toHaveBeenCalled();
-  });
-
-  it('reset-all button calls reset_mappings_to_defaults', async () => {
-    invokeMock.mockResolvedValue(null);
-    const onRefresh = vi.fn();
-    const state = appStateWithMappings({ schemaVersion: 1, harnesses: [] });
-
-    render(<MappingsTab appState={state} onAppStateRefresh={onRefresh} />);
-    fireEvent.click(screen.getByTestId('mappings-reset-all'));
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith('reset_mappings_to_defaults', undefined);
-    });
-    expect(onRefresh).toHaveBeenCalled();
-  });
-
-  it('surfaces an IPC error in the error banner', async () => {
-    invokeMock.mockRejectedValueOnce({ kind: 'internal', reason: 'bad mapping' });
-    const state = appStateWithMappings({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      metrics: builtinCatalog,
       harnesses: [
         {
           harnessId: 'aider',
@@ -182,9 +154,88 @@ describe('MappingsTab', () => {
     });
 
     render(<MappingsTab appState={state} onAppStateRefresh={vi.fn()} />);
-    fireEvent.click(screen.getByTestId('mapping-enabled-aider'));
+    expect(screen.queryByText('Modified')).toBeNull();
+    // The enabled checkbox is the first checkbox inside the harness card.
+    const checkbox = screen.getByRole('checkbox');
+    fireEvent.click(checkbox);
+    // Modified pill appears in the dirty state.
+    expect(screen.getAllByText('Modified').length).toBeGreaterThan(0);
+  });
+
+  it('Apply sends the full draft to apply_mappings and refreshes', async () => {
+    invokeMock.mockResolvedValue(null);
+    const onRefresh = vi.fn();
+    const state = appStateWithMappings({
+      schemaVersion: 2,
+      metrics: builtinCatalog,
+      harnesses: [
+        {
+          harnessId: 'aider',
+          enabled: true,
+          sources: [],
+          costOverrides: {},
+        },
+      ],
+    });
+
+    render(<MappingsTab appState={state} onAppStateRefresh={onRefresh} />);
+    // Make the harness dirty.
+    fireEvent.click(screen.getByRole('checkbox'));
+    // The per-harness Apply button is enabled once dirty.
+    const applyButtons = screen.getAllByText('Apply');
+    fireEvent.click(applyButtons[0]!);
     await waitFor(() => {
-      expect(screen.getByTestId('mappings-error').textContent).toContain('bad mapping');
+      expect(invokeMock).toHaveBeenCalled();
+    });
+    const [command, payload] = invokeMock.mock.calls[0]!;
+    expect(command).toBe('apply_mappings');
+    expect(payload).toMatchObject({
+      mappings: {
+        schemaVersion: 2,
+        harnesses: [expect.objectContaining({ harnessId: 'aider', enabled: false })],
+      },
+    });
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('Reset to defaults calls reset_mappings_to_defaults', async () => {
+    invokeMock.mockResolvedValue(null);
+    const onRefresh = vi.fn();
+    const state = appStateWithMappings({
+      schemaVersion: 2,
+      metrics: builtinCatalog,
+      harnesses: [],
+    });
+
+    render(<MappingsTab appState={state} onAppStateRefresh={onRefresh} />);
+    fireEvent.click(screen.getByText('Reset to defaults'));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('reset_mappings_to_defaults', undefined);
+    });
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('surfaces an IPC error in an inline banner', async () => {
+    invokeMock.mockRejectedValueOnce({ kind: 'internal', reason: 'bad mapping' });
+    const state = appStateWithMappings({
+      schemaVersion: 2,
+      metrics: builtinCatalog,
+      harnesses: [
+        {
+          harnessId: 'aider',
+          enabled: true,
+          sources: [],
+          costOverrides: {},
+        },
+      ],
+    });
+
+    render(<MappingsTab appState={state} onAppStateRefresh={vi.fn()} />);
+    fireEvent.click(screen.getByRole('checkbox'));
+    const applyButtons = screen.getAllByText('Apply');
+    fireEvent.click(applyButtons[0]!);
+    await waitFor(() => {
+      expect(screen.getByText(/bad mapping/)).toBeDefined();
     });
   });
 });

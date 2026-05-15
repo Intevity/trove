@@ -20,15 +20,20 @@
 
 use std::collections::BTreeMap;
 
-use super::{HarnessMapping, HookEmit, MappingSource, MappingState, TierAMetric, MAPPING_SCHEMA_VERSION};
+use super::{
+    HarnessMapping, HookEmit, MappingSource, MappingState, TierAMetric, TroveMetricDefinition,
+    MAPPING_SCHEMA_VERSION,
+};
 use crate::harness::HarnessId;
 
-/// The full default mapping state — every supported harness, in tier
-/// order to match the UI sort.
+/// The full default mapping state — every supported harness in tier
+/// order, plus the five builtin metric-catalog entries seeded so the
+/// UI's metrics catalog is populated on first launch.
 #[must_use]
 pub fn default_state() -> MappingState {
     MappingState {
         schema_version: MAPPING_SCHEMA_VERSION,
+        metrics: default_metric_catalog(),
         harnesses: vec![
             defaults_for(HarnessId::ClaudeCode),
             defaults_for(HarnessId::ClaudeDesktop),
@@ -43,6 +48,18 @@ pub fn default_state() -> MappingState {
             defaults_for(HarnessId::CopilotCli),
         ],
     }
+}
+
+/// The five builtin Tier A metric definitions in dashboard-display
+/// order. Consumed by [`default_state`] and the v1→v2 migration
+/// (`MappingState::migrate_to_current`). Custom metrics added by the
+/// user append to this list with `builtin: false`.
+#[must_use]
+pub fn default_metric_catalog() -> Vec<TroveMetricDefinition> {
+    TierAMetric::all()
+        .iter()
+        .map(|m| m.definition())
+        .collect()
 }
 
 /// Default mapping for one harness. Use this when an individual harness
@@ -89,7 +106,7 @@ fn claude_code_defaults() -> HarnessMapping {
         sources: vec![
             MappingSource::SynthesizeFromNative {
                 native_metric: "claude_code.session.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
                     ("event.kind".into(), "chat.turn".into()),
@@ -97,7 +114,7 @@ fn claude_code_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "claude_code.tool.decision.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
                     ("event.kind".into(), "tool.call".into()),
@@ -105,7 +122,7 @@ fn claude_code_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "claude_code.token.usage".into(),
-                target_metric: TierAMetric::Tokens,
+                target_metric: TierAMetric::Tokens.id(),
                 // Claude Code's native attribute is `type=input|output`;
                 // Tier A wants `direction`. The collector transform
                 // rewrites the attribute key inline.
@@ -159,55 +176,60 @@ fn claude_desktop_defaults() -> HarnessMapping {
             MappingSource::HookRule {
                 when: "tool_result".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Events,
+                    metric: TierAMetric::Events.id(),
                     attributes: attr("event.kind", "tool.call"),
                 }),
             },
             // `api_request` — fires on every successful Claude API call.
             // Documented attributes: model, cost_usd, duration_ms,
             // input_tokens, output_tokens, cache_read_tokens,
-            // cache_creation_tokens, speed. Fans out into four Tier A
-            // metrics:
+            // cache_creation_tokens, speed.
             //
-            //   1. events (event.kind=chat.turn) — one chat turn per
-            //      successful api_request.
-            //   2. tokens — the connector inspects input_tokens /
-            //      output_tokens / cache_* and emits one Tier A row
-            //      per direction (direction=input/output). The
-            //      validator allows multiple HookRule rows for the
-            //      same `when` as long as each targets a distinct
-            //      TierAMetric, so all four lines below coexist.
-            //   3. cost.usd (cost.method=exact) — Anthropic computes
-            //      the per-call cost server-side, so the Tier A
-            //      cost.method is `exact` (not the estimated rate-card
-            //      math Trove does for other harnesses).
-            //   4. turn.duration — duration_ms / 1000 → seconds.
+            // The watcher fans out the observation across distinct
+            // `when` keys (one per facet) so each rule matches exactly
+            // one observation type. The kind filter in the runtime
+            // additionally lets events (Counter) and turn.duration
+            // (Histogram) share `when=api_request` without fighting.
+            //
+            //   1. events       — `api_request`           (Counter, +1, event.kind=chat.turn)
+            //   2. turn.duration— `api_request`           (Histogram, duration_s, event.kind=chat.turn)
+            //   3. tokens.in    — `api_request.tokens.input`  (Counter, +n, direction=input)
+            //   4. tokens.out   — `api_request.tokens.output` (Counter, +n, direction=output)
+            //   5. cost.usd     — `api_request.cost`      (Counter/double, +usd, cost.method=exact)
+            //   6. errors       — `api_error`             (Counter, +1, error.kind from status)
             MappingSource::HookRule {
                 when: "api_request".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Events,
+                    metric: TierAMetric::Events.id(),
                     attributes: attr("event.kind", "chat.turn"),
                 }),
             },
             MappingSource::HookRule {
                 when: "api_request".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Tokens,
-                    attributes: BTreeMap::new(),
+                    metric: TierAMetric::TurnDuration.id(),
+                    attributes: attr("event.kind", "chat.turn"),
                 }),
             },
             MappingSource::HookRule {
-                when: "api_request".into(),
+                when: "api_request.tokens.input".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::CostUsd,
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "input"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "api_request.tokens.output".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "output"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "api_request.cost".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::CostUsd.id(),
                     attributes: attr("cost.method", "exact"),
-                }),
-            },
-            MappingSource::HookRule {
-                when: "api_request".into(),
-                emit: Some(HookEmit {
-                    metric: TierAMetric::TurnDuration,
-                    attributes: attr("event.kind", "chat.turn"),
                 }),
             },
             // `api_error` — fires on Claude API failures. Documented
@@ -219,7 +241,7 @@ fn claude_desktop_defaults() -> HarnessMapping {
             MappingSource::HookRule {
                 when: "api_error".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Errors,
+                    metric: TierAMetric::Errors.id(),
                     attributes: attr("error.kind", "unknown"),
                 }),
             },
@@ -256,7 +278,7 @@ fn gemini_cli_defaults() -> HarnessMapping {
         sources: vec![
             MappingSource::SynthesizeFromNative {
                 native_metric: "gemini_cli.api.request.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::from([
                     // The dashboard groups by `model`; Gemini's native
                     // attribute is `gen_ai.request.model`. Rename it
@@ -269,7 +291,7 @@ fn gemini_cli_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gemini_cli.tool.call.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
                     ("event.kind".into(), "tool.call".into()),
@@ -277,7 +299,7 @@ fn gemini_cli_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gen_ai.client.token.usage".into(),
-                target_metric: TierAMetric::Tokens,
+                target_metric: TierAMetric::Tokens.id(),
                 attribute_map: BTreeMap::from([
                     ("gen_ai.token.type".into(), "direction".into()),
                     ("gen_ai.request.model".into(), "model".into()),
@@ -286,7 +308,7 @@ fn gemini_cli_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gen_ai.client.operation.duration".into(),
-                target_metric: TierAMetric::TurnDuration,
+                target_metric: TierAMetric::TurnDuration.id(),
                 attribute_map: BTreeMap::from([
                     ("gen_ai.request.model".into(), "model".into()),
                 ]),
@@ -295,20 +317,67 @@ fn gemini_cli_defaults() -> HarnessMapping {
                 ]),
             },
             MappingSource::SynthesizeFromNative {
+                // Model-routing failures are upstream / network-layer
+                // problems. error.kind is closed-enum per MAPPING_PLAN.md
+                // §"Background"; "network" is the canonical bucket for
+                // upstream-API failures.
                 native_metric: "gemini_cli.model_routing.failure.count".into(),
-                target_metric: TierAMetric::Errors,
+                target_metric: TierAMetric::Errors.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
-                    ("error.kind".into(), "routing".into()),
+                    ("error.kind".into(), "network".into()),
                 ]),
             },
             MappingSource::SynthesizeFromNative {
+                // Content-retry failures are also upstream API failures
+                // (transient errors that exceeded the retry budget). Same
+                // canonical bucket.
                 native_metric: "gemini_cli.chat.content_retry_failure.count".into(),
-                target_metric: TierAMetric::Errors,
+                target_metric: TierAMetric::Errors.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
-                    ("error.kind".into(), "retry".into()),
+                    ("error.kind".into(), "network".into()),
                 ]),
+            },
+            // gemini_watcher hook rules — the chat-log watcher emits
+            // per-turn observations against these `when` keys. Users
+            // can disable or retarget any of them via the Mappings
+            // editor; the watcher consults this table at every poll
+            // so edits take effect without a restart.
+            MappingSource::HookRule {
+                when: "gemini.turn".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Events.id(),
+                    attributes: attr("event.kind", "chat.turn"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "gemini.turn".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::TurnDuration.id(),
+                    attributes: attr("event.kind", "chat.turn"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "gemini.tokens.input".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "input"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "gemini.tokens.output".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "output"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "gemini.cost".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::CostUsd.id(),
+                    attributes: attr("cost.method", "estimated"),
+                }),
             },
         ],
         cost_overrides: BTreeMap::new(),
@@ -328,7 +397,7 @@ fn codex_cli_defaults() -> HarnessMapping {
         sources: vec![
             MappingSource::SynthesizeFromNative {
                 native_metric: "codex.session.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
                     ("event.kind".into(), "chat.turn".into()),
@@ -336,7 +405,7 @@ fn codex_cli_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "codex.tool.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
                     ("event.kind".into(), "tool.call".into()),
@@ -344,7 +413,7 @@ fn codex_cli_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gen_ai.client.token.usage".into(),
-                target_metric: TierAMetric::Tokens,
+                target_metric: TierAMetric::Tokens.id(),
                 attribute_map: BTreeMap::from([
                     ("gen_ai.token.type".into(), "direction".into()),
                     ("gen_ai.request.model".into(), "model".into()),
@@ -353,7 +422,7 @@ fn codex_cli_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "gen_ai.client.operation.duration".into(),
-                target_metric: TierAMetric::TurnDuration,
+                target_metric: TierAMetric::TurnDuration.id(),
                 attribute_map: BTreeMap::from([
                     ("gen_ai.request.model".into(), "model".into()),
                 ]),
@@ -381,7 +450,7 @@ fn qwen_code_defaults() -> HarnessMapping {
         sources: vec![
             MappingSource::SynthesizeFromNative {
                 native_metric: "qwen_code.api.request.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
                     ("event.kind".into(), "chat.turn".into()),
@@ -389,7 +458,7 @@ fn qwen_code_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "qwen_code.tool.call.count".into(),
-                target_metric: TierAMetric::Events,
+                target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([
                     ("event.kind".into(), "tool.call".into()),
@@ -397,7 +466,7 @@ fn qwen_code_defaults() -> HarnessMapping {
             },
             MappingSource::SynthesizeFromNative {
                 native_metric: "qwen_code.token.usage".into(),
-                target_metric: TierAMetric::Tokens,
+                target_metric: TierAMetric::Tokens.id(),
                 attribute_map: BTreeMap::from([
                     ("type".into(), "direction".into()),
                 ]),
@@ -436,26 +505,80 @@ fn cursor_ide_defaults() -> HarnessMapping {
         harness_id: HarnessId::CursorIde,
         enabled: true,
         sources: vec![
+            // before* events are turn-start markers — the bundled Cursor
+            // hook stashes a /tmp file so the matching after* can compute
+            // turn.duration. Suppressed here to avoid double-counting.
             MappingSource::HookRule {
                 when: "beforeSubmitPrompt".into(),
                 emit: None,
             },
             MappingSource::HookRule {
+                when: "beforeShellExecution".into(),
+                emit: None,
+            },
+            // afterAgentResponse — one chat turn. The hook fans the
+            // single observation across distinct `when` keys (one per
+            // facet) so each rule matches exactly one observation type.
+            // Events + turn.duration share `afterAgentResponse` (Counter
+            // vs Histogram kind filter keeps them separate at runtime).
+            MappingSource::HookRule {
                 when: "afterAgentResponse".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Events,
+                    metric: TierAMetric::Events.id(),
                     attributes: attr("event.kind", "chat.turn"),
                 }),
             },
             MappingSource::HookRule {
-                when: "beforeShellExecution".into(),
-                emit: None,
+                when: "afterAgentResponse".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::TurnDuration.id(),
+                    attributes: attr("event.kind", "chat.turn"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "afterAgentResponse.tokens.input".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "input"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "afterAgentResponse.tokens.output".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "output"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "afterAgentResponse.cost".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::CostUsd.id(),
+                    attributes: attr("cost.method", "estimated"),
+                }),
+            },
+            // afterShellExecution — one shell command. Events +
+            // turn.duration share the bare `when` key (kind-separated).
+            // Errors (exit_code != 0) get their own `.error` suffix so
+            // the rule fires only on failures.
+            MappingSource::HookRule {
+                when: "afterShellExecution".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Events.id(),
+                    attributes: attr("event.kind", "shell.exec"),
+                }),
             },
             MappingSource::HookRule {
                 when: "afterShellExecution".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Events,
+                    metric: TierAMetric::TurnDuration.id(),
                     attributes: attr("event.kind", "shell.exec"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "afterShellExecution.error".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Errors.id(),
+                    attributes: attr("error.kind", "tool_failure"),
                 }),
             },
         ],
@@ -481,6 +604,17 @@ fn cursor_cli_defaults() -> HarnessMapping {
 /// `ui_messages.json`. The watcher (`cline_watcher.rs`) consults these
 /// rules at emission time after the Tier A upgrade in Phase 2.
 fn cline_defaults() -> HarnessMapping {
+    // The Cline watcher classifies `ui_messages.json` rows into the four
+    // `say.*` `when` keys below — `text`, `tool`, `command`, `error` —
+    // and emits one observation per matching message. Cline's
+    // `api_req_finished` row carries an aggregated token count *string*
+    // without a per-direction breakdown, so the watcher doesn't surface
+    // it to the rules runtime today: any rule keyed on
+    // `api_req_finished` would be dead and would fail validation
+    // (Tokens requires `direction`). If a future Cline release exposes
+    // direction-tagged token totals, add a per-facet `say.tokens.input`/
+    // `say.tokens.output` rule pair (mirroring the Claude Desktop
+    // pattern) rather than a single direction-less rule.
     HarnessMapping {
         harness_id: HarnessId::Cline,
         enabled: true,
@@ -488,36 +622,29 @@ fn cline_defaults() -> HarnessMapping {
             MappingSource::HookRule {
                 when: "say.text".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Events,
+                    metric: TierAMetric::Events.id(),
                     attributes: attr("event.kind", "chat.turn"),
                 }),
             },
             MappingSource::HookRule {
                 when: "say.tool".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Events,
+                    metric: TierAMetric::Events.id(),
                     attributes: attr("event.kind", "tool.call"),
                 }),
             },
             MappingSource::HookRule {
                 when: "say.command".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Events,
+                    metric: TierAMetric::Events.id(),
                     attributes: attr("event.kind", "shell.exec"),
                 }),
             },
             MappingSource::HookRule {
                 when: "say.error".into(),
                 emit: Some(HookEmit {
-                    metric: TierAMetric::Errors,
+                    metric: TierAMetric::Errors.id(),
                     attributes: attr("error.kind", "unknown"),
-                }),
-            },
-            MappingSource::HookRule {
-                when: "api_req_finished".into(),
-                emit: Some(HookEmit {
-                    metric: TierAMetric::Tokens,
-                    attributes: BTreeMap::new(),
                 }),
             },
         ],
@@ -525,20 +652,38 @@ fn cline_defaults() -> HarnessMapping {
     }
 }
 
-/// Aider's wrapper emits one event per invocation; the only timing
-/// data is the wrapper's start/end timestamps. Tokens/cost aren't
-/// available without scraping Aider's chat-history files (future PR).
+/// Aider's wrapper emits one event per invocation. The runtime emits
+/// three Tier A facets per invocation: an `events` row, a
+/// `turn.duration` histogram observation, and (only on non-zero exit)
+/// an `errors` row. Each is a separate rule so users can disable any
+/// facet individually via the Mappings editor.
 fn aider_defaults() -> HarnessMapping {
     HarnessMapping {
         harness_id: HarnessId::Aider,
         enabled: true,
-        sources: vec![MappingSource::HookRule {
-            when: "wrapper.invocation".into(),
-            emit: Some(HookEmit {
-                metric: TierAMetric::Events,
-                attributes: attr("event.kind", "chat.turn"),
-            }),
-        }],
+        sources: vec![
+            MappingSource::HookRule {
+                when: "wrapper.invocation".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Events.id(),
+                    attributes: attr("event.kind", "chat.turn"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "wrapper.invocation".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::TurnDuration.id(),
+                    attributes: attr("event.kind", "chat.turn"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "wrapper.error".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Errors.id(),
+                    attributes: attr("error.kind", "unknown"),
+                }),
+            },
+        ],
         cost_overrides: BTreeMap::new(),
     }
 }
@@ -607,33 +752,47 @@ mod tests {
 
     #[test]
     fn claude_desktop_api_request_fans_into_four_tier_a_metrics() {
-        // api_request carries model + token totals + cost_usd + duration
-        // — verify the four-row fan-out one-by-one. The validator
-        // enforces (when, metric) uniqueness, so collision-by-mistake
-        // is caught at apply time.
+        // api_request carries model + token totals + cost_usd + duration.
+        // v2 splits the fan-out across distinct `when` keys per facet so
+        // each rule matches exactly one observation type (the runtime
+        // additionally uses a kind filter so events+turn.duration can
+        // share `api_request` without fighting):
+        //   - api_request                  → events, turn.duration
+        //   - api_request.tokens.input     → tokens (direction=input)
+        //   - api_request.tokens.output    → tokens (direction=output)
+        //   - api_request.cost             → cost.usd
         let m = claude_desktop_defaults();
-        let emitted_metrics: Vec<TierAMetric> = m
+        let by_when: std::collections::BTreeMap<String, Vec<String>> = m
             .sources
             .iter()
             .filter_map(|s| match s {
                 MappingSource::HookRule {
                     when,
                     emit: Some(e),
-                } if when == "api_request" => Some(e.metric),
+                } => Some((when.clone(), e.metric.clone())),
                 _ => None,
             })
-            .collect();
-        for expected in [
-            TierAMetric::Events,
-            TierAMetric::Tokens,
-            TierAMetric::CostUsd,
-            TierAMetric::TurnDuration,
-        ] {
-            assert!(
-                emitted_metrics.contains(&expected),
-                "api_request should fan into {expected:?}",
-            );
-        }
+            .fold(std::collections::BTreeMap::new(), |mut acc, (w, m)| {
+                acc.entry(w).or_default().push(m);
+                acc
+            });
+        // api_request fans into events + turn.duration.
+        let api_request = by_when.get("api_request").expect("api_request rules");
+        assert!(api_request.contains(&TierAMetric::Events.id()));
+        assert!(api_request.contains(&TierAMetric::TurnDuration.id()));
+        // Per-facet keys each target exactly one Tier A metric.
+        assert_eq!(
+            by_when.get("api_request.tokens.input").expect("tokens.input"),
+            &vec![TierAMetric::Tokens.id()],
+        );
+        assert_eq!(
+            by_when.get("api_request.tokens.output").expect("tokens.output"),
+            &vec![TierAMetric::Tokens.id()],
+        );
+        assert_eq!(
+            by_when.get("api_request.cost").expect("cost"),
+            &vec![TierAMetric::CostUsd.id()],
+        );
     }
 
     #[test]
@@ -664,10 +823,11 @@ mod tests {
         // accept this shape — `same_when_different_metric_is_allowed`
         // pins the contract; this test pins it specifically for
         // claude-desktop so a future regression doesn't slip through.
-        let mut state = MappingState {
-            schema_version: MAPPING_SCHEMA_VERSION,
-            harnesses: vec![claude_desktop_defaults()],
-        };
+        // The catalog seed is needed for the v2 validator to resolve
+        // `target_metric` ids; build a default state and swap in just
+        // the claude-desktop harness for the targeted case.
+        let mut state = default_state();
+        state.harnesses = vec![claude_desktop_defaults()];
         super::super::validate::validate(&state).expect("claude-desktop defaults must validate");
 
         // Also confirm the full default_state validates as a sanity
@@ -779,11 +939,33 @@ mod tests {
                 if let MappingSource::SynthesizeFromNative { target_metric, .. } = src {
                     assert_ne!(
                         target_metric,
-                        TierAMetric::CostUsd,
+                        TierAMetric::CostUsd.id(),
                         "{id:?} defaults included a cost.usd row"
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn default_metric_catalog_seeds_every_builtin() {
+        let cat = default_metric_catalog();
+        assert_eq!(cat.len(), 5);
+        for builtin in TierAMetric::all() {
+            let entry = cat
+                .iter()
+                .find(|m| m.id == builtin.id())
+                .unwrap_or_else(|| panic!("catalog missing builtin {builtin:?}"));
+            assert!(entry.builtin, "builtin entry must carry builtin: true");
+            assert_eq!(entry.name, builtin.full_name());
+            assert_eq!(entry.kind, builtin.kind());
+        }
+    }
+
+    #[test]
+    fn default_state_carries_catalog_at_current_version() {
+        let s = default_state();
+        assert_eq!(s.schema_version, MAPPING_SCHEMA_VERSION);
+        assert_eq!(s.metrics.len(), 5);
     }
 }

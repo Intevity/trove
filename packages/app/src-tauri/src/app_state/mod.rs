@@ -360,7 +360,27 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
                     reason: e.to_string(),
                 })?;
             state.schema_version = CURRENT_SCHEMA_VERSION;
+            // The inner `MappingState.schema_version` is independent of
+            // the outer AppState version. Run the inner migration here
+            // so v1 mapping docs (no `metrics` field) pick up the
+            // builtin catalog before validators or codegen run. When
+            // the migration mutates the document (e.g. coerces a
+            // legacy `error.kind=routing` to `network`, or splits the
+            // legacy claude-desktop api_request fan-out into per-facet
+            // keys), persist the fixed-up state back to disk so the
+            // user never sees the stale validation errors on next
+            // launch. Best-effort save: a write failure here doesn't
+            // block the load itself.
+            let mappings_migrated = state.mappings.migrate_to_current();
             backfill_missing_harness_mappings(&mut state);
+            if mappings_migrated {
+                if let Err(e) = save_to_dir(config_dir, &state) {
+                    tracing::warn!(
+                        error = %e,
+                        "failed to persist migrated mappings — will retry on next save"
+                    );
+                }
+            }
             Ok(state)
         }
         // v1 was never persisted in the wild — Sprint 4 bumped the shape

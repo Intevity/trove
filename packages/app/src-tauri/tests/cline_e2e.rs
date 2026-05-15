@@ -55,9 +55,14 @@ async fn cline_watcher_emits_otlp_log_for_a_fixture_task() {
     let emit_metric = |_p: Value| async { Ok::<_, OtlpEmitError>(()) };
 
     let task = tokio::spawn(async move {
+        let mappings = trove_app::mappings::MappingStateStore::new(
+            trove_app::mappings::default_state(),
+        )
+        .subscribe();
         cline_watcher::run(
             tasks_dir,
             ApplyOptions::default(),
+            mappings,
             Duration::from_millis(50),
             emit_log,
             emit_metric,
@@ -118,9 +123,14 @@ async fn cline_watcher_emits_only_once_per_unchanged_task() {
     let emit_metric = |_p: Value| async { Ok::<_, OtlpEmitError>(()) };
 
     let task = tokio::spawn(async move {
+        let mappings = trove_app::mappings::MappingStateStore::new(
+            trove_app::mappings::default_state(),
+        )
+        .subscribe();
         cline_watcher::run(
             tasks_dir,
             ApplyOptions::default(),
+            mappings,
             Duration::from_millis(50),
             emit_log,
             emit_metric,
