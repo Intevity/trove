@@ -139,17 +139,23 @@ pub fn parse_event_line(line: &str, opts: &ApplyOptions) -> Option<Value> {
 /// Copilot CLI exposes no tokenizer or rate-table either, so token and
 /// cost metrics are intentionally absent.
 #[must_use]
-pub fn parse_event_metric_payload(line: &str, opts: &ApplyOptions) -> Option<Value> {
+pub fn parse_event_metric_payload(
+    line: &str,
+    opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
+) -> Option<Value> {
     super::wrapper_common_metrics::build_invocation_metrics(
         line,
         opts,
         &super::wrapper_common_metrics::WrapperMetricsSpec {
             expected_tool: "copilot-cli",
             service_name: "copilot-cli",
+            harness: crate::harness::HarnessId::CopilotCli,
             harness_id: "copilot-cli",
             harness_name: "GitHub Copilot CLI",
             scope_name: "trove.adapters.copilot_cli",
         },
+        mappings,
     )
 }
 

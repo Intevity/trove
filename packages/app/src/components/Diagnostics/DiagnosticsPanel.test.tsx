@@ -61,7 +61,7 @@ function appState(opts?: {
     harnesses: opts?.harnesses ?? [harnessConfig('claude-code', true)],
     autoUpdateEnabled: false,
     identity: { enabled: false, source: 'auto', name: '', email: '' },
-    mappings: { schemaVersion: 1, harnesses: [] },
+    mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
     telemetryObserved: {},
   };
 }

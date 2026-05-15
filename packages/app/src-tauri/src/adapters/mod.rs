@@ -22,6 +22,7 @@ pub mod codex_cli;
 pub mod copilot_cli;
 pub mod cursor_cli;
 pub mod cursor_common;
+pub mod cursor_hook_codegen;
 pub mod cursor_ide;
 pub mod gemini_cli;
 pub mod gemini_watcher;

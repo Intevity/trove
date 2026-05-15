@@ -8,31 +8,22 @@
 //   - beforeShellExecution / afterShellExecution — terminal commands
 //   - beforeSubmitPrompt   / afterAgentResponse  — chat round-trips
 //
-// **What we emit (Tier A schema — see documentation/architecture.md).**
+// **Rules-driven emission.** The script reads the user's current Trove
+// mapping state from `~/.cursor/trove-hook-rules.json` (written by the
+// Tauri app's `apply_mappings` IPC). For each Cursor hook event the
+// script classifies the observation into one or more `when` keys (one
+// per facet: events, tokens.input, tokens.output, cost, error) and looks
+// up every rule whose `when` matches. The rule's target metric id is
+// resolved against the sidecar's catalog to produce the wire name and
+// OTLP shape. This is the same rules-driven path the in-process Rust
+// watchers (Cline, Gemini, Claude Desktop) use — the JS port keeps
+// Cursor on the same model.
 //
-// Every hook invocation produces a *log record* with rich per-event
-// detail (event name, conversation/generation ids, command or byte
-// counts, model). Logs are unaggregated, high-cardinality is fine.
-//
-// Only "after" events produce *metric* data points — the matching
-// "before" event writes a turn-start marker to /tmp so afterShellExecution
-// / afterAgentResponse can compute turn.duration without keeping process
-// state (each hook invocation is a fresh node process). Avoiding double
-// counts is why before* doesn't emit metrics.
-//
-// Tier A metrics emitted by this hook:
-//
-//   - trove.harness.events       Sum (Δ, mono)   event.kind ∈ {chat.turn, shell.exec}
-//   - trove.harness.tokens       Sum (Δ, mono)   direction ∈ {input, output}, model
-//   - trove.harness.cost.usd     Sum (Δ, mono)   model, cost.method = "estimated"
-//   - trove.harness.turn.duration Histogram      event.kind
-//   - trove.harness.errors       Sum (Δ, mono)   error.kind ∈ {tool_failure, …}
-//
-// Cost and tokens are *estimated* — Cursor's hook payload only gives us
-// the prompt/response byte length, not the upstream tokenizer's count.
-// The `cost.method = estimated` attribute marks every cost point so
-// dashboards can filter or weight as desired. Accuracy ~70-90% on
-// English/code; see documentation/architecture.md for the tradeoff.
+// **Fallback.** When the sidecar is missing (host upgraded the bundled
+// cjs before the app's first apply_mappings) we drive the same default
+// rules in-memory (see `FALLBACK_SIDECAR`). The defaults mirror the
+// Rust `cursor_ide_defaults()` row-by-row so the emit shape is identical
+// either way.
 //
 // **Metadata only.** This script never emits the textual body of a
 // prompt or agent response — only byte counts and opaque ids. Don't
@@ -69,13 +60,8 @@ const HARNESS_NAME = 'Cursor';
  *  the sonnet row). Patterns are checked in order; the first match
  *  wins, so put longer/more-specific names first. When the model is
  *  unknown we skip the cost emission entirely — better to miss a
- *  data point than emit a fabricated number.
- *
- *  Sync the canonical table at documentation/MAPPING_PLAN.md and the
- *  Rust mirror once the mapping-system lands. Prices revisited at each
- *  Trove release. */
+ *  data point than emit a fabricated number. */
 const COST_RATES_USD_PER_1K_TOK = [
-  // [substring, input_per_1k, output_per_1k]
   ['claude-opus-4', 15.0, 75.0],
   ['claude-sonnet-4', 3.0, 15.0],
   ['claude-haiku-4', 1.0, 5.0],
@@ -95,9 +81,92 @@ const COST_RATES_USD_PER_1K_TOK = [
 ];
 
 /** Histogram bucket boundaries for trove.harness.turn.duration (seconds).
- *  Covers tab-complete latency through multi-minute agent runs. Match
- *  documentation/architecture.md. */
+ *  Covers tab-complete latency through multi-minute agent runs. Must
+ *  match `DEFAULT_HISTOGRAM_BUCKET_BOUNDS_SECONDS` in the Rust runtime
+ *  so cross-harness duration panels render against the same buckets. */
 const TURN_DURATION_BUCKETS_S = [0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600];
+
+/** Sidecar file the Tauri app writes whenever the user changes mappings.
+ *  The script reads this every invocation; on miss we use the embedded
+ *  fallback (which is byte-for-byte equivalent to a fresh install). */
+const SIDECAR_PATH = path.join(os.homedir(), '.cursor', 'trove-hook-rules.json');
+
+/** Builtin catalog entries + cursor rules embedded inline. This mirrors
+ *  the Rust defaults exactly so a host that hasn't yet seen an
+ *  `apply_mappings` call still emits the canonical Tier A set. Schema
+ *  version is bumped in lockstep with `SIDECAR_SCHEMA_VERSION` in
+ *  `cursor_hook_codegen.rs`. */
+const FALLBACK_SIDECAR = {
+  schemaVersion: 1,
+  metrics: [
+    {
+      id: 'events',
+      name: 'trove.harness.events',
+      kind: 'counter',
+      requiredAttributes: ['event.kind'],
+    },
+    {
+      id: 'tokens',
+      name: 'trove.harness.tokens',
+      kind: 'counter',
+      requiredAttributes: ['direction'],
+    },
+    {
+      id: 'cost.usd',
+      name: 'trove.harness.cost.usd',
+      kind: 'counter',
+      requiredAttributes: ['cost.method'],
+    },
+    {
+      id: 'turn.duration',
+      name: 'trove.harness.turn.duration',
+      kind: 'histogram',
+      requiredAttributes: [],
+    },
+    {
+      id: 'errors',
+      name: 'trove.harness.errors',
+      kind: 'counter',
+      requiredAttributes: ['error.kind'],
+    },
+  ],
+  rules: [
+    { when: 'beforeSubmitPrompt', emit: null },
+    { when: 'beforeShellExecution', emit: null },
+    {
+      when: 'afterAgentResponse',
+      emit: { metric: 'events', attributes: { 'event.kind': 'chat.turn' } },
+    },
+    {
+      when: 'afterAgentResponse',
+      emit: { metric: 'turn.duration', attributes: { 'event.kind': 'chat.turn' } },
+    },
+    {
+      when: 'afterAgentResponse.tokens.input',
+      emit: { metric: 'tokens', attributes: { direction: 'input' } },
+    },
+    {
+      when: 'afterAgentResponse.tokens.output',
+      emit: { metric: 'tokens', attributes: { direction: 'output' } },
+    },
+    {
+      when: 'afterAgentResponse.cost',
+      emit: { metric: 'cost.usd', attributes: { 'cost.method': 'estimated' } },
+    },
+    {
+      when: 'afterShellExecution',
+      emit: { metric: 'events', attributes: { 'event.kind': 'shell.exec' } },
+    },
+    {
+      when: 'afterShellExecution',
+      emit: { metric: 'turn.duration', attributes: { 'event.kind': 'shell.exec' } },
+    },
+    {
+      when: 'afterShellExecution.error',
+      emit: { metric: 'errors', attributes: { 'error.kind': 'tool_failure' } },
+    },
+  ],
+};
 
 if (process.argv.includes('--health')) {
   process.stdout.write('ok\n');
@@ -129,18 +198,29 @@ process.stdin.on('error', () => {
 const GATE_EVENTS = new Set(['beforeShellExecution']);
 const CONTINUE_EVENTS = new Set(['beforeSubmitPrompt']);
 
-/** Map Cursor's raw event names onto the Tier A `event.kind` vocab.
- *  Returns null for events that shouldn't emit a metric (the matching
- *  before* event already wrote a marker; the after* event will emit). */
-function tierAEventKind(eventName) {
-  switch (eventName) {
-    case 'afterAgentResponse':
-      return 'chat.turn';
-    case 'afterShellExecution':
-      return 'shell.exec';
-    default:
-      return null;
+/** Load the sidecar; fall back to the embedded defaults on any error.
+ *  We don't validate aggressively here — the Rust side has already
+ *  validated and serialized the catalog. We only check that the file
+ *  parses as JSON, has a recognizable schemaVersion, and has the two
+ *  fields we read. */
+function loadSidecar() {
+  try {
+    const text = fs.readFileSync(SIDECAR_PATH, 'utf8');
+    const parsed = JSON.parse(text);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof parsed.schemaVersion === 'number' &&
+      parsed.schemaVersion <= 1 &&
+      Array.isArray(parsed.metrics) &&
+      Array.isArray(parsed.rules)
+    ) {
+      return parsed;
+    }
+  } catch (_err) {
+    // sidecar missing or malformed → fallback
   }
+  return FALLBACK_SIDECAR;
 }
 
 async function main(input) {
@@ -176,11 +256,6 @@ async function main(input) {
   const nowSeconds = Date.now() / 1000;
 
   // ---------------- Turn correlation (before* → after* duration) -------
-  // Each before* event stamps a marker file keyed by conversation+
-  // generation id. The matching after* reads + deletes it to compute
-  // the turn duration for the histogram. Best-effort: if the marker
-  // is missing (host restart, /tmp cleared) we skip the histogram
-  // observation rather than emit a fake number.
   let turnDurationSeconds = null;
   if (eventName === 'beforeShellExecution' || eventName === 'beforeSubmitPrompt') {
     recordTurnStart(conversationId, generationId, nowSeconds);
@@ -236,115 +311,47 @@ async function main(input) {
     ],
   };
 
-  // ---------------- Tier A metrics (after* events only) -----------------
-  const metrics = [];
-  const tierAEvent = tierAEventKind(eventName);
-  if (tierAEvent !== null) {
-    // trove.harness.events — one count per turn.
-    metrics.push(
-      buildSumMetric(
-        'trove.harness.events',
-        '1',
-        'Count of harness events processed by Trove (one per Cursor turn or shell exec).',
-        [
-          {
-            timeUnixNano: nowNanos,
-            attributes: [stringAttr('event.kind', tierAEvent)],
-          },
-        ],
-      ),
-    );
+  // ---------------- Tier A metrics — rules-driven ----------------------
+  const sidecar = loadSidecar();
+  const catalog = new Map(sidecar.metrics.map((m) => [m.id, m]));
+  const rules = sidecar.rules;
+  const acc = makeAccumulator(catalog, rules);
 
-    // trove.harness.turn.duration — histogram. Skip if marker was missing.
+  if (eventName === 'afterAgentResponse') {
+    observeCount(acc, 'afterAgentResponse', 1, {});
     if (turnDurationSeconds !== null) {
-      metrics.push(
-        buildHistogramMetric(
-          'trove.harness.turn.duration',
-          's',
-          'Wall-clock duration of a harness turn (before* → after*).',
-          TURN_DURATION_BUCKETS_S,
-          [
-            {
-              timeUnixNano: nowNanos,
-              attributes: [stringAttr('event.kind', tierAEvent)],
-              value: turnDurationSeconds,
-            },
-          ],
-        ),
-      );
+      observeHistogram(acc, 'afterAgentResponse', turnDurationSeconds, {});
     }
-
-    // trove.harness.tokens (estimated from bytes / 4) — chat events only,
-    // since shell events have no model billing context.
-    if (tierAEvent === 'chat.turn' && model !== null) {
-      const points = [];
+    if (model !== null) {
       if (promptBytes !== null) {
-        points.push({
-          timeUnixNano: nowNanos,
-          value: estimateTokens(promptBytes),
-          attributes: [stringAttr('direction', 'input'), stringAttr('model', model)],
+        observeCount(acc, 'afterAgentResponse.tokens.input', estimateTokens(promptBytes), {
+          model,
         });
       }
       if (responseBytes !== null) {
-        points.push({
-          timeUnixNano: nowNanos,
-          value: estimateTokens(responseBytes),
-          attributes: [stringAttr('direction', 'output'), stringAttr('model', model)],
+        observeCount(acc, 'afterAgentResponse.tokens.output', estimateTokens(responseBytes), {
+          model,
         });
       }
-      if (points.length > 0) {
-        metrics.push(
-          buildSumMetric(
-            'trove.harness.tokens',
-            '{token}',
-            'Estimated token volume per harness turn (bytes/4 heuristic for hook-only harnesses).',
-            points,
-          ),
-        );
-      }
-    }
-
-    // trove.harness.cost.usd — chat events only, requires known model.
-    if (tierAEvent === 'chat.turn' && model !== null) {
       const rate = lookupRate(model);
       if (rate !== null && (promptBytes !== null || responseBytes !== null)) {
         const inputTok = promptBytes !== null ? estimateTokens(promptBytes) : 0;
         const outputTok = responseBytes !== null ? estimateTokens(responseBytes) : 0;
         const costUsd = (inputTok / 1000) * rate[0] + (outputTok / 1000) * rate[1];
-        metrics.push(
-          buildSumDoubleMetric(
-            'trove.harness.cost.usd',
-            'USD',
-            'Estimated dollar cost per harness turn (rate table × estimated tokens).',
-            [
-              {
-                timeUnixNano: nowNanos,
-                value: costUsd,
-                attributes: [stringAttr('model', model), stringAttr('cost.method', 'estimated')],
-              },
-            ],
-          ),
-        );
+        observeDoubleSum(acc, 'afterAgentResponse.cost', costUsd, { model });
       }
     }
-
-    // trove.harness.errors — shell exit_code != 0 → tool_failure.
-    if (tierAEvent === 'shell.exec' && exitCode !== null && exitCode !== 0) {
-      metrics.push(
-        buildSumMetric(
-          'trove.harness.errors',
-          '1',
-          'Count of error-class events observed in a harness.',
-          [
-            {
-              timeUnixNano: nowNanos,
-              attributes: [stringAttr('error.kind', 'tool_failure')],
-            },
-          ],
-        ),
-      );
+  } else if (eventName === 'afterShellExecution') {
+    observeCount(acc, 'afterShellExecution', 1, {});
+    if (turnDurationSeconds !== null) {
+      observeHistogram(acc, 'afterShellExecution', turnDurationSeconds, {});
+    }
+    if (exitCode !== null && exitCode !== 0) {
+      observeCount(acc, 'afterShellExecution.error', 1, {});
     }
   }
+
+  const metrics = buildMetricsFromAccumulator(acc, nowNanos);
 
   const posts = [postJson(`${ENDPOINT}/v1/logs`, logsBody)];
   if (metrics.length > 0) {
@@ -361,16 +368,263 @@ async function main(input) {
   await Promise.all(posts);
 
   // Cursor's gate-style protocol: emit the permissive response shape
-  // that matches the event's expected reply. Pulled from Cursor's own
-  // bundled `W2t`/`QHy` helpers (workbench.desktop.main.js): shell-exec
-  // gates take `{permission:"allow"}`; the prompt-submit gate takes
-  // `{continue:true}`. Post-execution events ignore stdout entirely.
+  // that matches the event's expected reply.
   if (GATE_EVENTS.has(eventName)) {
     process.stdout.write(JSON.stringify({ permission: 'allow' }) + '\n');
   } else if (CONTINUE_EVENTS.has(eventName)) {
     process.stdout.write(JSON.stringify({ continue: true }) + '\n');
   }
   process.exit(0);
+}
+
+// ---------------- Rules-driven accumulator ----------------------------
+//
+// Mirrors the structure of `mappings::runtime::MetricsAccumulator` in
+// Rust. Per-observation extras merge over the rule's static attributes
+// (observation-wins). Each (metricId, signature) tuple buckets one data
+// point. At build time, the bucket shape (Sum/Histogram/etc.) is decided
+// by the observed values, not just the catalog kind — that's how cost
+// counters and int counters can share a "counter" kind in the catalog.
+
+function makeAccumulator(catalog, rules) {
+  return {
+    catalog,
+    rules,
+    buckets: new Map(),
+    order: [],
+  };
+}
+
+function matchingRules(acc, when, kindFilter) {
+  const out = [];
+  for (const r of acc.rules) {
+    if (r.when !== when) continue;
+    if (!r.emit) continue;
+    const def = acc.catalog.get(r.emit.metric);
+    if (!def) continue;
+    if (!kindFilter(def.kind)) continue;
+    out.push({ metricId: r.emit.metric, ruleAttrs: r.emit.attributes || {}, kind: def.kind });
+  }
+  return out;
+}
+
+function observeCount(acc, when, count, extras) {
+  if (count === 0) return;
+  const matches = matchingRules(acc, when, (k) => k === 'counter' || k === 'gauge');
+  for (const m of matches) {
+    const sig = mergeAttrs(m.ruleAttrs, extras);
+    const key = bucketKey(m.metricId, sig);
+    let b = acc.buckets.get(key);
+    if (!b) {
+      b = {
+        metricId: m.metricId,
+        sig,
+        type: 'counter_int',
+        intValue: 0,
+        doubleValue: 0,
+        samples: [],
+      };
+      acc.buckets.set(key, b);
+      acc.order.push(key);
+    }
+    if (b.type === 'gauge') {
+      b.doubleValue = count;
+    } else {
+      b.intValue += count;
+    }
+  }
+}
+
+function observeHistogram(acc, when, seconds, extras) {
+  if (!Number.isFinite(seconds) || seconds < 0) return;
+  const matches = matchingRules(acc, when, (k) => k === 'histogram');
+  for (const m of matches) {
+    const sig = mergeAttrs(m.ruleAttrs, extras);
+    const key = bucketKey(m.metricId, sig);
+    let b = acc.buckets.get(key);
+    if (!b) {
+      b = {
+        metricId: m.metricId,
+        sig,
+        type: 'histogram',
+        intValue: 0,
+        doubleValue: 0,
+        samples: [],
+      };
+      acc.buckets.set(key, b);
+      acc.order.push(key);
+    }
+    b.samples.push(seconds);
+  }
+}
+
+function observeDoubleSum(acc, when, value, extras) {
+  if (!Number.isFinite(value)) return;
+  const matches = matchingRules(acc, when, (k) => k === 'counter' || k === 'gauge');
+  for (const m of matches) {
+    const sig = mergeAttrs(m.ruleAttrs, extras);
+    const key = bucketKey(m.metricId, sig);
+    let b = acc.buckets.get(key);
+    if (!b) {
+      b = {
+        metricId: m.metricId,
+        sig,
+        type: 'counter_double',
+        intValue: 0,
+        doubleValue: 0,
+        samples: [],
+      };
+      acc.buckets.set(key, b);
+      acc.order.push(key);
+    }
+    if (b.type === 'counter_int') {
+      // Promote to double if any observation was double.
+      b.type = 'counter_double';
+      b.doubleValue = b.intValue + value;
+      b.intValue = 0;
+    } else {
+      b.doubleValue += value;
+    }
+  }
+}
+
+function buildMetricsFromAccumulator(acc, nowNanos) {
+  // Group buckets by metric id (preserving first-insertion order).
+  const grouped = new Map();
+  for (const key of acc.order) {
+    const b = acc.buckets.get(key);
+    if (!b) continue;
+    if (!grouped.has(b.metricId)) grouped.set(b.metricId, []);
+    grouped.get(b.metricId).push(b);
+  }
+
+  const out = [];
+  for (const [metricId, buckets] of grouped) {
+    const def = acc.catalog.get(metricId);
+    if (!def) continue;
+
+    const anyHist = buckets.some((b) => b.type === 'histogram');
+    const anyDouble = buckets.some((b) => b.type === 'counter_double');
+
+    if (anyHist) {
+      out.push(buildHistogramFromBuckets(def, buckets, nowNanos));
+    } else if (anyDouble) {
+      out.push(buildSumFromBuckets(def, buckets, nowNanos, /*asDouble=*/ true));
+    } else {
+      out.push(buildSumFromBuckets(def, buckets, nowNanos, /*asDouble=*/ false));
+    }
+  }
+  return out;
+}
+
+function buildSumFromBuckets(def, buckets, nowNanos, asDouble) {
+  const dataPoints = buckets.map((b) => {
+    const point = {
+      startTimeUnixNano: String(nowNanos),
+      timeUnixNano: String(nowNanos),
+      attributes: sigToAttrs(b.sig),
+    };
+    if (asDouble) {
+      point.asDouble = b.type === 'counter_double' ? b.doubleValue : b.intValue;
+    } else {
+      point.asInt = String(b.intValue);
+    }
+    return point;
+  });
+  return {
+    name: def.name,
+    unit: metricUnit(def.id),
+    description: metricDescription(def),
+    sum: {
+      aggregationTemporality: 1,
+      isMonotonic: true,
+      dataPoints,
+    },
+  };
+}
+
+function buildHistogramFromBuckets(def, buckets, nowNanos) {
+  const bounds = TURN_DURATION_BUCKETS_S;
+  const dataPoints = buckets.map((b) => {
+    const samples = b.samples || [];
+    const count = samples.length;
+    const sum = samples.reduce((a, s) => a + s, 0);
+    const bucketCounts = new Array(bounds.length + 1).fill(0);
+    for (const s of samples) {
+      let placed = false;
+      for (let i = 0; i < bounds.length; i++) {
+        if (s <= bounds[i]) {
+          bucketCounts[i] += 1;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) bucketCounts[bounds.length] += 1;
+    }
+    return {
+      startTimeUnixNano: String(nowNanos),
+      timeUnixNano: String(nowNanos),
+      count: String(count),
+      sum,
+      bucketCounts: bucketCounts.map(String),
+      explicitBounds: bounds,
+      attributes: sigToAttrs(b.sig),
+    };
+  });
+  return {
+    name: def.name,
+    unit: 's',
+    description: metricDescription(def),
+    histogram: {
+      aggregationTemporality: 1,
+      dataPoints,
+    },
+  };
+}
+
+function metricUnit(id) {
+  if (id === 'cost.usd') return 'USD';
+  if (id === 'turn.duration') return 's';
+  return '1';
+}
+
+function metricDescription(def) {
+  switch (def.id) {
+    case 'events':
+      return 'Count of harness events processed by Trove.';
+    case 'tokens':
+      return 'Token usage by direction.';
+    case 'cost.usd':
+      return 'Estimated USD cost.';
+    case 'turn.duration':
+      return 'Per-turn duration in seconds.';
+    case 'errors':
+      return 'Count of harness errors observed by Trove.';
+    default:
+      return `Custom metric ${def.name}.`;
+  }
+}
+
+function mergeAttrs(ruleAttrs, extras) {
+  // Observation-wins: extras override the rule's static inject for
+  // duplicate keys.
+  const merged = {};
+  for (const k of Object.keys(ruleAttrs || {})) merged[k] = ruleAttrs[k];
+  for (const k of Object.keys(extras || {})) merged[k] = extras[k];
+  return merged;
+}
+
+function bucketKey(metricId, sig) {
+  const keys = Object.keys(sig).sort();
+  let s = metricId;
+  for (const k of keys) s += `\x00${k}\x01${sig[k]}`;
+  return s;
+}
+
+function sigToAttrs(sig) {
+  return Object.keys(sig)
+    .sort()
+    .map((k) => stringAttr(k, sig[k]));
 }
 
 // ---------------- OTLP helpers ----------------------------------------
@@ -385,79 +639,6 @@ function intAttr(key, value) {
 
 function doubleAttr(key, value) {
   return { key, value: { doubleValue: value } };
-}
-
-/** Build a Sum (Δ, monotonic, intValue) metric from N data points. */
-function buildSumMetric(name, unit, description, points) {
-  return {
-    name,
-    unit,
-    description,
-    sum: {
-      aggregationTemporality: 1,
-      isMonotonic: true,
-      dataPoints: points.map((p) => ({
-        startTimeUnixNano: String(p.timeUnixNano),
-        timeUnixNano: String(p.timeUnixNano),
-        asInt: String(p.value !== undefined ? p.value : 1),
-        attributes: p.attributes,
-      })),
-    },
-  };
-}
-
-/** Build a Sum (Δ, monotonic, doubleValue) metric — for cost/USD. */
-function buildSumDoubleMetric(name, unit, description, points) {
-  return {
-    name,
-    unit,
-    description,
-    sum: {
-      aggregationTemporality: 1,
-      isMonotonic: true,
-      dataPoints: points.map((p) => ({
-        startTimeUnixNano: String(p.timeUnixNano),
-        timeUnixNano: String(p.timeUnixNano),
-        asDouble: p.value,
-        attributes: p.attributes,
-      })),
-    },
-  };
-}
-
-/** Build a Histogram metric. Each data point is a single observation
- *  placed in the matching bucket; OTLP records the explicit bounds
- *  alongside per-bucket counts (length = bounds.length + 1). */
-function buildHistogramMetric(name, unit, description, bounds, points) {
-  return {
-    name,
-    unit,
-    description,
-    histogram: {
-      aggregationTemporality: 1,
-      dataPoints: points.map((p) => {
-        const bucketCounts = new Array(bounds.length + 1).fill('0');
-        let placed = false;
-        for (let i = 0; i < bounds.length; i++) {
-          if (p.value <= bounds[i]) {
-            bucketCounts[i] = '1';
-            placed = true;
-            break;
-          }
-        }
-        if (!placed) bucketCounts[bounds.length] = '1';
-        return {
-          startTimeUnixNano: String(p.timeUnixNano),
-          timeUnixNano: String(p.timeUnixNano),
-          count: '1',
-          sum: p.value,
-          bucketCounts,
-          explicitBounds: bounds,
-          attributes: p.attributes,
-        };
-      }),
-    },
-  };
 }
 
 // ---------------- Estimation + rate lookup ----------------------------
@@ -483,16 +664,9 @@ function lookupRate(model) {
 // ---------------- Turn correlation (before* → after*) -----------------
 
 /** Per-host marker directory. We use a single directory under tmpdir
- *  so each (conversation, generation) pair gets one tiny file. The
- *  directory is created lazily and never cleaned up wholesale —
- *  individual markers are deleted when the matching after* fires.
- *  Orphaned markers (host restart, /tmp cleared) eventually time out
- *  via the staleness check in takeTurnDuration. */
+ *  so each (conversation, generation) pair gets one tiny file. */
 const TURN_DIR = path.join(os.tmpdir(), 'trove-cursor-turns');
 
-/** Sanitize an id into a filesystem-safe basename. Cursor's ids are
- *  typically UUIDs but we defensively strip anything not in [A-Za-z0-9-]
- *  before joining the path so a hostile id can't path-traverse. */
 function safeId(id) {
   return String(id)
     .replace(/[^A-Za-z0-9_.-]/g, '_')
@@ -513,10 +687,6 @@ function recordTurnStart(conversationId, generationId, nowSeconds) {
   }
 }
 
-/** Read+delete the marker for a (conversation, generation) pair and
- *  return the elapsed wall-clock seconds. Returns null if the marker
- *  is missing or older than 1 hour (probably an orphan from before a
- *  /tmp wipe or a crashed turn). */
 function takeTurnDuration(conversationId, generationId, nowSeconds) {
   const p = markerPath(conversationId, generationId);
   let startSeconds = null;
@@ -530,13 +700,11 @@ function takeTurnDuration(conversationId, generationId, nowSeconds) {
   try {
     fs.unlinkSync(p);
   } catch (_err) {
-    // Best-effort cleanup. If unlink fails we'll just re-overwrite
-    // the marker on the next before* with the same ids.
+    // Best-effort cleanup.
   }
   if (startSeconds === null) return null;
   const elapsed = nowSeconds - startSeconds;
   if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > 3600) {
-    // Negative clock skew or > 1h stale → treat as missing.
     return null;
   }
   return elapsed;
@@ -544,10 +712,6 @@ function takeTurnDuration(conversationId, generationId, nowSeconds) {
 
 // ---------------- HTTP -------------------------------------------------
 
-/** UTF-8 byte length of a JS string. Buffer.byteLength is exact and
- *  cheap; matches what `Content-Length` would report if the body were
- *  serialised. We use bytes (not codepoints) so a multilingual prompt
- *  isn't undercounted on dashboards. */
 function byteLength(str) {
   return Buffer.byteLength(str, 'utf8');
 }

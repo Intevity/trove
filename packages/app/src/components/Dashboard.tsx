@@ -127,7 +127,11 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
           <PlatformsTab appState={appState} onAppStateRefresh={onAppStateRefresh} />
         )}
         {activeTab === 'mappings' && (
-          <MappingsTab appState={appState} onAppStateRefresh={onAppStateRefresh} />
+          <MappingsTab
+            appState={appState}
+            detectedHarnesses={harnesses}
+            onAppStateRefresh={onAppStateRefresh}
+          />
         )}
         {activeTab === 'logs' && <LogsTab />}
         {activeTab === 'settings' && (

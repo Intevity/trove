@@ -535,7 +535,7 @@ pub fn apply_mapping_overlay(yaml: String, mappings: &MappingState) -> String {
     let tier_a_blocks: Vec<(String, String)> = synth_harnesses
         .iter()
         .filter_map(|h| {
-            let block = build_tier_a_block(h)?;
+            let block = build_tier_a_block(h, mappings)?;
             let name = format!("metricstransform/tierA-{}", harness_id_suffix(h.harness_id));
             Some((name, block))
         })
@@ -966,7 +966,12 @@ fn build_harness_tag_block(synth: &[&HarnessMapping]) -> String {
 /// Tier A row is an additional metric on the wire, not a rename. This
 /// honors `MAPPING_PLAN.md` §"Defaults": "All Tier B passes through;
 /// synthesis is additive."
-fn build_tier_a_block(harness: &HarnessMapping) -> Option<String> {
+///
+/// The `state` parameter is needed to resolve `target_metric` (a catalog
+/// id) to its full wire name. Rows whose `target_metric` doesn't resolve
+/// are skipped — validation catches these before apply, so this is a
+/// belt-and-suspenders guard against stale references slipping through.
+fn build_tier_a_block(harness: &HarnessMapping, state: &MappingState) -> Option<String> {
     if !harness.enabled {
         return None;
     }
@@ -981,14 +986,16 @@ fn build_tier_a_block(harness: &HarnessMapping) -> Option<String> {
         else {
             continue;
         };
+        let Some(def) = state.metric(target_metric) else {
+            // Stale catalog reference — skip so we don't emit invalid
+            // YAML. Validation should have caught this; if it didn't,
+            // a missing transform row is the least-bad failure mode.
+            continue;
+        };
         let _ = writeln!(transforms, "      - include: {native_metric}");
         let _ = writeln!(transforms, "        match_type: strict");
         let _ = writeln!(transforms, "        action: insert");
-        let _ = writeln!(
-            transforms,
-            "        new_name: {}",
-            target_metric.full_name()
-        );
+        let _ = writeln!(transforms, "        new_name: {}", def.name);
         if !attribute_map.is_empty() || !inject_attributes.is_empty() {
             let _ = writeln!(transforms, "        operations:");
             // BTreeMap iteration is sorted, so YAML order is stable
@@ -1350,7 +1357,8 @@ mod tests {
     #[test]
     fn mapping_overlay_is_a_noop_for_empty_mapping_state() {
         let empty = MappingState {
-            schema_version: 1,
+            schema_version: crate::mappings::MAPPING_SCHEMA_VERSION,
+            metrics: vec![],
             harnesses: vec![],
         };
         let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);

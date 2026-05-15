@@ -7,11 +7,13 @@ import {
   CollectorStatus,
   ConflictResolutionOutcome,
   DetectedHarness,
+  HarnessId,
   MappingState,
   MetricsSnapshotWire,
   PatchPreview,
   ResolvedIdentity,
   TestExportResult,
+  TroveMetricKind,
   TrovePatch,
   UpdateMetadata,
 } from './schemas.js';
@@ -168,6 +170,37 @@ export type ApplyMappingsResponse = z.infer<typeof ApplyMappingsResponse>;
 export const ResetMappingsToDefaultsResponse = z.null();
 export type ResetMappingsToDefaultsResponse = z.infer<typeof ResetMappingsToDefaultsResponse>;
 
+/** v2 — `simulate_mapping`. Pure-function preview over a draft
+ *  {@link MappingState}: applies one rule's transform to a sample input
+ *  and returns what would land on the wire. Drives the Mappings editor's
+ *  Preview sheet. Caller passes their working draft so previews work on
+ *  in-flight edits without an apply round-trip. */
+export const SimulateMappingRequest = z.object({
+  input: z.object({
+    mappingState: MappingState,
+    harnessId: HarnessId,
+    sourceIndex: z.number().int().nonnegative(),
+    sampleAttributes: z.record(z.string(), z.string()).default({}),
+    sampleValue: z.number().optional(),
+  }),
+});
+export type SimulateMappingRequest = z.infer<typeof SimulateMappingRequest>;
+
+export const SimulatedMetric = z.object({
+  metricId: z.string(),
+  metricName: z.string(),
+  kind: TroveMetricKind,
+  attributes: z.record(z.string(), z.string()),
+  value: z.number(),
+});
+export type SimulatedMetric = z.infer<typeof SimulatedMetric>;
+
+export const SimulateMappingResponse = z.object({
+  emitted: SimulatedMetric.nullable(),
+  notes: z.array(z.string()),
+});
+export type SimulateMappingResponse = z.infer<typeof SimulateMappingResponse>;
+
 /** Canonical Tauri command names, kept here so the IPC client wrapper
  *  and tests share a single source of truth. The Rust side registers
  *  these in `tauri::generate_handler!` in lib.rs; renames must update
@@ -195,6 +228,7 @@ export const IpcCommandName = {
   ResolveIdentityPreview: 'resolve_identity_preview',
   ApplyMappings: 'apply_mappings',
   ResetMappingsToDefaults: 'reset_mappings_to_defaults',
+  SimulateMapping: 'simulate_mapping',
 } as const;
 export type IpcCommandName = (typeof IpcCommandName)[keyof typeof IpcCommandName];
 

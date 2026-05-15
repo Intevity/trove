@@ -55,13 +55,6 @@ use crate::log_watcher::WatcherHandle;
 use crate::mappings::cost::estimate_cost_usd;
 use crate::otlp_emit;
 
-/// Histogram bucket bounds for `trove.harness.turn.duration` — kept
-/// identical to the Cursor hook and wrapper-common-metrics buckets so
-/// cross-harness duration panels render against the same buckets.
-const HISTOGRAM_BOUNDS: &[f64] = &[
-    0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0,
-];
-
 /// How often the watcher polls each chat-session file.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -82,6 +75,7 @@ struct SessionWatermark {
 pub fn spawn(
     gemini_tmp_root: impl Into<PathBuf>,
     opts: ApplyOptions,
+    mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
 ) -> WatcherHandle {
     let root = gemini_tmp_root.into();
@@ -89,6 +83,7 @@ pub fn spawn(
         run(
             root,
             opts,
+            mappings,
             poll_interval,
             |payload: Value| async move { otlp_emit::post_metrics_json(&payload).await },
         )
@@ -101,6 +96,7 @@ pub fn spawn(
 pub async fn run<F, Fut>(
     gemini_tmp_root: PathBuf,
     opts: ApplyOptions,
+    mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
     emit_metric: F,
 ) where
@@ -109,8 +105,9 @@ pub async fn run<F, Fut>(
 {
     let mut watermarks: HashMap<PathBuf, SessionWatermark> = HashMap::new();
     loop {
+        let mapping_snapshot = mappings.current();
         if let Err(e) =
-            scan_once(&gemini_tmp_root, &opts, &mut watermarks, &emit_metric).await
+            scan_once(&gemini_tmp_root, &opts, mapping_snapshot, &mut watermarks, &emit_metric).await
         {
             tracing::warn!(error = %e, ?gemini_tmp_root, "gemini watcher tick errored");
         }
@@ -126,6 +123,7 @@ pub async fn run<F, Fut>(
 async fn scan_once<F, Fut>(
     gemini_tmp_root: &Path,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
     watermarks: &mut HashMap<PathBuf, SessionWatermark>,
     emit_metric: &F,
 ) -> std::io::Result<()>
@@ -149,7 +147,7 @@ where
                 continue;
             }
             if let Err(e) =
-                process_session(&session_path, opts, watermarks, emit_metric).await
+                process_session(&session_path, opts, mappings.clone(), watermarks, emit_metric).await
             {
                 tracing::warn!(error = %e, ?session_path, "gemini watcher: session read errored");
             }
@@ -165,6 +163,7 @@ fn is_jsonl(path: &Path) -> bool {
 async fn process_session<F, Fut>(
     session_path: &Path,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
     watermarks: &mut HashMap<PathBuf, SessionWatermark>,
     emit_metric: &F,
 ) -> std::io::Result<()>
@@ -195,7 +194,7 @@ where
     let consumable = &tail[..consume_end];
 
     let (emissions, new_pending_user_ts) =
-        build_emissions(consumable, mark.pending_user_ts, opts);
+        build_emissions(consumable, mark.pending_user_ts, opts, mappings);
 
     watermarks.insert(
         session_path.to_path_buf(),
@@ -235,6 +234,7 @@ fn build_emissions(
     tail: &[u8],
     mut pending_user_ts: Option<DateTime<chrono::Utc>>,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
 ) -> (Option<Value>, Option<DateTime<chrono::Utc>>) {
     let Ok(text) = std::str::from_utf8(tail) else {
         return (None, pending_user_ts);
@@ -271,7 +271,8 @@ fn build_emissions(
     if turns.is_empty() {
         return (None, pending_user_ts);
     }
-    (Some(build_metrics_payload(&turns, opts)), pending_user_ts)
+    let payload = build_metrics_payload(&turns, opts, mappings);
+    (payload, pending_user_ts)
 }
 
 fn parse_gemini_record(
@@ -309,119 +310,71 @@ fn parse_gemini_record(
 }
 
 #[allow(clippy::too_many_lines)]
-fn build_metrics_payload(turns: &[GeminiTurn], opts: &ApplyOptions) -> Value {
+fn build_metrics_payload(
+    turns: &[GeminiTurn],
+    opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
+) -> Option<Value> {
+    let mut acc = crate::mappings::runtime::MetricsAccumulator::new(
+        mappings,
+        crate::harness::HarnessId::GeminiCli,
+    );
+
+    for t in turns {
+        let mut model_attr = std::collections::BTreeMap::new();
+        model_attr.insert("model".to_string(), t.model.clone());
+
+        // One chat.turn event per turn — `gemini.turn` rules with a
+        // counter target fire here.
+        acc.observe_count("gemini.turn", 1, &model_attr);
+
+        // Tokens fan out by direction. Use `gemini.tokens.input` and
+        // `gemini.tokens.output` as separate when keys so users see
+        // them as distinct rules in the editor and can independently
+        // toggle / retarget either direction.
+        if t.input_tokens > 0 {
+            #[allow(clippy::cast_possible_wrap)]
+            acc.observe_count(
+                "gemini.tokens.input",
+                t.input_tokens as i64,
+                &model_attr,
+            );
+        }
+        if t.output_tokens > 0 {
+            #[allow(clippy::cast_possible_wrap)]
+            acc.observe_count(
+                "gemini.tokens.output",
+                t.output_tokens as i64,
+                &model_attr,
+            );
+        }
+
+        if let Some(usd) = estimate_cost_usd(
+            &t.model,
+            t.input_tokens,
+            t.output_tokens,
+            &std::collections::BTreeMap::new(),
+        ) {
+            acc.observe_double_sum("gemini.cost", usd, &model_attr);
+        }
+
+        if let Some(d) = t.duration_s {
+            if d >= 0.0 {
+                acc.observe_histogram("gemini.turn", d, &model_attr);
+            }
+        }
+    }
+
+    if acc.is_empty() {
+        return None;
+    }
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos())
         .to_string();
-    let start_ns = now_ns.clone();
-
-    let events_points: Vec<Value> = turns
-        .iter()
-        .map(|t| {
-            json!({
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": now_ns,
-                "asInt": "1",
-                "attributes": [
-                    {"key": "event.kind", "value": {"stringValue": "chat.turn"}},
-                    {"key": "model", "value": {"stringValue": t.model}},
-                ],
-            })
-        })
-        .collect();
-
-    let mut token_points: Vec<Value> = Vec::with_capacity(turns.len() * 2);
-    for t in turns {
-        if t.input_tokens > 0 {
-            token_points.push(json!({
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": now_ns,
-                "asInt": t.input_tokens.to_string(),
-                "attributes": [
-                    {"key": "direction", "value": {"stringValue": "input"}},
-                    {"key": "model", "value": {"stringValue": t.model}},
-                ],
-            }));
-        }
-        if t.output_tokens > 0 {
-            token_points.push(json!({
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": now_ns,
-                "asInt": t.output_tokens.to_string(),
-                "attributes": [
-                    {"key": "direction", "value": {"stringValue": "output"}},
-                    {"key": "model", "value": {"stringValue": t.model}},
-                ],
-            }));
-        }
-    }
-
-    let mut cost_points: Vec<Value> = Vec::new();
-    for t in turns {
-        if let Some(usd) =
-            estimate_cost_usd(&t.model, t.input_tokens, t.output_tokens, &std::collections::BTreeMap::new())
-        {
-            cost_points.push(json!({
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": now_ns,
-                "asDouble": usd,
-                "attributes": [
-                    {"key": "cost.method", "value": {"stringValue": "estimated"}},
-                    {"key": "model", "value": {"stringValue": t.model}},
-                ],
-            }));
-        }
-    }
-
-    let mut duration_observations: Vec<(f64, &str)> = Vec::new();
-    for t in turns {
-        if let Some(d) = t.duration_s {
-            if d >= 0.0 {
-                duration_observations.push((d, t.model.as_str()));
-            }
-        }
-    }
-
-    let mut metrics: Vec<Value> = Vec::new();
-    if !events_points.is_empty() {
-        metrics.push(json!({
-            "name": "trove.harness.events",
-            "unit": "1",
-            "description": "Count of harness events processed by Trove.",
-            "sum": {
-                "aggregationTemporality": 1,
-                "isMonotonic": true,
-                "dataPoints": events_points,
-            }
-        }));
-    }
-    if !token_points.is_empty() {
-        metrics.push(json!({
-            "name": "trove.harness.tokens",
-            "unit": "1",
-            "description": "Count of input/output tokens per harness turn.",
-            "sum": {
-                "aggregationTemporality": 1,
-                "isMonotonic": true,
-                "dataPoints": token_points,
-            }
-        }));
-    }
-    if !cost_points.is_empty() {
-        metrics.push(json!({
-            "name": "trove.harness.cost.usd",
-            "unit": "USD",
-            "description": "Estimated USD cost per harness turn.",
-            "sum": {
-                "aggregationTemporality": 1,
-                "isMonotonic": true,
-                "dataPoints": cost_points,
-            }
-        }));
-    }
-    for (d, model) in &duration_observations {
-        metrics.push(build_duration_histogram(*d, model, &start_ns, &now_ns));
+    let metrics = acc.build(&now_ns, &now_ns);
+    if metrics.is_empty() {
+        return None;
     }
 
     let mut resource_attrs = vec![
@@ -434,7 +387,7 @@ fn build_metrics_payload(turns: &[GeminiTurn], opts: &ApplyOptions) -> Value {
         resource_attrs.push(json!({"key": k, "value": {"stringValue": v}}));
     }
 
-    json!({
+    Some(json!({
         "resourceMetrics": [{
             "resource": {"attributes": resource_attrs},
             "scopeMetrics": [{
@@ -442,47 +395,14 @@ fn build_metrics_payload(turns: &[GeminiTurn], opts: &ApplyOptions) -> Value {
                 "metrics": metrics,
             }]
         }]
-    })
-}
-
-fn build_duration_histogram(value_s: f64, model: &str, start_ns: &str, time_ns: &str) -> Value {
-    let mut bucket_counts: Vec<String> = vec!["0".to_string(); HISTOGRAM_BOUNDS.len() + 1];
-    let mut placed = false;
-    for (i, bound) in HISTOGRAM_BOUNDS.iter().enumerate() {
-        if value_s <= *bound {
-            bucket_counts[i] = "1".to_string();
-            placed = true;
-            break;
-        }
-    }
-    if !placed {
-        let last = bucket_counts.len() - 1;
-        bucket_counts[last] = "1".to_string();
-    }
-    json!({
-        "name": "trove.harness.turn.duration",
-        "unit": "s",
-        "description": "Wall-clock duration of a harness turn.",
-        "histogram": {
-            "aggregationTemporality": 1,
-            "dataPoints": [{
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": time_ns,
-                "count": "1",
-                "sum": value_s,
-                "bucketCounts": bucket_counts,
-                "explicitBounds": HISTOGRAM_BOUNDS,
-                "attributes": [
-                    {"key": "event.kind", "value": {"stringValue": "chat.turn"}},
-                    {"key": "model", "value": {"stringValue": model}},
-                ],
-            }]
-        }
-    })
+    }))
 }
 
 #[cfg(test)]
 mod tests {
+    fn rules_arc() -> std::sync::Arc<crate::mappings::MappingState> {
+        std::sync::Arc::new(crate::mappings::default_state())
+    }
     use super::*;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -547,7 +467,7 @@ mod tests {
         let root = tempdir().unwrap();
         let (bucket, emit) = collector();
         let mut wm = HashMap::new();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         // give tokio a moment to drain the no-op
@@ -575,7 +495,7 @@ mod tests {
         );
         let (bucket, emit) = collector();
         let mut wm = HashMap::new();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -623,10 +543,10 @@ mod tests {
         );
         let (bucket, emit) = collector();
         let mut wm = HashMap::new();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -654,7 +574,7 @@ mod tests {
         );
         let (bucket, emit) = collector();
         let mut wm = HashMap::new();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         // Append a second turn.
@@ -666,7 +586,7 @@ mod tests {
         let mut existing = std::fs::read_to_string(&path).unwrap();
         existing.push_str(&new_lines);
         std::fs::write(&path, existing).unwrap();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -700,7 +620,7 @@ mod tests {
         std::fs::write(&path, content).unwrap();
         let (bucket, emit) = collector();
         let mut wm = HashMap::new();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -722,7 +642,7 @@ mod tests {
         std::fs::write(&path, &first).unwrap();
         let (bucket, emit) = collector();
         let mut wm = HashMap::new();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         // Append the gemini response.
@@ -735,7 +655,7 @@ mod tests {
         ));
         more.push('\n');
         std::fs::write(&path, &more).unwrap();
-        scan_once(root.path(), &ApplyOptions::default(), &mut wm, &emit)
+        scan_once(root.path(), &ApplyOptions::default(), rules_arc(), &mut wm, &emit)
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;

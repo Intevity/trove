@@ -1002,6 +1002,7 @@ pub fn apply_mappings(
     app: tauri::AppHandle,
     mappings: crate::mappings::MappingState,
 ) -> Result<(), IpcError> {
+    use tauri::Manager as _;
     crate::mappings::validate(&mappings).map_err(|e| IpcError::Internal {
         reason: format!("invalid mapping state: {e}"),
     })?;
@@ -1011,8 +1012,18 @@ pub fn apply_mappings(
         // touching the supervisor.
         return Ok(());
     }
-    state.mappings = mappings;
+    state.mappings = mappings.clone();
     app_state::save(&app, &state)?;
+    // Push the new state to in-process watchers (Cline, Gemini, Claude
+    // Desktop, Aider/Copilot wrappers). They consult the store at emit
+    // time, so user edits to hook rules take effect immediately — no
+    // watcher restart needed.
+    if let Some(store) = app.try_state::<crate::mappings::MappingStateStore>() {
+        store.publish(mappings);
+    }
+    // Cursor hook is out-of-process JS — regenerate the script so the
+    // user's edits take effect on the next Cursor reload.
+    let _ = crate::adapters::cursor_common::regenerate_hooks_for_rules(&app, &state.mappings);
     if state.backends.is_empty() {
         return Ok(());
     }
@@ -1028,6 +1039,180 @@ pub fn apply_mappings(
 #[tauri::command]
 pub fn reset_mappings_to_defaults(app: tauri::AppHandle) -> Result<(), IpcError> {
     apply_mappings(app, crate::mappings::default_state())
+}
+
+// ---------------------------------------------------------------------------
+// Simulate a single mapping row against a sample input
+// ---------------------------------------------------------------------------
+
+/// Input shape for [`simulate_mapping`]. Caller passes their working
+/// draft state (which may differ from the persisted state) so preview
+/// works on in-flight edits without requiring an apply round-trip.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimulateMappingInput {
+    /// The full mapping state to simulate against. Validated before
+    /// simulation so callers can't slip an inconsistent draft past the
+    /// usual checks.
+    pub mapping_state: crate::mappings::MappingState,
+    pub harness_id: crate::harness::HarnessId,
+    /// Index into the chosen harness's `sources` array. Caller picked
+    /// a specific rule to preview.
+    pub source_index: usize,
+    /// Attributes on the sample input. For `synthesize-from-native` rules
+    /// these are the attributes on the raw `OTel` data point; for
+    /// `hook-rule` rules they're the attributes the driver would have
+    /// attached at hook fire time.
+    #[serde(default)]
+    pub sample_attributes: std::collections::BTreeMap<String, String>,
+    /// Optional value for the synthesized data point. Defaults to 1.0
+    /// when omitted; ignored for `hook-rule` rules (those carry their
+    /// own value semantics).
+    #[serde(default)]
+    pub sample_value: Option<f64>,
+}
+
+/// Output shape for [`simulate_mapping`]. `emitted` is `None` when the
+/// rule explicitly suppresses emission (`HookRule` with `emit: null`) or
+/// when the target metric id doesn't resolve. `notes` carry warnings
+/// the UI should surface inline (e.g. "this metric requires attribute
+/// X, but your sample doesn't carry it").
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimulateMappingOutput {
+    pub emitted: Option<SimulatedMetric>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimulatedMetric {
+    pub metric_id: String,
+    pub metric_name: String,
+    pub kind: crate::mappings::TroveMetricKind,
+    pub attributes: std::collections::BTreeMap<String, String>,
+    pub value: f64,
+}
+
+/// Pure simulator over `MappingState` — applies one rule's transform to
+/// a sample input and returns what would be emitted. Powers the
+/// "Preview" sheet in the Mappings editor. No side effects: doesn't
+/// read or modify persisted state, doesn't touch the collector, can
+/// be called freely without coordination.
+///
+/// The simulator validates the passed state first so the same
+/// invariants the apply path enforces (unknown metric id, duplicate
+/// catalog id, etc.) surface here too.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn simulate_mapping(
+    input: SimulateMappingInput,
+) -> Result<SimulateMappingOutput, IpcError> {
+    use crate::mappings::MappingSource;
+
+    crate::mappings::validate(&input.mapping_state).map_err(|e| IpcError::Internal {
+        reason: format!("invalid draft mapping state: {e}"),
+    })?;
+
+    let harness = input
+        .mapping_state
+        .for_harness(input.harness_id)
+        .ok_or_else(|| IpcError::Internal {
+            reason: format!(
+                "harness {:?} not found in passed mapping state",
+                input.harness_id
+            ),
+        })?;
+    let source = harness.sources.get(input.source_index).ok_or_else(|| {
+        IpcError::Internal {
+            reason: format!(
+                "source index {} out of range for harness {:?} (has {} rules)",
+                input.source_index,
+                input.harness_id,
+                harness.sources.len()
+            ),
+        }
+    })?;
+
+    let mut notes: Vec<String> = Vec::new();
+
+    let (metric_id, mut attributes, value) = match source {
+        MappingSource::HookRule { emit, .. } => {
+            let Some(e) = emit.as_ref() else {
+                notes.push(
+                    "this rule is configured to suppress emission (emit: null)".to_string(),
+                );
+                return Ok(SimulateMappingOutput {
+                    emitted: None,
+                    notes,
+                });
+            };
+            // HookEmit.attributes are constants injected by the
+            // driver — they override anything in the sample for those
+            // keys.
+            let mut attrs = input.sample_attributes.clone();
+            for (k, v) in &e.attributes {
+                attrs.insert(k.clone(), v.clone());
+            }
+            (e.metric.clone(), attrs, input.sample_value.unwrap_or(1.0))
+        }
+        MappingSource::SynthesizeFromNative {
+            target_metric,
+            attribute_map,
+            inject_attributes,
+            ..
+        } => {
+            // Apply attribute_map: rename raw key → target key.
+            let mut attrs: std::collections::BTreeMap<String, String> =
+                std::collections::BTreeMap::new();
+            for (k, v) in &input.sample_attributes {
+                let new_key = attribute_map.get(k).cloned().unwrap_or_else(|| k.clone());
+                attrs.insert(new_key, v.clone());
+            }
+            // Inject constant attributes (overrides any conflicting
+            // renamed key — same precedence as the collector transform).
+            for (k, v) in inject_attributes {
+                attrs.insert(k.clone(), v.clone());
+            }
+            (
+                target_metric.clone(),
+                attrs,
+                input.sample_value.unwrap_or(1.0),
+            )
+        }
+    };
+
+    let def = input.mapping_state.metric(&metric_id).ok_or_else(|| {
+        IpcError::Internal {
+            reason: format!("rule targets unknown metric id {metric_id:?}"),
+        }
+    })?;
+
+    // Warn about required attributes that the simulated output doesn't
+    // carry — these would result in dashboard filters seeing empty
+    // results on the wire.
+    for required in &def.required_attributes {
+        if !attributes.contains_key(required) {
+            notes.push(format!(
+                "target metric requires attribute {required:?} but the simulated output doesn't carry it; \
+                 consider adding it to injectAttributes or the rule's sample"
+            ));
+        }
+    }
+
+    // Mutation no-op to consume the marker (lints).
+    let _ = &mut attributes;
+
+    Ok(SimulateMappingOutput {
+        emitted: Some(SimulatedMetric {
+            metric_id: def.id.clone(),
+            metric_name: def.name.clone(),
+            kind: def.kind,
+            attributes,
+            value,
+        }),
+        notes,
+    })
 }
 
 /// Sprint 10 — outcome of `check_for_updates`. The React Settings
@@ -1182,6 +1367,10 @@ pub fn respawn_persisted_watchers(app: &tauri::AppHandle) {
         tracing::warn!("respawn_persisted_watchers: HOME unresolvable");
         return;
     };
+    // Seed the cursor hook sidecar so the first Cursor invocation after
+    // a relaunch reads the persisted rules — not the stale defaults
+    // from the bundled cjs script. Idempotent best-effort.
+    let _ = crate::adapters::cursor_common::regenerate_hooks_for_rules(app, &state.mappings);
     for harness in &state.harnesses {
         if !harness.enabled {
             continue;
@@ -1243,21 +1432,33 @@ fn spawn_tier3_watcher(
     options: &ApplyOptions,
 ) {
     use tauri::Manager as _;
+    // Subscribe the watcher to the live mapping store so user edits
+    // (apply_mappings IPC) take effect without restarting. Falls back
+    // to a fresh-default store when the slot is missing (test paths,
+    // boot ordering): the watcher still works on the builtin rules.
+    let mappings = if let Some(store) = app.try_state::<crate::mappings::MappingStateStore>() {
+        store.subscribe()
+    } else {
+        let store = crate::mappings::MappingStateStore::new(crate::mappings::default_state());
+        tracing::warn!("MappingStateStore slot missing; watcher using ephemeral defaults");
+        store.subscribe()
+    };
     let handle = match id {
         HarnessId::Cline => Some(cline_watcher::spawn(
             cline::tasks_dir(home),
             options.clone(),
+            mappings,
             cline_watcher::DEFAULT_POLL_INTERVAL,
         )),
         HarnessId::Aider => {
             let log = aider::log_path(home);
             ensure_log_parent(&log);
-            Some(spawn_wrapper_log_watcher(log, options.clone(), id))
+            Some(spawn_wrapper_log_watcher(log, options.clone(), id, mappings))
         }
         HarnessId::CopilotCli => {
             let log = copilot_cli::log_path(home);
             ensure_log_parent(&log);
-            Some(spawn_wrapper_log_watcher(log, options.clone(), id))
+            Some(spawn_wrapper_log_watcher(log, options.clone(), id, mappings))
         }
         // Gemini emits Tier B natively, but the chat-log watcher fills
         // the gaps: per-turn `cost.usd` (metricstransform can't do
@@ -1267,6 +1468,7 @@ fn spawn_tier3_watcher(
         HarnessId::GeminiCli => Some(gemini_watcher::spawn(
             home.join(".gemini").join("tmp"),
             options.clone(),
+            mappings,
             gemini_watcher::DEFAULT_POLL_INTERVAL,
         )),
         // Claude Desktop (Cowork) has no admin-OTLP path that actually
@@ -1276,6 +1478,7 @@ fn spawn_tier3_watcher(
         HarnessId::ClaudeDesktop => Some(claude_desktop_watcher::spawn(
             claude_desktop_watcher::sessions_root(home),
             options.clone(),
+            mappings,
             claude_desktop_watcher::DEFAULT_POLL_INTERVAL,
         )),
         HarnessId::ClaudeCode
@@ -1311,6 +1514,7 @@ fn spawn_wrapper_log_watcher(
     log_path: PathBuf,
     options: ApplyOptions,
     id: HarnessId,
+    mappings: crate::mappings::SharedMappingState,
 ) -> crate::log_watcher::WatcherHandle {
     use crate::log_watcher::{DEFAULT_POLL_INTERVAL, spawn as spawn_tail};
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
@@ -1320,16 +1524,24 @@ fn spawn_wrapper_log_watcher(
         // task drops it (and so cancels the inner watcher).
         let _tail = tail;
         while let Some(line) = rx.recv().await {
+            // Snapshot the live mapping state at emit time so user
+            // edits (via apply_mappings) take effect on the next
+            // wrapper invocation without a watcher restart.
+            let mapping_snapshot = mappings.current();
             let log_payload = match id {
                 HarnessId::Aider => aider::parse_event_line(&line, &options),
                 HarnessId::CopilotCli => copilot_cli::parse_event_line(&line, &options),
                 _ => None,
             };
             let metric_payload = match id {
-                HarnessId::Aider => aider::parse_event_metric_payload(&line, &options),
-                HarnessId::CopilotCli => {
-                    copilot_cli::parse_event_metric_payload(&line, &options)
+                HarnessId::Aider => {
+                    aider::parse_event_metric_payload(&line, &options, mapping_snapshot.clone())
                 }
+                HarnessId::CopilotCli => copilot_cli::parse_event_metric_payload(
+                    &line,
+                    &options,
+                    mapping_snapshot.clone(),
+                ),
                 _ => None,
             };
             if let Some(payload) = log_payload {
@@ -1350,6 +1562,163 @@ fn spawn_wrapper_log_watcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------
+    // simulate_mapping
+    // -----------------------------------------------------------------
+
+    fn state_with_one_synth_rule(target_id: &str) -> crate::mappings::MappingState {
+        use crate::mappings::{HarnessMapping, MappingSource};
+        use std::collections::BTreeMap;
+        let mut state = crate::mappings::default_state();
+        state.harnesses.retain(|h| h.harness_id != crate::harness::HarnessId::ClaudeCode);
+        state.harnesses.push(HarnessMapping {
+            harness_id: crate::harness::HarnessId::ClaudeCode,
+            enabled: true,
+            sources: vec![MappingSource::SynthesizeFromNative {
+                native_metric: "claude_code.tool.usage".into(),
+                target_metric: target_id.to_string(),
+                attribute_map: BTreeMap::from([
+                    ("type".to_string(), "direction".to_string()),
+                ]),
+                inject_attributes: BTreeMap::from([
+                    ("event.kind".to_string(), "tool.call".to_string()),
+                ]),
+            }],
+            cost_overrides: BTreeMap::new(),
+        });
+        state
+    }
+
+    #[test]
+    fn simulate_mapping_synthesizes_target_with_renamed_and_injected_attrs() {
+        let state = state_with_one_synth_rule("events");
+        let out = simulate_mapping(SimulateMappingInput {
+            mapping_state: state,
+            harness_id: crate::harness::HarnessId::ClaudeCode,
+            source_index: 0,
+            sample_attributes: std::collections::BTreeMap::from([
+                ("type".to_string(), "input".to_string()),
+                ("model".to_string(), "sonnet-4".to_string()),
+            ]),
+            sample_value: Some(3.0),
+        })
+        .unwrap();
+        let emitted = out.emitted.unwrap();
+        assert_eq!(emitted.metric_id, "events");
+        assert_eq!(emitted.metric_name, "trove.harness.events");
+        assert!((emitted.value - 3.0).abs() < f64::EPSILON);
+        // `type` renamed to `direction`.
+        assert_eq!(emitted.attributes.get("direction"), Some(&"input".to_string()));
+        assert!(!emitted.attributes.contains_key("type"));
+        // `model` passes through unchanged (not in attribute_map).
+        assert_eq!(emitted.attributes.get("model"), Some(&"sonnet-4".to_string()));
+        // Injected literal lands on the output.
+        assert_eq!(
+            emitted.attributes.get("event.kind"),
+            Some(&"tool.call".to_string())
+        );
+    }
+
+    #[test]
+    fn simulate_mapping_warns_when_required_attribute_missing() {
+        // Claude Code rule targeting `tokens` (which requires `direction`),
+        // but the sample doesn't include `direction` — should warn.
+        use crate::mappings::{HarnessMapping, MappingSource};
+        let mut state = crate::mappings::default_state();
+        state.harnesses.retain(|h| h.harness_id != crate::harness::HarnessId::ClaudeCode);
+        state.harnesses.push(HarnessMapping {
+            harness_id: crate::harness::HarnessId::ClaudeCode,
+            enabled: true,
+            sources: vec![MappingSource::SynthesizeFromNative {
+                native_metric: "claude_code.token.usage".into(),
+                target_metric: "tokens".to_string(),
+                attribute_map: std::collections::BTreeMap::new(),
+                inject_attributes: std::collections::BTreeMap::new(),
+            }],
+            cost_overrides: std::collections::BTreeMap::new(),
+        });
+        let out = simulate_mapping(SimulateMappingInput {
+            mapping_state: state,
+            harness_id: crate::harness::HarnessId::ClaudeCode,
+            source_index: 0,
+            sample_attributes: std::collections::BTreeMap::new(),
+            sample_value: None,
+        })
+        .unwrap();
+        assert!(
+            out.notes
+                .iter()
+                .any(|n| n.contains("direction") && n.contains("requires")),
+            "expected a 'direction' required-attribute note; got {:?}",
+            out.notes
+        );
+    }
+
+    #[test]
+    fn simulate_mapping_returns_no_emission_for_suppressed_hook_rule() {
+        use crate::mappings::{HarnessMapping, MappingSource};
+        let mut state = crate::mappings::default_state();
+        state.harnesses.retain(|h| h.harness_id != crate::harness::HarnessId::CursorIde);
+        state.harnesses.push(HarnessMapping {
+            harness_id: crate::harness::HarnessId::CursorIde,
+            enabled: true,
+            sources: vec![MappingSource::HookRule {
+                when: "beforeSubmitPrompt".into(),
+                emit: None,
+            }],
+            cost_overrides: std::collections::BTreeMap::new(),
+        });
+        let out = simulate_mapping(SimulateMappingInput {
+            mapping_state: state,
+            harness_id: crate::harness::HarnessId::CursorIde,
+            source_index: 0,
+            sample_attributes: std::collections::BTreeMap::new(),
+            sample_value: None,
+        })
+        .unwrap();
+        assert!(out.emitted.is_none());
+        assert!(out
+            .notes
+            .iter()
+            .any(|n| n.contains("suppress")));
+    }
+
+    #[test]
+    fn simulate_mapping_rejects_inconsistent_draft_state() {
+        // Draft state with an unknown metric id should be rejected up
+        // front — same invariant the apply path enforces.
+        let state = state_with_one_synth_rule("not_in_catalog");
+        let err = simulate_mapping(SimulateMappingInput {
+            mapping_state: state,
+            harness_id: crate::harness::HarnessId::ClaudeCode,
+            source_index: 0,
+            sample_attributes: std::collections::BTreeMap::new(),
+            sample_value: None,
+        })
+        .unwrap_err();
+        match err {
+            IpcError::Internal { reason } => assert!(reason.contains("invalid")),
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn simulate_mapping_rejects_out_of_range_source_index() {
+        let state = state_with_one_synth_rule("events");
+        let err = simulate_mapping(SimulateMappingInput {
+            mapping_state: state,
+            harness_id: crate::harness::HarnessId::ClaudeCode,
+            source_index: 99,
+            sample_attributes: std::collections::BTreeMap::new(),
+            sample_value: None,
+        })
+        .unwrap_err();
+        match err {
+            IpcError::Internal { reason } => assert!(reason.contains("out of range")),
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
 
     #[test]
     fn list_detected_harnesses_returns_a_row_per_supported_harness() {

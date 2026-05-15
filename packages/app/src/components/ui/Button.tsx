@@ -16,7 +16,7 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
 }
 
 const BASE =
-  'inline-flex items-center justify-center gap-1.5 rounded-[8px] font-medium tracking-tight transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 focus-visible:ring-offset-canvas dark:focus-visible:ring-offset-canvas-dark';
+  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[8px] font-medium tracking-tight transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 focus-visible:ring-offset-canvas dark:focus-visible:ring-offset-canvas-dark';
 
 const VARIANT: Record<ButtonVariant, string> = {
   primary: 'bg-brand text-white hover:bg-brand-hover',

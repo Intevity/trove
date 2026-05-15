@@ -1,10 +1,22 @@
 # MAPPING_PLAN
 
-Status: **implemented (Sprint 13)** — core mapping foundation, collector
-overlay, and watcher/wrapper Tier A emission shipped. The advanced
-row-level editor and per-model cost-override UI remain as follow-up
-work; everything below describes the data model and design contract
-the implementation followed.
+Status: **implemented (Sprint 13) + extended (v2)** — core mapping
+foundation, collector overlay, and watcher/wrapper Tier A emission
+shipped in Sprint 13. The follow-up editor (per-row edits, drag-reorder,
+preview, diff, JSON escape hatch) shipped in v2, alongside a
+user-customizable metric catalog.
+
+**v2 supersedes one of the non-goals below.** The original document
+listed "Custom metric names" as out-of-scope on the grounds that
+inventing new Tier A metrics breaks cross-user dashboards. The v2
+editor lifts that constraint via a `MappingState.metrics` catalog that
+preserves the five builtins as locked entries and allows additional
+custom counters/gauges/histograms. The cross-user-dashboard caveat now
+lives as an in-product warning on the "Add custom metric" form (and as
+a known limitation: hook/watcher harnesses don't yet honor custom
+metric rules — only native-OTel harnesses do, via the collector
+codegen). Custom histograms inherit the existing single bucket-bound
+set in v2; configurable bounds per metric is a future PR.
 
 ## Implementation summary
 
@@ -62,9 +74,15 @@ work is the data model, UI, persistence, and collector wiring.
   untouched; Trove neither renames nor reshapes them.
 - A query/transform language. The user configures _which signals map
   to which Tier A metric attributes_, not arbitrary expressions.
-- Custom metric names. Tier A is a fixed five-metric schema (see
+- ~~Custom metric names. Tier A is a fixed five-metric schema (see
   §"Tier A schema" below). Users cannot rename `trove.harness.events`
-  or invent new Tier A metrics — that breaks cross-user dashboards.
+  or invent new Tier A metrics — that breaks cross-user dashboards.~~
+  **(Superseded in v2.)** Users may now extend the catalog with custom
+  metric definitions. The five builtins remain locked (rename and
+  delete disabled) so cross-user dashboards keyed on the original
+  Tier A schema continue to interpret data the same way. The custom
+  metric form surfaces a warning that custom names won't carry across
+  teams unless the consuming side has the same catalog.
 
 ## Background: the schema this configures
 

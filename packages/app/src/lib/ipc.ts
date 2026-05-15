@@ -17,6 +17,7 @@ import {
   ResetMappingsToDefaultsResponse,
   ResolveConflictResponse,
   ResolveIdentityPreviewResponse,
+  SimulateMappingResponse,
   RevertPatchResponse,
   SetAutoUpdateEnabledResponse,
   SetIdentityAutoResponse,
@@ -35,6 +36,8 @@ import {
   type DetectedHarness,
   type HarnessId,
   type MappingState,
+  type SimulateMappingRequest,
+  type SimulateMappingResponse as SimulateMappingResult,
   type MetricsSnapshotWire,
   type PatchPreview,
   type ResolvedIdentity,
@@ -262,4 +265,14 @@ export async function resetMappingsToDefaults(): Promise<void> {
     undefined,
     ResetMappingsToDefaultsResponse,
   );
+}
+
+/** v2 — preview one mapping rule's output against a sample input.
+ *  Pure-function, no side effects: the Rust simulator runs the same
+ *  transform the collector would, but doesn't persist or reload anything.
+ *  Caller passes their working draft so previews work on in-flight edits. */
+export async function simulateMapping(
+  input: SimulateMappingRequest['input'],
+): Promise<SimulateMappingResult> {
+  return invokeIpc(IpcCommandName.SimulateMapping, { input }, SimulateMappingResponse);
 }

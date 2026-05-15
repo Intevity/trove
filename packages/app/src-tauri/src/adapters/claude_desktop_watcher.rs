@@ -91,6 +91,7 @@ struct FileWatermark {
 pub fn spawn(
     sessions_root: impl Into<PathBuf>,
     opts: ApplyOptions,
+    mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
 ) -> WatcherHandle {
     let sessions_root = sessions_root.into();
@@ -98,6 +99,7 @@ pub fn spawn(
         run(
             sessions_root,
             opts,
+            mappings,
             poll_interval,
             |payload: Value| async move { otlp_emit::post_metrics_json(&payload).await },
         )
@@ -111,6 +113,7 @@ pub fn spawn(
 pub async fn run<FMetric, FutMetric>(
     sessions_root: PathBuf,
     opts: ApplyOptions,
+    mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
     emit_metric: FMetric,
 ) where
@@ -119,7 +122,10 @@ pub async fn run<FMetric, FutMetric>(
 {
     let mut watermarks: HashMap<PathBuf, FileWatermark> = HashMap::new();
     loop {
-        if let Err(e) = scan_once(&sessions_root, &opts, &mut watermarks, &emit_metric).await {
+        let mapping_snapshot = mappings.current();
+        if let Err(e) =
+            scan_once(&sessions_root, &opts, mapping_snapshot, &mut watermarks, &emit_metric).await
+        {
             tracing::warn!(error = %e, ?sessions_root, "claude-desktop watcher tick errored");
         }
         tokio::time::sleep(poll_interval).await;
@@ -129,6 +135,7 @@ pub async fn run<FMetric, FutMetric>(
 async fn scan_once<FMetric, FutMetric>(
     sessions_root: &Path,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
     watermarks: &mut HashMap<PathBuf, FileWatermark>,
     emit_metric: &FMetric,
 ) -> std::io::Result<()>
@@ -142,7 +149,9 @@ where
         Err(e) => return Err(e),
     };
     for audit_path in audit_files {
-        if let Err(e) = process_one_file(&audit_path, opts, watermarks, emit_metric).await {
+        if let Err(e) =
+            process_one_file(&audit_path, opts, mappings.clone(), watermarks, emit_metric).await
+        {
             tracing::warn!(
                 error = %e,
                 ?audit_path,
@@ -197,6 +206,7 @@ async fn discover_audit_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
 async fn process_one_file<FMetric, FutMetric>(
     audit_path: &Path,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
     watermarks: &mut HashMap<PathBuf, FileWatermark>,
     emit_metric: &FMetric,
 ) -> std::io::Result<()>
@@ -277,7 +287,9 @@ where
                 primary_model = Some(m.to_string());
             }
         }
-        if let Some(payload) = parse_result_metric_payload(&row, primary_model.as_deref(), opts) {
+        if let Some(payload) =
+            parse_result_metric_payload(&row, primary_model.as_deref(), opts, mappings.clone())
+        {
             metrics_payloads.push(payload);
         }
     }
@@ -310,12 +322,23 @@ where
 }
 
 /// Build an OTLP/HTTP/JSON metrics payload from one `result` row.
-/// Returns `None` for rows that aren't a turn-boundary `result`.
+/// Returns `None` for rows that aren't a turn-boundary `result` or when
+/// the user has disabled every rule that would fire for this event.
+///
+/// Each facet of a Cowork `result` row (chat turn, tokens, cost,
+/// duration, error) feeds the [`crate::mappings::runtime::MetricsAccumulator`]
+/// keyed by `when="api_request"` for the success-path facets and
+/// `when="api_error"` for failures. Both keys match the default
+/// claude-desktop rules in [`crate::mappings::defaults`]; users can
+/// retarget or disable any of them via the Mappings editor and the
+/// watcher picks up the change on the next poll without restart.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn parse_result_metric_payload(
     row: &Value,
     fallback_model: Option<&str>,
     opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
 ) -> Option<Value> {
     if row.get("type").and_then(Value::as_str) != Some("result") {
         return None;
@@ -337,92 +360,135 @@ pub fn parse_result_metric_payload(
         .or_else(|| fallback_model.map(str::to_string))
         .unwrap_or_else(|| "unknown".to_string());
 
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos())
-        .to_string();
-    let start_ns = now_ns.clone();
-
-    let mut metrics: Vec<Value> = Vec::new();
-
-    // events { event.kind=chat.turn } += 1.
-    metrics.push(sum_metric(
-        "trove.harness.events",
-        "Count of harness events processed by Trove.",
-        "1",
-        &[sum_data_point_int(
-            &start_ns,
-            &now_ns,
-            1,
-            &[("event.kind", "chat.turn")],
-        )],
-    ));
-
-    // tokens — per-model breakdown if Cowork provided one, otherwise
-    // fall back to the top-level usage block (rare; assistant rows are
-    // the usual carrier).
-    let token_points = build_token_data_points(
-        model_usage,
-        row.get("usage").and_then(Value::as_object),
-        &primary_model,
-        &start_ns,
-        &now_ns,
+    let mut acc = crate::mappings::runtime::MetricsAccumulator::new(
+        mappings,
+        crate::harness::HarnessId::ClaudeDesktop,
     );
-    if !token_points.is_empty() {
-        metrics.push(sum_metric(
-            "trove.harness.tokens",
-            "Tier A token count.",
-            "1",
-            &token_points,
-        ));
+
+    let no_extras: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    // Chat-turn count — one per `result` row. The api_request rule with
+    // an events target picks this up; same `when` keys also drive the
+    // per-model token/cost/duration observations below.
+    acc.observe_count("api_request", 1, &no_extras);
+
+    // Tokens per model. Each (direction, model) tuple feeds the
+    // accumulator under api_request with direction + model in extras so
+    // the tokens rule produces one data point per (direction, model).
+    let mut token_observations: Vec<(String, &'static str, u64)> = Vec::new();
+    if let Some(mu) = model_usage {
+        for (model, v) in mu {
+            let input = v.get("inputTokens").and_then(Value::as_u64).unwrap_or(0);
+            let output = v.get("outputTokens").and_then(Value::as_u64).unwrap_or(0);
+            let cache_read = v
+                .get("cacheReadInputTokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let cache_create = v
+                .get("cacheCreationInputTokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let input_total = input + cache_read + cache_create;
+            if input_total > 0 {
+                token_observations.push((model.clone(), "input", input_total));
+            }
+            if output > 0 {
+                token_observations.push((model.clone(), "output", output));
+            }
+        }
+    }
+    if token_observations.is_empty() {
+        if let Some(u) = row.get("usage").and_then(Value::as_object) {
+            let input = u.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
+            let output = u.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
+            let cache_read = u
+                .get("cache_read_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let cache_create = u
+                .get("cache_creation_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let input_total = input + cache_read + cache_create;
+            if input_total > 0 {
+                token_observations.push((primary_model.clone(), "input", input_total));
+            }
+            if output > 0 {
+                token_observations.push((primary_model.clone(), "output", output));
+            }
+        }
+    }
+    for (model, direction, count) in &token_observations {
+        let mut extras = std::collections::BTreeMap::new();
+        // direction is set by the rule's static inject, but include in
+        // extras too so the observation's signature reflects it (rule
+        // attributes flow into the signature; this is belt-and-suspenders
+        // against future rule edits that drop the inject).
+        extras.insert("direction".to_string(), (*direction).to_string());
+        extras.insert("model".to_string(), model.clone());
+        let when = match *direction {
+            "input" => "api_request.tokens.input",
+            "output" => "api_request.tokens.output",
+            _ => continue,
+        };
+        #[allow(clippy::cast_possible_wrap)]
+        acc.observe_count(when, *count as i64, &extras);
     }
 
-    // cost.usd — per-model costUSD if Cowork provided one; otherwise
-    // emit total_cost_usd against the primary model.
-    let cost_points = build_cost_data_points(
-        model_usage,
-        total_cost_usd,
-        &primary_model,
-        &start_ns,
-        &now_ns,
-    );
-    if !cost_points.is_empty() {
-        metrics.push(sum_metric(
-            "trove.harness.cost.usd",
-            "Tier A model spend (USD), exact figure from Cowork.",
-            "USD",
-            &cost_points,
-        ));
+    // Cost per model. Uses `observe_double_sum` so cost.usd flows
+    // through as Sum/asDouble (the catalog entry's id is "cost.usd";
+    // the runtime promotes it to a double bucket automatically).
+    let mut cost_observations: Vec<(String, f64)> = Vec::new();
+    if let Some(mu) = model_usage {
+        for (model, v) in mu {
+            let cost = v.get("costUSD").and_then(Value::as_f64).unwrap_or(0.0);
+            if cost > 0.0 {
+                cost_observations.push((model.clone(), cost));
+            }
+        }
+    }
+    if cost_observations.is_empty() && total_cost_usd > 0.0 {
+        cost_observations.push((primary_model.clone(), total_cost_usd));
+    }
+    for (model, cost) in &cost_observations {
+        let mut extras = std::collections::BTreeMap::new();
+        extras.insert("model".to_string(), model.clone());
+        acc.observe_double_sum("api_request.cost", *cost, &extras);
     }
 
-    // turn.duration — one observation per turn.
-    metrics.push(histogram_metric_ms(
-        "trove.harness.turn.duration",
-        "Tier A chat-turn duration histogram (milliseconds).",
-        duration_ms,
-        &[("event.kind", "chat.turn"), ("model", primary_model.as_str())],
-        &start_ns,
-        &now_ns,
-    ));
+    // Duration — one observation per turn. The histogram rule under
+    // api_request picks it up. duration_ms → seconds for the catalog's
+    // histogram unit convention.
+    if duration_ms > 0.0 {
+        let mut extras = std::collections::BTreeMap::new();
+        extras.insert("model".to_string(), primary_model.clone());
+        acc.observe_histogram("api_request", duration_ms / 1000.0, &extras);
+    }
 
     if is_error {
         let error_kind = api_error_status
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or("unknown");
-        metrics.push(sum_metric(
-            "trove.harness.errors",
-            "Tier A error count.",
-            "1",
-            &[sum_data_point_int(
-                &start_ns,
-                &now_ns,
-                1,
-                &[("error.kind", error_kind), ("model", primary_model.as_str())],
-            )],
-        ));
+        let mut extras = std::collections::BTreeMap::new();
+        // The default api_error rule injects error.kind=unknown; the
+        // observation override here lets us swap in the actual status
+        // when Cowork provides one.
+        extras.insert("error.kind".to_string(), error_kind.to_string());
+        extras.insert("model".to_string(), primary_model.clone());
+        acc.observe_count("api_error", 1, &extras);
     }
 
+    if acc.is_empty() {
+        return None;
+    }
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos())
+        .to_string();
+    let metrics = acc.build(&now_ns, &now_ns);
+    if metrics.is_empty() {
+        return None;
+    }
     Some(wrap_metrics_payload(&metrics, opts))
 }
 
@@ -484,202 +550,6 @@ fn pick_primary_model(model_usage: Option<&serde_json::Map<String, Value>>) -> O
     best.map(|(k, _)| k)
 }
 
-fn build_token_data_points(
-    model_usage: Option<&serde_json::Map<String, Value>>,
-    top_level_usage: Option<&serde_json::Map<String, Value>>,
-    primary_model: &str,
-    start_ns: &str,
-    now_ns: &str,
-) -> Vec<Value> {
-    let mut out = Vec::new();
-    if let Some(mu) = model_usage {
-        for (model, v) in mu {
-            let input = v.get("inputTokens").and_then(Value::as_u64).unwrap_or(0);
-            let output = v.get("outputTokens").and_then(Value::as_u64).unwrap_or(0);
-            let cache_read = v
-                .get("cacheReadInputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let cache_create = v
-                .get("cacheCreationInputTokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let input_total = input + cache_read + cache_create;
-            if input_total > 0 {
-                out.push(sum_data_point_int(
-                    start_ns,
-                    now_ns,
-                    input_total,
-                    &[("direction", "input"), ("model", model.as_str())],
-                ));
-            }
-            if output > 0 {
-                out.push(sum_data_point_int(
-                    start_ns,
-                    now_ns,
-                    output,
-                    &[("direction", "output"), ("model", model.as_str())],
-                ));
-            }
-        }
-        if !out.is_empty() {
-            return out;
-        }
-    }
-    if let Some(u) = top_level_usage {
-        let input = u.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
-        let output = u.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
-        let cache_read = u
-            .get("cache_read_input_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let cache_create = u
-            .get("cache_creation_input_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let input_total = input + cache_read + cache_create;
-        if input_total > 0 {
-            out.push(sum_data_point_int(
-                start_ns,
-                now_ns,
-                input_total,
-                &[("direction", "input"), ("model", primary_model)],
-            ));
-        }
-        if output > 0 {
-            out.push(sum_data_point_int(
-                start_ns,
-                now_ns,
-                output,
-                &[("direction", "output"), ("model", primary_model)],
-            ));
-        }
-    }
-    out
-}
-
-fn build_cost_data_points(
-    model_usage: Option<&serde_json::Map<String, Value>>,
-    total_cost_usd: f64,
-    primary_model: &str,
-    start_ns: &str,
-    now_ns: &str,
-) -> Vec<Value> {
-    let mut out = Vec::new();
-    if let Some(mu) = model_usage {
-        for (model, v) in mu {
-            let cost = v.get("costUSD").and_then(Value::as_f64).unwrap_or(0.0);
-            if cost > 0.0 {
-                out.push(sum_data_point_double(
-                    start_ns,
-                    now_ns,
-                    cost,
-                    &[("cost.method", "exact"), ("model", model.as_str())],
-                ));
-            }
-        }
-        if !out.is_empty() {
-            return out;
-        }
-    }
-    if total_cost_usd > 0.0 {
-        out.push(sum_data_point_double(
-            start_ns,
-            now_ns,
-            total_cost_usd,
-            &[("cost.method", "exact"), ("model", primary_model)],
-        ));
-    }
-    out
-}
-
-fn sum_metric(name: &str, desc: &str, unit: &str, data_points: &[Value]) -> Value {
-    json!({
-        "name": name,
-        "unit": unit,
-        "description": desc,
-        "sum": {
-            "aggregationTemporality": 1,
-            "isMonotonic": true,
-            "dataPoints": data_points,
-        }
-    })
-}
-
-fn sum_data_point_int(
-    start_ns: &str,
-    now_ns: &str,
-    value: u64,
-    attrs: &[(&str, &str)],
-) -> Value {
-    let attributes: Vec<Value> = attrs
-        .iter()
-        .filter(|(_, v)| !v.is_empty())
-        .map(|(k, v)| json!({"key": *k, "value": {"stringValue": *v}}))
-        .collect();
-    json!({
-        "startTimeUnixNano": start_ns,
-        "timeUnixNano": now_ns,
-        "asInt": value.to_string(),
-        "attributes": attributes,
-    })
-}
-
-fn sum_data_point_double(
-    start_ns: &str,
-    now_ns: &str,
-    value: f64,
-    attrs: &[(&str, &str)],
-) -> Value {
-    let attributes: Vec<Value> = attrs
-        .iter()
-        .filter(|(_, v)| !v.is_empty())
-        .map(|(k, v)| json!({"key": *k, "value": {"stringValue": *v}}))
-        .collect();
-    json!({
-        "startTimeUnixNano": start_ns,
-        "timeUnixNano": now_ns,
-        "asDouble": value,
-        "attributes": attributes,
-    })
-}
-
-fn histogram_metric_ms(
-    name: &str,
-    desc: &str,
-    value_ms: f64,
-    attrs: &[(&str, &str)],
-    start_ns: &str,
-    now_ns: &str,
-) -> Value {
-    let attributes: Vec<Value> = attrs
-        .iter()
-        .filter(|(_, v)| !v.is_empty())
-        .map(|(k, v)| json!({"key": *k, "value": {"stringValue": *v}}))
-        .collect();
-    // Single-bucket histogram covering one observation. Backends that
-    // need bucket boundaries can derive them from the explicit min/max.
-    json!({
-        "name": name,
-        "unit": "ms",
-        "description": desc,
-        "histogram": {
-            "aggregationTemporality": 1,
-            "dataPoints": [{
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": now_ns,
-                "count": "1",
-                "sum": value_ms,
-                "min": value_ms,
-                "max": value_ms,
-                "bucketCounts": ["1"],
-                "explicitBounds": [],
-                "attributes": attributes,
-            }],
-        }
-    })
-}
-
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
@@ -688,6 +558,13 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    fn rules_sub() -> crate::mappings::SharedMappingState {
+        crate::mappings::MappingStateStore::new(crate::mappings::default_state()).subscribe()
+    }
+
+    fn rules_arc() -> std::sync::Arc<crate::mappings::MappingState> {
+        std::sync::Arc::new(crate::mappings::default_state())
+    }
     use super::*;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -745,14 +622,14 @@ mod tests {
         let rate = json!({"type": "rate_limit_event", "rate_limit_info": {}});
         let assistant = json!({"type": "assistant", "message": {"usage": {"input_tokens": 1}}});
         for row in [user, init, rate, assistant] {
-            assert!(parse_result_metric_payload(&row, None, &ApplyOptions::default()).is_none());
+            assert!(parse_result_metric_payload(&row, None, &ApplyOptions::default(), rules_arc()).is_none());
         }
     }
 
     #[test]
     fn emits_one_event_per_result_with_chat_turn_kind() {
         let payload =
-            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default())
+            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default(), rules_arc())
                 .unwrap();
         let events = metric_by_name(&payload, "trove.harness.events").unwrap();
         let dps = events["sum"]["dataPoints"].as_array().unwrap();
@@ -764,7 +641,7 @@ mod tests {
     #[test]
     fn tokens_metric_emits_input_and_output_per_model() {
         let payload =
-            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default())
+            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default(), rules_arc())
                 .unwrap();
         let tokens = metric_by_name(&payload, "trove.harness.tokens").unwrap();
         let dps = tokens["sum"]["dataPoints"].as_array().unwrap();
@@ -787,7 +664,7 @@ mod tests {
     #[test]
     fn cost_metric_emits_per_model_cost_usd_doubles() {
         let payload =
-            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default())
+            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default(), rules_arc())
                 .unwrap();
         let cost = metric_by_name(&payload, "trove.harness.cost.usd").unwrap();
         let dps = cost["sum"]["dataPoints"].as_array().unwrap();
@@ -800,15 +677,17 @@ mod tests {
     }
 
     #[test]
-    fn turn_duration_is_a_single_observation_histogram_in_ms() {
+    fn turn_duration_is_a_single_observation_histogram_in_seconds() {
         let payload =
-            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default())
+            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default(), rules_arc())
                 .unwrap();
         let dur = metric_by_name(&payload, "trove.harness.turn.duration").unwrap();
-        assert_eq!(dur["unit"], "ms");
+        // The v2 runtime emits turn.duration in seconds (matches the
+        // OpenTelemetry semantic convention for durations).
+        assert_eq!(dur["unit"], "s");
         let dp = &dur["histogram"]["dataPoints"][0];
         assert_eq!(dp["count"], "1");
-        assert_eq!(dp["sum"], 2593.0);
+        assert!((dp["sum"].as_f64().unwrap() - 2.593).abs() < 1e-9);
         // Primary model = opus (more tokens).
         assert!(attr_eq(&dp["attributes"], "model", "claude-opus-4-7[1m]"));
         assert!(attr_eq(&dp["attributes"], "event.kind", "chat.turn"));
@@ -818,7 +697,7 @@ mod tests {
     fn errors_metric_emits_only_when_is_error_true() {
         // is_error=false → no errors metric.
         let payload =
-            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default())
+            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default(), rules_arc())
                 .unwrap();
         assert!(metric_by_name(&payload, "trove.harness.errors").is_none());
 
@@ -827,7 +706,7 @@ mod tests {
         errored["is_error"] = json!(true);
         errored["api_error_status"] = json!("rate_limited");
         let payload =
-            parse_result_metric_payload(&errored, None, &ApplyOptions::default()).unwrap();
+            parse_result_metric_payload(&errored, None, &ApplyOptions::default(), rules_arc()).unwrap();
         let errors = metric_by_name(&payload, "trove.harness.errors").unwrap();
         let dps = errors["sum"]["dataPoints"].as_array().unwrap();
         assert_eq!(dps.len(), 1);
@@ -840,7 +719,7 @@ mod tests {
         errored["is_error"] = json!(true);
         errored["api_error_status"] = json!(null);
         let payload =
-            parse_result_metric_payload(&errored, None, &ApplyOptions::default()).unwrap();
+            parse_result_metric_payload(&errored, None, &ApplyOptions::default(), rules_arc()).unwrap();
         let errors = metric_by_name(&payload, "trove.harness.errors").unwrap();
         let dp = &errors["sum"]["dataPoints"][0];
         assert!(attr_eq(&dp["attributes"], "error.kind", "unknown"));
@@ -865,6 +744,7 @@ mod tests {
             &row,
             Some("claude-opus-4-7[1m]"),
             &ApplyOptions::default(),
+            rules_arc(),
         )
         .unwrap();
         let tokens = metric_by_name(&payload, "trove.harness.tokens").unwrap();
@@ -888,7 +768,7 @@ mod tests {
     #[test]
     fn resource_attributes_include_harness_id_and_service_name() {
         let payload =
-            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default())
+            parse_result_metric_payload(&sample_result_row(), None, &ApplyOptions::default(), rules_arc())
                 .unwrap();
         let attrs = &payload["resourceMetrics"][0]["resource"]["attributes"];
         assert!(attr_eq(attrs, "harness.id", "claude-desktop"));
@@ -902,7 +782,7 @@ mod tests {
         let mut opts = ApplyOptions::default();
         opts.custom_attributes
             .insert("team".into(), "platform".into());
-        let payload = parse_result_metric_payload(&sample_result_row(), None, &opts).unwrap();
+        let payload = parse_result_metric_payload(&sample_result_row(), None, &opts, rules_arc()).unwrap();
         let attrs = &payload["resourceMetrics"][0]["resource"]["attributes"];
         assert!(attr_eq(attrs, "team", "platform"));
     }
@@ -963,6 +843,7 @@ mod tests {
             run(
                 root_clone,
                 ApplyOptions::default(),
+                rules_sub(),
                 Duration::from_millis(30),
                 emit,
             )
@@ -995,7 +876,7 @@ mod tests {
         let missing = dir.path().join("nope");
         let emit = |_p: Value| async { Ok::<_, otlp_emit::OtlpEmitError>(()) };
         let handle = tokio::spawn(async move {
-            run(missing, ApplyOptions::default(), Duration::from_millis(30), emit).await;
+            run(missing, ApplyOptions::default(), rules_sub(), Duration::from_millis(30), emit).await;
         });
         tokio::time::sleep(Duration::from_millis(150)).await;
         handle.abort();
@@ -1030,7 +911,7 @@ mod tests {
         };
         let root_clone = root.clone();
         let handle = tokio::spawn(async move {
-            run(root_clone, ApplyOptions::default(), Duration::from_millis(30), emit).await;
+            run(root_clone, ApplyOptions::default(), rules_sub(), Duration::from_millis(30), emit).await;
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
 

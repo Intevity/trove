@@ -23,9 +23,14 @@
 //! `cost.method=estimated` numbers without a real prompt/response
 //! byte count would be worse than skipping.
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use serde_json::{json, Value};
 
 use super::ApplyOptions;
+use crate::harness::HarnessId;
+use crate::mappings::MappingState;
 
 /// Identifying parameters for one harness's wrapper. Lets the shared
 /// builder stay generic without taking on a runtime enum dispatch.
@@ -36,6 +41,9 @@ pub struct WrapperMetricsSpec {
     pub expected_tool: &'static str,
     /// Resource attributes pinned per harness.
     pub service_name: &'static str,
+    /// Catalog-aware: which harness this wrapper belongs to. Drives
+    /// the rules lookup into [`crate::mappings::MappingState`].
+    pub harness: HarnessId,
     pub harness_id: &'static str,
     pub harness_name: &'static str,
     /// `scope.name` on the OTLP instrumentation scope. Convention:
@@ -43,22 +51,22 @@ pub struct WrapperMetricsSpec {
     pub scope_name: &'static str,
 }
 
-/// Histogram bucket bounds shared with the Cursor hook. Mirrors
-/// `resources/hooks/cursor-otel-hook-impl.cjs` so cross-harness
-/// duration panels render the same buckets regardless of which
-/// harness emitted the observation.
-const HISTOGRAM_BOUNDS: &[f64] = &[
-    0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0,
-];
-
 /// Parse one wrapper-emitted JSON-line and produce a Tier A metric
-/// payload. Returns `None` when the line is unparseable or carries an
-/// unrelated `tool` value.
+/// payload, applying the user's current mapping rules. Returns `None`
+/// when the line is unparseable, carries an unrelated `tool` value, or
+/// when no rule produces an emission for this harness's events.
+///
+/// The wrapper classifies its single event as `when=wrapper.invocation`
+/// for the `events` and `turn.duration` facets, and as
+/// `when=wrapper.error` (only when `exit_code != 0`) for `errors`. Rules
+/// in [`crate::mappings::MappingState`] decide which target metrics each
+/// facet flows into.
 #[must_use]
 pub fn build_invocation_metrics(
     line: &str,
     opts: &ApplyOptions,
     spec: &WrapperMetricsSpec,
+    mappings: Arc<MappingState>,
 ) -> Option<Value> {
     let event: Value = serde_json::from_str(line.trim()).ok()?;
     let tool = event.get("tool").and_then(Value::as_str)?;
@@ -70,52 +78,28 @@ pub fn build_invocation_metrics(
     #[allow(clippy::cast_precision_loss)]
     let duration_s = (elapsed_ms.max(0) as f64) / 1000.0;
 
+    let mut acc = crate::mappings::runtime::MetricsAccumulator::new(mappings, spec.harness);
+    let no_extras: BTreeMap<String, String> = BTreeMap::new();
+    // One invocation = one event for the events facet.
+    acc.observe_count("wrapper.invocation", 1, &no_extras);
+    // Same logical event also contributes to turn.duration as a
+    // histogram observation (in seconds).
+    acc.observe_histogram("wrapper.invocation", duration_s, &no_extras);
+    if exit != 0 {
+        acc.observe_count("wrapper.error", 1, &no_extras);
+    }
+
+    if acc.is_empty() {
+        return None;
+    }
+
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos())
         .to_string();
-    let start_ns = now_ns.clone();
-
-    let mut metrics: Vec<Value> = Vec::new();
-
-    metrics.push(json!({
-        "name": "trove.harness.events",
-        "unit": "1",
-        "description": "Count of harness events processed by Trove.",
-        "sum": {
-            "aggregationTemporality": 1,
-            "isMonotonic": true,
-            "dataPoints": [{
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": now_ns,
-                "asInt": "1",
-                "attributes": [
-                    {"key": "event.kind", "value": {"stringValue": "chat.turn"}},
-                ],
-            }]
-        }
-    }));
-
-    metrics.push(turn_duration_metric(duration_s, &start_ns, &now_ns));
-
-    if exit != 0 {
-        metrics.push(json!({
-            "name": "trove.harness.errors",
-            "unit": "1",
-            "description": "Count of harness errors observed by Trove.",
-            "sum": {
-                "aggregationTemporality": 1,
-                "isMonotonic": true,
-                "dataPoints": [{
-                    "startTimeUnixNano": start_ns,
-                    "timeUnixNano": now_ns,
-                    "asInt": "1",
-                    "attributes": [
-                        {"key": "error.kind", "value": {"stringValue": "unknown"}},
-                    ],
-                }]
-            }
-        }));
+    let metrics = acc.build(&now_ns, &now_ns);
+    if metrics.is_empty() {
+        return None;
     }
 
     let mut resource_attrs = vec![
@@ -139,53 +123,19 @@ pub fn build_invocation_metrics(
     }))
 }
 
-/// Build a one-observation histogram for the duration metric. The
-/// bucket-counts vector has `bounds.len() + 1` entries; all are zero
-/// except the bucket the observation falls into, where it's 1.
-fn turn_duration_metric(value_s: f64, start_ns: &str, time_ns: &str) -> Value {
-    let mut bucket_counts: Vec<String> = vec!["0".to_string(); HISTOGRAM_BOUNDS.len() + 1];
-    let mut placed = false;
-    for (i, bound) in HISTOGRAM_BOUNDS.iter().enumerate() {
-        if value_s <= *bound {
-            bucket_counts[i] = "1".to_string();
-            placed = true;
-            break;
-        }
-    }
-    if !placed {
-        let last = bucket_counts.len() - 1;
-        bucket_counts[last] = "1".to_string();
-    }
-
-    json!({
-        "name": "trove.harness.turn.duration",
-        "unit": "s",
-        "description": "Wall-clock duration of a harness turn.",
-        "histogram": {
-            "aggregationTemporality": 1,
-            "dataPoints": [{
-                "startTimeUnixNano": start_ns,
-                "timeUnixNano": time_ns,
-                "count": "1",
-                "sum": value_s,
-                "bucketCounts": bucket_counts,
-                "explicitBounds": HISTOGRAM_BOUNDS,
-                "attributes": [
-                    {"key": "event.kind", "value": {"stringValue": "chat.turn"}},
-                ],
-            }]
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
+
+    fn rules_arc() -> std::sync::Arc<crate::mappings::MappingState> {
+        std::sync::Arc::new(crate::mappings::default_state())
+    }
     use super::*;
 
     fn aider_spec() -> WrapperMetricsSpec {
         WrapperMetricsSpec {
             expected_tool: "aider",
             service_name: "aider",
+            harness: crate::harness::HarnessId::Aider,
             harness_id: "aider",
             harness_name: "Aider",
             scope_name: "trove.adapters.aider",
@@ -195,20 +145,20 @@ mod tests {
     #[test]
     fn returns_none_for_non_json() {
         assert!(
-            build_invocation_metrics("not json", &ApplyOptions::default(), &aider_spec()).is_none()
+            build_invocation_metrics("not json", &ApplyOptions::default(), &aider_spec(), rules_arc()).is_none()
         );
     }
 
     #[test]
     fn returns_none_for_mismatched_tool() {
         let line = r#"{"tool":"notaider","exit_code":0,"duration_ms":50}"#;
-        assert!(build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).is_none());
+        assert!(build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec(), rules_arc()).is_none());
     }
 
     #[test]
     fn emits_events_and_duration_for_a_successful_invocation() {
         let line = r#"{"tool":"aider","argc":1,"exit_code":0,"duration_ms":2500,"ts":"2026-05-09T00:00:00Z"}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec(), rules_arc()).unwrap();
         let names: Vec<&str> = p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
             .unwrap()
@@ -224,7 +174,7 @@ mod tests {
     #[test]
     fn emits_errors_for_a_nonzero_exit_code() {
         let line = r#"{"tool":"aider","argc":1,"exit_code":1,"duration_ms":100,"ts":""}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec(), rules_arc()).unwrap();
         let names: Vec<&str> = p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
             .unwrap()
@@ -242,7 +192,7 @@ mod tests {
         // with b[-1] = -∞. So 2.5 lands in bucket index 3 (value of
         // bound 5).
         let line = r#"{"tool":"aider","exit_code":0,"duration_ms":2500,"ts":""}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec(), rules_arc()).unwrap();
         let histogram = p["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
             .as_array()
             .unwrap()
@@ -263,7 +213,7 @@ mod tests {
         let mut opts = ApplyOptions::default();
         opts.custom_attributes
             .insert("env".into(), "prod".into());
-        let p = build_invocation_metrics(line, &opts, &aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &opts, &aider_spec(), rules_arc()).unwrap();
         let resource_attrs = p["resourceMetrics"][0]["resource"]["attributes"]
             .as_array()
             .unwrap();
@@ -275,7 +225,7 @@ mod tests {
     #[test]
     fn resource_attributes_match_the_spec() {
         let line = r#"{"tool":"aider","exit_code":0,"duration_ms":50,"ts":""}"#;
-        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec()).unwrap();
+        let p = build_invocation_metrics(line, &ApplyOptions::default(), &aider_spec(), rules_arc()).unwrap();
         let attrs = p["resourceMetrics"][0]["resource"]["attributes"].as_array().unwrap();
         assert!(attrs
             .iter()

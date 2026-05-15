@@ -79,6 +79,11 @@ const HARNESS_BRAND_SVG_SOURCES = import.meta.glob<string>('../assets/harness-lo
   query: '?raw',
   import: 'default',
 });
+const HARNESS_BRAND_PNG_SOURCES = import.meta.glob<string>('../assets/harness-logos/*.png', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
 const BACKEND_BRAND_SVG_SOURCES = import.meta.glob<string>('../assets/backend-logos/*.svg', {
   eager: true,
   query: '?raw',
@@ -93,6 +98,9 @@ const BACKEND_BRAND_PNG_SOURCES = import.meta.glob<string>('../assets/backend-lo
 const PARSED_HARNESS_LOGOS = new Map<string, BrandArtwork | null>();
 for (const [path, raw] of Object.entries(HARNESS_BRAND_SVG_SOURCES)) {
   PARSED_HARNESS_LOGOS.set(path, parseBrandSvg(raw));
+}
+for (const [path, url] of Object.entries(HARNESS_BRAND_PNG_SOURCES)) {
+  PARSED_HARNESS_LOGOS.set(path, { type: 'png', url });
 }
 const PARSED_BACKEND_LOGOS = new Map<string, BrandArtwork | null>();
 for (const [path, raw] of Object.entries(BACKEND_BRAND_SVG_SOURCES)) {
@@ -122,7 +130,13 @@ function parseBrandSvg(raw: string): ParsedBrandSvg | null {
 }
 
 export function harnessBrandLogo(id: HarnessId): BrandArtwork | undefined {
-  return PARSED_HARNESS_LOGOS.get(`../assets/harness-logos/${id}.svg`) ?? undefined;
+  // Prefer SVG when both are present; PNG is the fallback for harnesses
+  // (like Aider) whose brand asset is only available as a raster.
+  return (
+    PARSED_HARNESS_LOGOS.get(`../assets/harness-logos/${id}.svg`) ??
+    PARSED_HARNESS_LOGOS.get(`../assets/harness-logos/${id}.png`) ??
+    undefined
+  );
 }
 
 export function backendBrandLogo(kind: BackendKind): BrandArtwork | undefined {
