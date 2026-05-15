@@ -24,6 +24,11 @@ describe('IpcCommandName', () => {
     expect(IpcCommandName.ApplyPatch).toBe('apply_patch');
     expect(IpcCommandName.RevertPatch).toBe('revert_patch');
   });
+
+  it('exposes the application lifecycle command names', () => {
+    expect(IpcCommandName.QuitApp).toBe('quit_app');
+    expect(IpcCommandName.UninstallApp).toBe('uninstall_app');
+  });
 });
 
 describe('PreviewPatchResponse', () => {

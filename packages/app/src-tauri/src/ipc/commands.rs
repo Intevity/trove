@@ -882,6 +882,185 @@ pub fn clear_backend(app: tauri::AppHandle) -> Result<(), IpcError> {
     Ok(())
 }
 
+/// Quit the application from the React UI. Mirrors the tray menu's
+/// `quit` handler so the existing `RunEvent::ExitRequested` path in
+/// `lib.rs` still runs (which shuts the collector down cleanly).
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) -> Result<(), IpcError> {
+    app.exit(0);
+    Ok(())
+}
+
+/// Uninstall Trove from the user's machine. Optionally wipes persisted
+/// data (state.json, secrets.json, collector logs, keychain residue).
+///
+/// The running app cannot delete its own installed bundle directly —
+/// macOS keeps the executable file mapped, and on Windows the binary
+/// is locked while running. We instead spawn a detached helper that
+/// polls our PID, waits for the process to exit, then removes the
+/// install path. The helper inherits no stdio so it survives parent
+/// death cleanly.
+///
+/// Best-effort across platforms:
+/// - **macOS:** removes `<...>.app` (walked up from `current_exe`).
+/// - **Linux:** removes the `APPIMAGE` file when set; otherwise warns
+///   (deb/pacman installs need privileged removal).
+/// - **Windows:** removes the install directory (parent of
+///   `current_exe`) — guarded by a `trove.exe` presence check.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn uninstall_app(app: tauri::AppHandle, remove_data: bool) -> Result<(), IpcError> {
+    use tauri::Manager as _;
+
+    if remove_data {
+        if let Ok(state) = app_state::load(&app) {
+            for inst in &state.backends {
+                for account in backend_secret_accounts(&inst.backend) {
+                    if let Err(e) = secrets::delete(&account) {
+                        tracing::warn!(account = %account, error = %e, "uninstall: secret delete failed");
+                    }
+                }
+            }
+        }
+        for dir in [
+            app.path().app_config_dir().ok(),
+            app.path().app_data_dir().ok(),
+            app.path().app_log_dir().ok(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if dir.exists() {
+                if let Err(e) = std::fs::remove_dir_all(&dir) {
+                    tracing::warn!(?dir, error = %e, "uninstall: data dir cleanup failed");
+                }
+            }
+        }
+    }
+
+    if let Some(install_path) = resolve_install_path_for_uninstall() {
+        if let Err(e) = spawn_post_exit_cleanup(&install_path) {
+            tracing::warn!(?install_path, error = %e, "uninstall: could not schedule cleanup helper");
+        } else {
+            tracing::info!(?install_path, "uninstall: cleanup helper scheduled");
+        }
+    } else {
+        tracing::warn!("uninstall: could not resolve install path; exiting without bundle removal");
+    }
+
+    app.exit(0);
+    Ok(())
+}
+
+/// Resolve the install path the post-exit cleanup helper should
+/// remove. Returns `None` for dev builds and for Linux non-AppImage
+/// layouts where unprivileged removal isn't safe.
+fn resolve_install_path_for_uninstall() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let exe = std::env::current_exe().ok()?;
+        for ancestor in exe.ancestors() {
+            if ancestor
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case("app"))
+            {
+                return Some(ancestor.to_path_buf());
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(appimage) = std::env::var("APPIMAGE") {
+            let p = PathBuf::from(appimage);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?.to_path_buf();
+        // Guard: only proceed when the install dir clearly contains
+        // our binary, so a custom-layout install doesn't accidentally
+        // remove a parent that owns other apps.
+        if dir.join("trove.exe").exists() {
+            Some(dir)
+        } else {
+            None
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+/// Spawn a detached child that waits for our PID to exit and then
+/// removes `install_path`. Stdio is detached so the child outlives us.
+fn spawn_post_exit_cleanup(install_path: &Path) -> std::io::Result<()> {
+    let pid = std::process::id();
+    #[cfg(unix)]
+    {
+        // Quote-safe via shell single-quoting; reject paths containing
+        // a single quote so the inline script can't be broken out of.
+        let path_str = install_path.display().to_string();
+        if path_str.contains('\'') {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "install path contains a single quote",
+            ));
+        }
+        let script = format!(
+            "while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; rm -rf '{path_str}'"
+        );
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&script)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        let path_str = install_path.display().to_string();
+        // cmd.exe waits while tasklist still reports our PID, then
+        // removes the install dir. /D ensures Y/N prompts get answered.
+        let script = format!(
+            ":loop\r\n\
+             tasklist /FI \"PID eq {pid}\" /NH 2>NUL | find \"{pid}\" >NUL\r\n\
+             if not errorlevel 1 (timeout /T 1 /NOBREAK >NUL & goto loop)\r\n\
+             rmdir /S /Q \"{path_str}\"\r\n"
+        );
+        std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", &script])
+            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = install_path;
+        let _ = pid;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "post-exit cleanup not implemented on this platform",
+        ))
+    }
+}
+
 /// Sprint 10 — flip the persisted `auto_update_enabled` flag in
 /// `state.json`. Drives nothing on its own; the background-on-launch
 /// update probe (when wired) reads this flag, and the React Settings

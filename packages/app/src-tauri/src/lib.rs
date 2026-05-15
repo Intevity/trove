@@ -64,6 +64,8 @@ pub fn run() {
             ipc::commands::update_backend,
             ipc::commands::remove_backend,
             ipc::commands::clear_backend,
+            ipc::commands::quit_app,
+            ipc::commands::uninstall_app,
             ipc::commands::test_export,
             ipc::commands::set_auto_update_enabled,
             ipc::commands::check_for_updates,
