@@ -84,15 +84,16 @@ impl Detector {
         }
     }
 
-    /// Detect every harness Trove currently knows how to probe. As of
-    /// Sprint 7 PR 1 that's Tier 1 + the two Cursor variants of Tier 2;
-    /// Sprint 7 PR 2 adds `OpenCode` and Sprint 9 adds the Tier 3 trio.
+    /// Detect every supported harness so each one renders in the
+    /// dashboard regardless of whether Trove ships an adapter today.
+    /// Detection-only harnesses (those in `HarnessId::all()` but in
+    /// none of the tier arrays) are probed the same way; their
+    /// `adapter_available` flag stays false via `has_adapter()`, which
+    /// keeps the row's toggle disabled in the UI.
     #[must_use]
     pub fn detect_all(&self) -> Vec<DetectedHarness> {
-        HarnessId::tier_1()
+        HarnessId::all()
             .iter()
-            .chain(HarnessId::tier_2().iter())
-            .chain(HarnessId::tier_3().iter())
             .map(|id| harnesses::detect(*id, self))
             .collect()
     }
@@ -120,17 +121,10 @@ mod tests {
             app_root: home.path().to_path_buf(),
         };
         let results = detector.detect_all();
-        let expected_len =
-            HarnessId::tier_1().len() + HarnessId::tier_2().len() + HarnessId::tier_3().len();
-        assert_eq!(results.len(), expected_len);
+        assert_eq!(results.len(), HarnessId::all().len());
 
         let returned_ids: Vec<HarnessId> = results.iter().map(|r| r.id).collect();
-        let expected_ids: Vec<HarnessId> = HarnessId::tier_1()
-            .iter()
-            .chain(HarnessId::tier_2().iter())
-            .chain(HarnessId::tier_3().iter())
-            .copied()
-            .collect();
+        let expected_ids: Vec<HarnessId> = HarnessId::all().to_vec();
         assert_eq!(returned_ids, expected_ids);
     }
 

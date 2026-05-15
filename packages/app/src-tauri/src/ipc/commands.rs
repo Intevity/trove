@@ -1947,9 +1947,7 @@ mod tests {
         // path with a tempdir-scoped state.
         let dir = tempfile::tempdir().unwrap();
         let result = list_detected_harnesses_inner(dir.path(), &HashMap::new()).unwrap();
-        let expected =
-            HarnessId::tier_1().len() + HarnessId::tier_2().len() + HarnessId::tier_3().len();
-        assert_eq!(result.len(), expected);
+        assert_eq!(result.len(), HarnessId::all().len());
     }
 
     #[test]
