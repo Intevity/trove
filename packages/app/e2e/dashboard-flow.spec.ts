@@ -5,8 +5,8 @@ import { installTauriMock } from './helpers/tauri-mock.js';
 /** Sprint 6 PR 3 acceptance — full first-run flow against the mocked
  *  Tauri runtime. Drives the wizard from preset → credentials → test
  *  export → save, lands on the dashboard, enables Claude Code, clicks
- *  "Test Pipeline", and asserts the header health dot transitions to
- *  green with non-zero counts in the SidecarPanel. */
+ *  "Test Pipeline", and asserts the header's data-health attribute
+ *  transitions to green with non-zero counts in the SidecarPanel. */
 test('full first-run flow lands the dashboard in the green state', async ({ page }) => {
   await installTauriMock(page, {
     collectorStatus: {
@@ -34,17 +34,18 @@ test('full first-run flow lands the dashboard in the green state', async ({ page
   await expect(page.getByTestId('test-export-banner-ok')).toBeVisible();
   await page.getByTestId('test-export-save').click();
 
-  // Dashboard mounts. The header health dot starts amber because the
-  // metrics snapshot is null (no scrape yet).
+  // Dashboard mounts. The header carries `data-health` reflecting the
+  // derived collector health — starts amber because the metrics
+  // snapshot is null (no scrape yet).
   const dashboard = page.getByTestId('dashboard');
   await expect(dashboard).toBeVisible();
-  const dot = page.getByTestId('app-health-dot');
-  await expect(dot).toHaveAttribute('data-health', 'amber');
+  const headerBar = page.getByTestId('app-header-bar');
+  await expect(headerBar).toHaveAttribute('data-health', 'amber');
 
   // Push a metrics snapshot with a recent signal — the dashboard's
-  // useMetricsSnapshot hook updates and the dot flips green.
-  // Zero enabled harnesses means the recent-signal check is skipped,
-  // so the dot is green as soon as the snapshot lands and is
+  // useMetricsSnapshot hook updates and the header's data-health
+  // flips green. Zero enabled harnesses means the recent-signal check
+  // is skipped, so it's green as soon as the snapshot lands and is
   // reachable.
   await page.evaluate(() => {
     const w = window as unknown as {
@@ -63,7 +64,7 @@ test('full first-run flow lands the dashboard in the green state', async ({ page
     w.__troveEmit('metrics-snapshot', snapshot);
   });
 
-  await expect(dot).toHaveAttribute('data-health', 'green');
+  await expect(headerBar).toHaveAttribute('data-health', 'green');
 
   // The sidecar panel reflects the non-zero counts pushed via the
   // event payload.

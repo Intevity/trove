@@ -1,3 +1,4 @@
+import { UserCircle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ResolvedIdentity, ResolvedIdentitySource } from '@trove/shared';
@@ -89,7 +90,17 @@ export function IdentityPanel({ enabled, manualName, manualEmail, onChanged }: P
   return (
     <Card testid="identity-panel">
       <CardHeader>
-        <CardTitle>Identity tagging</CardTitle>
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-brand/[0.14] text-brand">
+            <UserCircle size={14} strokeWidth={2.2} aria-hidden="true" />
+          </span>
+          <div className="flex flex-col">
+            <CardTitle>Identity tagging</CardTitle>
+            <span className="text-[11px] text-fg-tertiary dark:text-fg-tertiary-dark">
+              Stamp your name and email onto outgoing telemetry.
+            </span>
+          </div>
+        </div>
       </CardHeader>
 
       <label className="flex items-start gap-3 text-[13px] text-fg-secondary dark:text-fg-secondary-dark">
@@ -99,7 +110,7 @@ export function IdentityPanel({ enabled, manualName, manualEmail, onChanged }: P
           checked={enabled}
           disabled={busy}
           onChange={(e) => void handleToggle(e)}
-          className="mt-0.5 h-4 w-4 rounded border-fg-tertiary focus:ring-ios-blue dark:border-fg-tertiary-dark"
+          className="mt-0.5 h-4 w-4 rounded border-fg-tertiary focus:ring-brand dark:border-fg-tertiary-dark"
         />
         <span className="flex flex-col">
           <span className="text-fg-primary dark:text-fg-primary-dark">
@@ -166,7 +177,7 @@ export function IdentityPanel({ enabled, manualName, manualEmail, onChanged }: P
             type="text"
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
-            className="rounded-[8px] border border-hairline bg-surface-elevated px-2 py-1 text-[13px] text-fg-primary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark"
+            className="rounded-[8px] border border-hairline bg-surface-elevated px-2 py-1 text-[13px] text-fg-primary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark"
           />
           <label htmlFor="identity-email" className="text-fg-primary dark:text-fg-primary-dark">
             Email
@@ -177,7 +188,7 @@ export function IdentityPanel({ enabled, manualName, manualEmail, onChanged }: P
             type="email"
             value={draftEmail}
             onChange={(e) => setDraftEmail(e.target.value)}
-            className="rounded-[8px] border border-hairline bg-surface-elevated px-2 py-1 text-[13px] text-fg-primary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark"
+            className="rounded-[8px] border border-hairline bg-surface-elevated px-2 py-1 text-[13px] text-fg-primary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark"
           />
           <span />
           <div className="flex justify-end">

@@ -912,6 +912,7 @@ describe('MetricsSnapshotWire', () => {
     scrapedMsAgo: 0,
     unreachable: false,
     overallHealth: 'green' as const,
+    diagObservations: {},
   };
 
   it('round-trips a fresh snapshot', () => {

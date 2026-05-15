@@ -25,7 +25,7 @@ export function OverviewTab({ appState, state, metrics, onOpenPlatforms }: Props
           type="button"
           data-testid="configure-platform-nudge"
           onClick={onOpenPlatforms}
-          className="flex w-full items-center justify-between gap-2 rounded-card border border-hairline bg-surface-elevated px-3 py-2 text-left text-[12px] text-fg-secondary transition-colors hover:bg-ios-blue/[0.06] dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-secondary-dark dark:hover:bg-ios-blue/[0.12]"
+          className="flex w-full items-center justify-between gap-2 rounded-card border border-hairline bg-surface-elevated px-3 py-2 text-left text-[12px] text-fg-secondary transition-colors hover:bg-brand/[0.06] dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-secondary-dark dark:hover:bg-brand/[0.12]"
         >
           <span>
             No platforms configured —{' '}
@@ -34,18 +34,18 @@ export function OverviewTab({ appState, state, metrics, onOpenPlatforms }: Props
             </span>{' '}
             to start forwarding telemetry.
           </span>
-          <ArrowRight size={14} className="text-ios-blue" />
+          <ArrowRight size={14} className="text-brand" />
         </button>
       ) : null}
 
-      <SidecarPanel state={state} metrics={metrics} backends={appState.backends} />
-
       <FlowChart
-        harnessCount={appState.harnesses.filter((h) => h.enabled).length}
+        harnesses={appState.harnesses.filter((h) => h.enabled)}
         backends={appState.backends}
         metrics={metrics}
         state={state}
       />
+
+      <SidecarPanel state={state} metrics={metrics} backends={appState.backends} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type PillTone = 'neutral' | 'green' | 'amber' | 'red' | 'blue';
+export type PillTone = 'neutral' | 'green' | 'amber' | 'red' | 'brand';
 export type PillSize = 'xs' | 'sm';
 
 export interface PillProps {
@@ -16,7 +16,7 @@ const TONE: Record<PillTone, string> = {
   green: 'bg-ios-green/[0.14] text-ios-green',
   amber: 'bg-ios-orange/[0.14] text-ios-orange',
   red: 'bg-ios-red/[0.14] text-ios-red',
-  blue: 'bg-ios-blue/[0.14] text-ios-blue',
+  brand: 'bg-brand/[0.14] text-brand',
 };
 
 const SIZE: Record<PillSize, string> = {

@@ -14,6 +14,7 @@ function snapshot(opts?: Partial<MetricsSnapshotWire>): MetricsSnapshotWire {
     scrapedMsAgo: 0,
     unreachable: false,
     overallHealth: 'green',
+    diagObservations: {},
     ...opts,
   };
 }

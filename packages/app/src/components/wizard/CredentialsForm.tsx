@@ -298,7 +298,7 @@ function renderFields(
 }
 
 const INPUT_CLASS =
-  'mt-1 w-full rounded-[8px] border border-hairline bg-surface-elevated px-3 py-2 text-[13px] text-fg-primary placeholder:text-fg-tertiary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark';
+  'mt-1 w-full rounded-[8px] border border-hairline bg-surface-elevated px-3 py-2 text-[13px] text-fg-primary placeholder:text-fg-tertiary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark';
 
 function TextField({
   label,
@@ -427,7 +427,7 @@ function HeadersEditor({ headers, onChange }: HeadersEditorProps): JSX.Element {
   };
 
   const SMALL_INPUT =
-    'flex-1 rounded-[8px] border border-hairline bg-surface-elevated px-3 py-1 text-[13px] text-fg-primary placeholder:text-fg-tertiary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark';
+    'flex-1 rounded-[8px] border border-hairline bg-surface-elevated px-3 py-1 text-[13px] text-fg-primary placeholder:text-fg-tertiary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark';
 
   return (
     <fieldset>
@@ -482,7 +482,7 @@ function HeadersEditor({ headers, onChange }: HeadersEditorProps): JSX.Element {
         type="button"
         onClick={addRow}
         data-testid="otlp-generic-header-add"
-        className="mt-2 rounded-[8px] border border-dashed border-hairline px-3 py-1 text-[12px] text-fg-secondary hover:border-ios-blue hover:text-ios-blue dark:border-hairline-dark dark:text-fg-secondary-dark"
+        className="mt-2 rounded-[8px] border border-dashed border-hairline px-3 py-1 text-[12px] text-fg-secondary hover:border-brand hover:text-brand dark:border-hairline-dark dark:text-fg-secondary-dark"
       >
         + Add header
       </button>

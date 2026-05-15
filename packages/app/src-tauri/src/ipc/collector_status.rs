@@ -110,6 +110,11 @@ pub struct MetricsSnapshotWire {
     /// the tray icon. Saves the dashboard from re-deriving it client-
     /// side; the TS twin still does so for unit-test parity.
     pub overall_health: OverallHealth,
+    /// Per-harness outgoing counts from the diag filter pipelines.
+    /// Keyed by harness suffix (e.g. `"gemini-cli"`). The FlowChart
+    /// subtracts successive snapshots to derive per-harness rates for
+    /// span / metric / log lanes; only native-OTel emitters appear.
+    pub diag_observations: std::collections::HashMap<String, SignalCountsWire>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -291,6 +296,11 @@ pub fn snapshot_to_wire(
     let scraped_ms_ago = u64::try_from(now.saturating_duration_since(snap.scraped_at).as_millis())
         .unwrap_or(u64::MAX);
     let overall_health = derive_overall_health(collector_state, Some(snap), 0, now);
+    let diag_observations = snap
+        .diag_observations
+        .iter()
+        .map(|(k, v)| (k.clone(), v.into()))
+        .collect();
     MetricsSnapshotWire {
         received: (&snap.received).into(),
         sent: (&snap.sent).into(),
@@ -298,6 +308,7 @@ pub fn snapshot_to_wire(
         scraped_ms_ago,
         unreachable: snap.unreachable,
         overall_health,
+        diag_observations,
     }
 }
 
@@ -426,7 +437,7 @@ mod tests {
                 log_records: 0,
             },
             sent: SignalCounts::default(),
-            diag_log_records: std::collections::HashMap::new(),
+            diag_observations: std::collections::HashMap::new(),
             last_signal_at: Some(now - Duration::from_millis(2_500)),
             scraped_at: now - Duration::from_millis(500),
             unreachable: false,
@@ -444,7 +455,7 @@ mod tests {
         let snap = MetricsSnapshot {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
-            diag_log_records: std::collections::HashMap::new(),
+            diag_observations: std::collections::HashMap::new(),
             last_signal_at: None,
             scraped_at: now,
             unreachable: false,
@@ -461,7 +472,7 @@ mod tests {
         let snap = MetricsSnapshot {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
-            diag_log_records: std::collections::HashMap::new(),
+            diag_observations: std::collections::HashMap::new(),
             last_signal_at: None,
             scraped_at: now,
             unreachable: true,

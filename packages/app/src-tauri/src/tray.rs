@@ -232,7 +232,10 @@ fn apply_color(icon: &TrayIcon<Wry>, status_item: &MenuItem<Wry>, color: Overall
 #[must_use]
 pub fn derive_tint_color(color: OverallHealth) -> TintColor {
     match color {
-        OverallHealth::Green => TintColor::Green,
+        // Healthy → brand teal so the tray carries the Trove mark at
+        // rest. Amber/red still use the health palette so problems are
+        // visually distinct at-a-glance.
+        OverallHealth::Green => TintColor::Brand,
         OverallHealth::Amber => TintColor::Amber,
         OverallHealth::Red => TintColor::Red,
     }
@@ -252,7 +255,7 @@ mod tests {
 
     #[test]
     fn derive_tint_color_maps_each_variant() {
-        assert_eq!(derive_tint_color(OverallHealth::Green), TintColor::Green);
+        assert_eq!(derive_tint_color(OverallHealth::Green), TintColor::Brand);
         assert_eq!(derive_tint_color(OverallHealth::Amber), TintColor::Amber);
         assert_eq!(derive_tint_color(OverallHealth::Red), TintColor::Red);
     }
