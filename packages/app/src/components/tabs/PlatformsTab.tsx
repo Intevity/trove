@@ -89,15 +89,6 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
-      <header>
-        <h2 className="text-[15px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
-          Platforms
-        </h2>
-        <p className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
-          Every signal is forwarded to every configured destination.
-        </p>
-      </header>
-
       {error ? (
         <div
           data-testid="platforms-tab-error"

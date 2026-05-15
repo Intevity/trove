@@ -17,7 +17,7 @@ interface Props {
 
 export function SettingsTab({ appState, onAppStateRefresh }: Props): JSX.Element {
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6 px-5 py-5">
+    <div className="flex flex-col gap-3 px-4 py-3">
       <header className="flex flex-col gap-1">
         <h1 className="text-[22px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
           Settings

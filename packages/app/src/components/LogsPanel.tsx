@@ -1,7 +1,8 @@
-import { ArrowDown, Search, X } from 'lucide-react';
+import { ArrowDown, Check, Copy, Search, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useCollectorLogTail } from '../hooks/useCollectorLogTail.js';
+import { copyToClipboard } from '../lib/clipboard.js';
 import {
   type LogLevel,
   type ParsedLogLine,
@@ -214,11 +215,19 @@ export function LogsPanel(): JSX.Element {
 
 function LogRow({ line }: { line: ParsedLogLine }): JSX.Element {
   const time = formatLogTime(line.timestamp);
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (): void => {
+    void copyToClipboard(line.raw).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  };
   return (
     <div
       data-stream={line.stream}
       data-level={line.level}
-      className={`flex items-baseline gap-2 whitespace-pre-wrap break-words border-l-2 py-[1px] pl-2 pr-1 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${ROW_RAIL[line.level]} ${ROW_TINT[line.level]}`}
+      className={`group flex items-baseline gap-2 whitespace-pre-wrap break-words border-l-2 py-[1px] pl-2 pr-1 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${ROW_RAIL[line.level]} ${ROW_TINT[line.level]}`}
     >
       <span className="flex-shrink-0 tabular-nums text-fg-tertiary dark:text-fg-tertiary-dark">
         {time || EMPTY_TIME_PLACEHOLDER}
@@ -228,7 +237,23 @@ function LogRow({ line }: { line: ParsedLogLine }): JSX.Element {
       >
         {LEVEL_LABEL[line.level]}
       </span>
-      <span className="min-w-0 text-fg-primary dark:text-fg-primary-dark">{line.message}</span>
+      <span className="min-w-0 flex-1 text-fg-primary dark:text-fg-primary-dark">
+        {line.message}
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label={copied ? 'Log line copied' : 'Copy log line'}
+        title={copied ? 'Copied' : 'Copy log line'}
+        data-testid="logs-copy-line"
+        className={`flex-shrink-0 self-center rounded p-0.5 transition-opacity hover:bg-black/[0.06] dark:hover:bg-white/[0.08] ${
+          copied
+            ? 'text-ios-green opacity-100'
+            : 'text-fg-tertiary opacity-0 hover:text-fg-primary group-hover:opacity-100 dark:text-fg-tertiary-dark dark:hover:text-fg-primary-dark'
+        }`}
+      >
+        {copied ? <Check size={11} aria-hidden="true" /> : <Copy size={11} aria-hidden="true" />}
+      </button>
     </div>
   );
 }

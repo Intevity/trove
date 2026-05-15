@@ -46,7 +46,7 @@ export type BackendKind = Backend['kind'];
 export const BACKEND_LABELS: Record<BackendKind, string> = {
   signoz: 'SigNoz',
   honeycomb: 'Honeycomb',
-  'grafana-cloud': 'Grafana Cloud',
+  'grafana-cloud': 'Grafana',
   datadog: 'Datadog',
   'otlp-generic': 'Generic OTLP',
   'otelcol-passthrough': 'Local Collector',

@@ -25,7 +25,7 @@ export function App(): JSX.Element {
               Trove
             </h1>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              Pick a destination for your AI coding harness telemetry — Trove forwards every harness
+              Pick a destination for your AI coding harness telemetry; Trove forwards every harness
               through a local collector to whichever backend you choose. You can add more platforms
               later from the Platforms tab.
             </p>

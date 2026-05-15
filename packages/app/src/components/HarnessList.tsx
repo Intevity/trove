@@ -28,14 +28,14 @@ interface CoverageNote {
  *  as it's appended and synthesises Tier A metrics in-stream. */
 const TELEMETRY_HINTS: Partial<Record<HarnessId, string>> = {
   'claude-desktop':
-    'Detected in-stream from each Cowork session’s local audit log — no setup needed.',
+    'Detected in-stream from each Cowork session’s local audit log; no setup needed.',
 };
 
 const COVERAGE_NOTES: Partial<Record<HarnessId, CoverageNote>> = {
   'cursor-cli': {
     text: 'Partial event coverage',
     tooltip:
-      "Cursor CLI (cursor-agent) fires only a subset of Cursor's hook events — primarily beforeShellExecution and afterShellExecution. Cursor IDE fires the full surface. See Cursor's hooks docs.",
+      "Cursor CLI (cursor-agent) fires only a subset of Cursor's hook events; primarily beforeShellExecution and afterShellExecution. Cursor IDE fires the full surface. See Cursor's hooks docs.",
     docsUrl: 'https://cursor.com/docs/hooks',
   },
   cline: {
@@ -108,7 +108,7 @@ export function HarnessList({
             disabled={loading}
             onClick={() => void onRefresh()}
             aria-label="refresh harness detection"
-            title="Re-run detection — useful when you've just installed a harness"
+            title="Re-run detection; useful when you've just installed a harness"
           >
             <svg
               width="11"
@@ -343,7 +343,7 @@ function describeDetection(harness: DetectedHarness): string {
   switch (harness.detectionMethod) {
     case 'config-dir':
       return harness.configPath
-        ? `Detected via config — ${harness.configPath}`
+        ? `Detected via config; ${harness.configPath}`
         : 'Detected via config dir';
     case 'path-binary':
       return 'Detected on PATH';

@@ -220,8 +220,8 @@ function renderFields(
             testId="grafana-cloud-auth"
             helper={
               <span>
-                Paste the &quot;Basic &lt;token&gt;&quot; value from your Grafana Cloud OTel
-                onboarding page.
+                Paste the &quot;Basic &lt;token&gt;&quot; value from your Grafana OTel onboarding
+                page.
               </span>
             }
           />

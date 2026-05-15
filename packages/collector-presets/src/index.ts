@@ -45,9 +45,9 @@ export const PRESETS: readonly PresetMetadata[] = [
   },
   {
     kind: 'grafana-cloud',
-    label: 'Grafana Cloud',
+    label: 'Grafana',
     description:
-      'Forwards to your Grafana Cloud OTLP gateway. Copy the endpoint and Basic auth credentials from your stack onboarding page.',
+      "Forwards to your Grafana stack's OTLP gateway. Copy the endpoint and Basic auth credentials from your stack onboarding page.",
     recommended: false,
   },
   {

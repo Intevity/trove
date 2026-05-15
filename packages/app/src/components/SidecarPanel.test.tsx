@@ -52,6 +52,16 @@ describe('SidecarPanel', () => {
     expect(screen.getByTestId('counts-last-signal').textContent).toContain('4s ago');
   });
 
+  it('renders an absolute timestamp sub-line when a signal has been observed', () => {
+    render(
+      <SidecarPanel state={RUNNING} metrics={snapshot({ lastSignalMsAgo: 4_000 })} backends={[]} />,
+    );
+    const sub = screen.getByTestId('counts-last-signal-at').textContent ?? '';
+    // toLocaleTimeString output always contains a colon between hours and minutes.
+    expect(sub).toMatch(/at \d/);
+    expect(sub).toContain(':');
+  });
+
   it('shows "none yet" when no signal has been observed', () => {
     render(
       <SidecarPanel state={RUNNING} metrics={snapshot({ lastSignalMsAgo: null })} backends={[]} />,

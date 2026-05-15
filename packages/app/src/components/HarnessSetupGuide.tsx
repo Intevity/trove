@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import type { HarnessId } from '@trove/shared';
 
+import { copyToClipboard } from '../lib/clipboard.js';
 import { Button, Pill, Sheet } from './ui/index.js';
 
 export interface SetupGuideCopyValue {
@@ -169,16 +170,4 @@ function CopyRow({ label, value, index }: CopyRowProps): JSX.Element {
       </button>
     </div>
   );
-}
-
-async function copyToClipboard(value: string): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return true;
-    } catch {
-      // fall through; clipboard can fail in non-secure contexts
-    }
-  }
-  return false;
 }

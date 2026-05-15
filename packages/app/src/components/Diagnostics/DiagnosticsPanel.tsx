@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { Stethoscope } from 'lucide-react';
+import { Activity, Stethoscope } from 'lucide-react';
 
 import type {
   AppState,
@@ -9,6 +9,7 @@ import type {
   TestExportResult,
 } from '@trove/shared';
 
+import { formatCount } from '../../lib/format.js';
 import { RECENT_SIGNAL_WINDOW_MS } from '../../lib/health.js';
 import { TroveIpcError, testExport } from '../../lib/ipc.js';
 import { Button, Card, CardHeader, CardTitle, StatusDot } from '../ui/index.js';
@@ -66,7 +67,10 @@ export function DiagnosticsPanel({ appState, state, metrics }: Props): JSX.Eleme
   return (
     <Card testid="diagnostics-panel">
       <CardHeader>
-        <CardTitle>Diagnostics</CardTitle>
+        <CardTitle className="flex items-center gap-1.5 whitespace-nowrap">
+          <Activity size={14} strokeWidth={2.4} className="text-brand" aria-hidden="true" />
+          Diagnostics
+        </CardTitle>
         <Button
           variant="secondary"
           size="sm"
@@ -107,7 +111,7 @@ function DiagnosticsRow({ row }: { row: DiagnosticRow }): JSX.Element {
         {row.label}
       </span>
       <span className="text-[13px] text-fg-secondary dark:text-fg-secondary-dark">
-        — {row.detail}
+        ; {row.detail}
       </span>
       {row.fixTargetTestid && row.status !== 'green' ? (
         <Button
@@ -223,7 +227,7 @@ function deriveHarnessesRow(enabledHarnessCount: number): DiagnosticRow {
       id: 'harnesses',
       label: 'Harnesses',
       status: 'red',
-      detail: 'no harnesses enabled — Trove has nothing to forward',
+      detail: 'no harnesses enabled; Trove has nothing to forward',
       fixTargetTestid: fix,
     };
   }
@@ -282,7 +286,7 @@ function deriveSignalRow(
       id: 'signal',
       label: 'Recent signal',
       status: 'red',
-      detail: 'no telemetry observed yet — try invoking an enabled harness',
+      detail: 'no telemetry observed yet; try invoking an enabled harness',
       fixTargetTestid: 'harness-list',
     };
   }
@@ -292,7 +296,7 @@ function deriveSignalRow(
       id: 'signal',
       label: 'Recent signal',
       status: 'amber',
-      detail: `last signal ${minutes}m ago — quiet for over a minute`,
+      detail: `last signal ${minutes}m ago; quiet for over a minute`,
       fixTargetTestid: 'harness-list',
     };
   }
@@ -327,7 +331,7 @@ export function deriveBackendRow(
       id: 'backend',
       label: 'Backend',
       status: 'red',
-      detail: 'no platform configured — open Platforms to add one',
+      detail: 'no platform configured; open Platforms to add one',
       fixTargetTestid: fix,
     };
   }
@@ -354,7 +358,7 @@ export function deriveBackendRow(
       id: 'backend',
       label: 'Backend',
       status: 'green',
-      detail: `${primaryLabel} — exporting (${sentTotal} record${sentTotal === 1 ? '' : 's'} sent)`,
+      detail: `${primaryLabel}; exporting (${formatCount(sentTotal)} record${sentTotal === 1 ? '' : 's'} sent)`,
       fixTargetTestid: null,
     };
   }
@@ -380,7 +384,7 @@ export function deriveBackendRow(
     id: 'backend',
     label: 'Backend',
     status: 'amber',
-    detail: `${primaryLabel} configured — awaiting first export to verify`,
+    detail: `${primaryLabel} configured; awaiting first export to verify`,
     fixTargetTestid: null,
   };
 }

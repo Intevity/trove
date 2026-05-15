@@ -1,4 +1,4 @@
-import { Zap } from 'lucide-react';
+import { Cpu, Zap } from 'lucide-react';
 import { useState } from 'react';
 
 import type {
@@ -8,6 +8,7 @@ import type {
   TestExportResult,
 } from '@trove/shared';
 
+import { formatCount, formatLastSignalAt } from '../lib/format.js';
 import { TroveIpcError, testExport } from '../lib/ipc.js';
 import {
   Button,
@@ -57,7 +58,10 @@ export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
   return (
     <Card testid="sidecar-panel">
       <CardHeader>
-        <CardTitle>Collector</CardTitle>
+        <CardTitle className="flex items-center gap-1.5 whitespace-nowrap">
+          <Cpu size={14} strokeWidth={2.4} className="text-brand" aria-hidden="true" />
+          Collector
+        </CardTitle>
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-1.5">
             <StatusDot status={dotForState(state)} size="sm" />
@@ -82,22 +86,37 @@ export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
       </CardHeader>
 
       <div className="grid grid-cols-3 gap-2">
-        <StatTile testid="counts-received" label="Received" value={metrics?.received.spans ?? 0}>
-          <span data-testid="counts-received-spans">{metrics?.received.spans ?? 0}</span> spans ·{' '}
-          <span data-testid="counts-received-metrics">{metrics?.received.metricPoints ?? 0}</span>{' '}
-          metrics ·{' '}
-          <span data-testid="counts-received-logs">{metrics?.received.logRecords ?? 0}</span> logs
-        </StatTile>
-        <StatTile testid="counts-sent" label="Sent" value={metrics?.sent.spans ?? 0}>
-          <span data-testid="counts-sent-spans">{metrics?.sent.spans ?? 0}</span> spans ·{' '}
-          <span data-testid="counts-sent-metrics">{metrics?.sent.metricPoints ?? 0}</span> metrics ·{' '}
-          <span data-testid="counts-sent-logs">{metrics?.sent.logRecords ?? 0}</span> logs
-        </StatTile>
         <StatTile
-          testid="counts-last-signal"
-          label="Last signal"
-          value={formatLastSignal(metrics)}
-        />
+          testid="counts-received"
+          label="Received"
+          value={formatCount(metrics?.received.spans ?? 0)}
+        >
+          <span data-testid="counts-received-spans">
+            {formatCount(metrics?.received.spans ?? 0)}
+          </span>{' '}
+          spans ·{' '}
+          <span data-testid="counts-received-metrics">
+            {formatCount(metrics?.received.metricPoints ?? 0)}
+          </span>{' '}
+          metrics ·{' '}
+          <span data-testid="counts-received-logs">
+            {formatCount(metrics?.received.logRecords ?? 0)}
+          </span>{' '}
+          logs
+        </StatTile>
+        <StatTile testid="counts-sent" label="Sent" value={formatCount(metrics?.sent.spans ?? 0)}>
+          <span data-testid="counts-sent-spans">{formatCount(metrics?.sent.spans ?? 0)}</span> spans
+          ·{' '}
+          <span data-testid="counts-sent-metrics">
+            {formatCount(metrics?.sent.metricPoints ?? 0)}
+          </span>{' '}
+          metrics ·{' '}
+          <span data-testid="counts-sent-logs">{formatCount(metrics?.sent.logRecords ?? 0)}</span>{' '}
+          logs
+        </StatTile>
+        <StatTile testid="counts-last-signal" label="Last signal" value={formatLastSignal(metrics)}>
+          <span data-testid="counts-last-signal-at">{formatLastSignalSub(metrics)}</span>
+        </StatTile>
       </div>
 
       {result || error ? (
@@ -167,10 +186,19 @@ function formatState(state: CollectorRunState | null): string {
 }
 
 function formatLastSignal(metrics: MetricsSnapshotWire | null): string {
-  if (!metrics) return '—';
+  if (!metrics) return 'no signal yet';
   if (metrics.lastSignalMsAgo === null) return 'none yet';
   const seconds = Math.round(metrics.lastSignalMsAgo / 1000);
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.round(seconds / 60);
   return `${minutes}m ago`;
+}
+
+/** Absolute wall-clock timestamp shown under the relative "Ns ago"
+ *  value, mirroring the spans/metrics/logs sub-line on the other two
+ *  tiles. Falls back to a thin space so the tile keeps the same vertical
+ *  height even when no signal has been observed yet. */
+function formatLastSignalSub(metrics: MetricsSnapshotWire | null): string {
+  if (!metrics || metrics.lastSignalMsAgo === null) return ' ';
+  return `at ${formatLastSignalAt(metrics.scrapedMsAgo, metrics.lastSignalMsAgo)}`;
 }

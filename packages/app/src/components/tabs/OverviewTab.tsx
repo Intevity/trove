@@ -28,7 +28,7 @@ export function OverviewTab({ appState, state, metrics, onOpenPlatforms }: Props
           className="flex w-full items-center justify-between gap-2 rounded-card border border-hairline bg-surface-elevated px-3 py-2 text-left text-[12px] text-fg-secondary transition-colors hover:bg-brand/[0.06] dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-secondary-dark dark:hover:bg-brand/[0.12]"
         >
           <span>
-            No platforms configured —{' '}
+            No platforms configured;{' '}
             <span className="font-medium text-fg-primary dark:text-fg-primary-dark">
               configure one
             </span>{' '}

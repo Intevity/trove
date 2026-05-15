@@ -219,7 +219,7 @@ function AddMetricForm({
       <div className="mb-1.5 flex items-start gap-2 rounded-md bg-amber-500/[0.08] p-2 text-[11px] text-fg-secondary dark:text-fg-secondary-dark">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
         <span>
-          Custom metrics don&apos;t carry across teams — anyone consuming Trove data needs the same
+          Custom metrics don&apos;t carry across teams; anyone consuming Trove data needs the same
           catalog to interpret them. Prefer the five builtins when possible.
         </span>
       </div>

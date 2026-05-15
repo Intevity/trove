@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, Share2 } from 'lucide-react';
 import { AnimatePresence, motion, useAnimationFrame } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -10,6 +10,7 @@ import type {
   MetricsSnapshotWire,
 } from '@trove/shared';
 
+import troveLogo from '../assets/trove-logo.svg';
 import { HARNESS_LABELS, NodeLogoSvg } from '../lib/logos.js';
 import { Card, CardHeader, CardTitle } from './ui/index.js';
 
@@ -208,28 +209,6 @@ function deltaPerSec(curr: number, prev: number, dtSec: number): number {
   return delta / dtSec;
 }
 
-/** Short, human-friendly identifier for a backend's destination. Used
- *  as the third line on platform nodes in expanded mode. Honeycomb and
- *  Datadog don't expose a raw endpoint URL, so we surface the
- *  dataset / site instead. */
-function destinationHint(backend: BackendInstance['backend']): string | undefined {
-  switch (backend.kind) {
-    case 'honeycomb':
-      return backend.dataset;
-    case 'datadog':
-      return backend.site;
-    case 'signoz':
-    case 'grafana-cloud':
-    case 'otlp-generic':
-    case 'otelcol-passthrough':
-      try {
-        return new URL(backend.endpoint).host;
-      } catch {
-        return backend.endpoint;
-      }
-  }
-}
-
 export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProps): JSX.Element {
   const [mode, setMode] = useState<Mode>(readStoredMode);
   useEffect(() => {
@@ -289,9 +268,12 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
   const renderH = Math.round((viewH / 240) * 200);
 
   return (
-    <Card testid="flow-chart">
+    <Card testid="flow-chart" className="my-1.5">
       <CardHeader className="mb-1.5">
-        <CardTitle>Data flow</CardTitle>
+        <CardTitle className="flex items-center gap-1.5 whitespace-nowrap">
+          <Share2 size={14} strokeWidth={2.4} className="text-brand" aria-hidden="true" />
+          Data flow
+        </CardTitle>
         <div className="flex items-center gap-2">
           <ModeToggle mode={mode} onChange={setMode} />
           <span className="flex items-center gap-1.5">
@@ -485,7 +467,6 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
                     hw={harnessHW}
                     hh={nodeHH}
                     title={HARNESS_LABELS[h.id] ?? h.id}
-                    subtitle="enabled"
                     harnessId={h.id}
                   />
                 </motion.g>
@@ -520,7 +501,6 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
           backendCenters.map((bcy, i) => {
             const instance = backends[i]!;
             const meta = presetMetadataFor(instance.backend.kind);
-            const host = mode === 'expanded' ? destinationHint(instance.backend) : undefined;
             return (
               <motion.g
                 key={instance.id}
@@ -534,9 +514,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
                   hw={platformHW}
                   hh={nodeHH}
                   title={instance.label ?? meta.label}
-                  subtitle={meta.label}
                   backendKind={instance.backend.kind}
-                  {...(host ? { tertiary: host } : {})}
                 />
               </motion.g>
             );
@@ -730,8 +708,6 @@ interface FlowNodeProps {
   hh: number;
   title: string;
   subtitle?: string;
-  /** Third line — typically the endpoint host shown in expanded mode. */
-  tertiary?: string;
   highlight?: boolean;
   muted?: boolean;
   /** When set, renders the harness brand logo (or monogram fallback)
@@ -748,7 +724,6 @@ function FlowNode({
   hh,
   title,
   subtitle,
-  tertiary,
   highlight,
   muted,
   harnessId,
@@ -760,14 +735,20 @@ function FlowNode({
   const logoSize = hasLogo ? Math.min(hh * 1.4, 24) : 0;
   const logoX = x + 6;
   const logoY = cy - logoSize / 2;
-  const hasTertiary = Boolean(tertiary);
   // With a logo: left-align the text starting just right of the logo.
   // Without: keep the original centered layout (used by the Collector node).
   const textX = hasLogo ? logoX + logoSize + 6 : cx;
   const textAnchor: 'start' | 'middle' = hasLogo ? 'start' : 'middle';
-  const titleY = hasTertiary ? cy - 8 : cy - 2;
-  const subtitleY = hasTertiary ? cy + 4 : cy + 12;
-  const tertiaryY = cy + 14;
+  // Title baseline: vertically center when there's no subtitle line under
+  // it; otherwise keep the original two-line layout (title above, subtitle
+  // below).
+  const titleY = subtitle ? cy - 2 : cy + 4;
+  const subtitleY = cy + 12;
+  // Collector watermark: trove logo at low opacity behind the title.
+  // Sized to fill the node's vertical extent without crowding the text;
+  // pinned to the right half so it sits behind / beside the centered
+  // title rather than under it.
+  const watermarkSize = hh * 1.6;
   return (
     <g>
       <rect
@@ -781,11 +762,23 @@ function FlowNode({
           muted
             ? 'fill-surface-elevated stroke-hairline dark:fill-surface-elevated-dark dark:stroke-hairline-dark'
             : highlight
-              ? 'fill-surface-elevated stroke-brand/40 dark:fill-surface-elevated-dark'
+              ? 'fill-brand/[0.06] stroke-brand/55 dark:fill-brand/[0.10]'
               : 'fill-surface-elevated stroke-hairline dark:fill-surface-elevated-dark dark:stroke-hairline-dark'
         }
         strokeWidth={highlight ? 1.5 : 1}
       />
+      {highlight && !hasLogo ? (
+        <image
+          href={troveLogo}
+          x={cx - watermarkSize / 2}
+          y={cy - watermarkSize / 2}
+          width={watermarkSize}
+          height={watermarkSize}
+          opacity={0.1}
+          preserveAspectRatio="xMidYMid meet"
+          aria-hidden="true"
+        />
+      ) : null}
       {hasLogo ? (
         <NodeLogoSvg
           x={logoX}
@@ -822,17 +815,6 @@ function FlowNode({
           }
         >
           {subtitle}
-        </text>
-      ) : null}
-      {tertiary ? (
-        <text
-          x={textX}
-          y={tertiaryY}
-          textAnchor={textAnchor}
-          fontSize={9}
-          className="fill-fg-tertiary dark:fill-fg-tertiary-dark"
-        >
-          {tertiary}
         </text>
       ) : null}
     </g>
