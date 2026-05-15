@@ -1,11 +1,17 @@
 name: Nightly
 
-# Sprint 11 PR 3 — early-warning system for upstream harness drift and
-# dependency-update breakage. Two jobs run on a 06:17 UTC schedule: the
-# adapter golden-file suite (catches anything in our test bed regressing)
-# and a version-drift detector (catches new harness releases before users
-# file bugs). On failure, a third job opens a GitHub issue tagged
-# `adapter-regression` so the maintainer sees it.
+# Sprint 11 PR 3 — upstream-harness drift detector. Runs daily and files
+# a GitHub issue when claude-code / cursor / codex / gemini / etc. ship a
+# new release we haven't bumped against. The maintainer triages the
+# `adapter-regression` label.
+#
+# Earlier revisions of this workflow also ran a `cargo-llvm-cov` coverage
+# gate (golden-tests job). Dropped in May 2026 to cut GitHub Actions
+# spend — the instrumented build re-linked the whole workspace and cost
+# ~30 min/day for a gate that flipped infrequently. PR CI still runs
+# `cargo test` on every change, so functional regressions are caught
+# within the hour. See git history for the prior job if you need to
+# reintroduce a coverage floor.
 
 on:
   schedule:
@@ -23,129 +29,6 @@ permissions:
   issues: write
 
 jobs:
-  golden-tests:
-    name: Golden-file suites + dep regression
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    steps:
-      - name: Free disk space on runner
-        uses: jlumbroso/free-disk-space@main
-        with:
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          tool-cache: false
-          swap-storage: false
-
-      - uses: actions/checkout@v4
-
-      - name: Install Linux Tauri build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            build-essential \
-            curl \
-            wget \
-            file
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: packages/app/src-tauri -> target
-          shared-key: trove-rust-${{ runner.os }}
-          # Nightly runs on schedule (not main pushes); skip cache save
-          # to match ci.yml's policy and avoid the flaky save path on
-          # PR-style runs.
-          save-if: ${{ github.event_name != 'schedule' && github.ref == 'refs/heads/main' }}
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - name: Cache ocb module cache + installed binary
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/go/bin
-          key: trove-ocb-${{ runner.os }}-${{ hashFiles('resources/otelcol/manifest.yaml') }}
-          restore-keys: |
-            trove-ocb-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build TS workspace libraries
-        run: pnpm --filter @trove/shared --filter @trove/collector-presets build
-
-      - name: Build trove-otelcol sidecar
-        run: pnpm build:collector
-
-      - name: Stage sidecar into Tauri binaries dir
-        run: pnpm bundle:sidecar
-
-      - name: Vitest (TS adapter / safety / dashboard suites)
-        run: pnpm test
-
-      # Rust coverage gate moved here from ci.yml. The instrumented build
-      # re-links the workspace from scratch; running it on every PR cost
-      # ~3-5 min per Linux PR run for a gate that flips infrequently.
-      # Nightly is plenty fast to catch coverage regressions within 24h.
-      #
-      # Threshold rationale: the safety toolkit floor is 85% lines / 80%
-      # functions (Sprint 2 plan called for 95%, but ~10–12% of lines are
-      # tracing::warn / errno branches inside fs::File::open and
-      # fs::set_permissions failure paths that require filesystem fault
-      # injection to hit). Tracked in MVP_PLAN.md.
-      #
-      # `--ignore-filename-regex` scopes to the safety toolkit so Tauri
-      # runtime surface (lib.rs, tray.rs, collector supervisor) — covered
-      # by Playwright + sidecar-mac — doesn't collapse the average.
-      #
-      # cargo-llvm-cov runs `cargo test` under instrumentation, so this
-      # step subsumes the previous "Cargo test (Rust adapter golden-file
-      # suites)" invocation.
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Cargo test with llvm-cov coverage gate
-        run: |
-          cargo llvm-cov \
-            --manifest-path packages/app/src-tauri/Cargo.toml \
-            --workspace \
-            --html \
-            --output-dir coverage/rust \
-            --ignore-filename-regex '(main\.rs|lib\.rs|tray\.rs|collector/)' \
-            --fail-under-lines 85 \
-            --fail-under-functions 80
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ github.run_id }}
-          path: coverage/
-          retention-days: 7
-          if-no-files-found: ignore
-
   harness-version-drift:
     name: Upstream harness version drift
     runs-on: ubuntu-22.04
@@ -197,16 +80,16 @@ jobs:
 
   notify-on-regression:
     name: Open adapter-regression issue
-    needs: [golden-tests, harness-version-drift]
+    needs: [harness-version-drift]
     if: |
       github.event_name == 'schedule' &&
-      (needs.golden-tests.result == 'failure' || needs.harness-version-drift.outputs.drifted == 'true')
+      needs.harness-version-drift.outputs.drifted == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download drift report (if present)
+      - name: Download drift report
         uses: actions/download-artifact@v4
         with:
           name: harness-drift-report-${{ github.run_id }}
@@ -217,16 +100,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GOLDEN: ${{ needs.golden-tests.result }}
           DRIFTED: ${{ needs.harness-version-drift.outputs.drifted }}
         run: |
           set -euo pipefail
           {
-            echo "# Adapter regression detected"
+            echo "# Upstream harness drift detected"
             echo
             echo "Triggered by [nightly run]($RUN_URL)."
             echo
-            echo "- golden-tests: \`$GOLDEN\`"
             echo "- harness-version-drift: \`$DRIFTED\`"
             echo
             if [ -f drift-report.md ]; then
