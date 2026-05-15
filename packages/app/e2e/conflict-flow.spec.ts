@@ -54,7 +54,7 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
       harnesses: [],
       autoUpdateEnabled: false,
       identity: { enabled: false, source: 'auto', name: '', email: '' },
-      mappings: { schemaVersion: 1, harnesses: [] },
+      mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
       telemetryObserved: {},
     },
     collectorStatus: {
@@ -118,7 +118,7 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
       harnesses: [],
       autoUpdateEnabled: false,
       identity: { enabled: false, source: 'auto', name: '', email: '' },
-      mappings: { schemaVersion: 1, harnesses: [] },
+      mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
       telemetryObserved: {},
     },
     collectorStatus: {

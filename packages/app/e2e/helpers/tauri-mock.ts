@@ -47,7 +47,7 @@ export const DEFAULT_MOCK_STATE: TauriMockState = {
     harnesses: [],
     autoUpdateEnabled: false,
     identity: { enabled: false, source: 'auto', name: '', email: '' },
-    mappings: { schemaVersion: 1, harnesses: [] },
+    mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
     telemetryObserved: {},
   },
   detectedHarnesses: [
