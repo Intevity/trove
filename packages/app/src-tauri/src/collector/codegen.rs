@@ -586,15 +586,18 @@ pub fn apply_mapping_overlay(yaml: String, mappings: &MappingState) -> String {
     apply_cowork_logs_to_metrics(with_diag, &tag_harnesses)
 }
 
-/// Names of the harnesses we want a diagnostic logs pipeline for.
-/// Currently this is just `ClaudeDesktop` — the only Tier-1 native
-/// emitter we ship that has no local adapter (so the UI has no other
-/// way to flip its telemetry pill).
+/// Harnesses we want diagnostic pipelines for. Originally just
+/// `ClaudeDesktop` (for the telemetry-pill overlay); now broadened to
+/// every native-OTel emitter so the dashboard `FlowChart` can derive
+/// per-harness rates for spans, metrics, and logs. Watcher-emitter
+/// harnesses (Cline / Aider / Copilot / Cursor) are skipped — they
+/// have no native `service.name` candidates so the filter has nothing
+/// to match against.
 fn diag_harnesses<'a>(tag_harnesses: &'a [&'a HarnessMapping]) -> Vec<&'a HarnessMapping> {
     tag_harnesses
         .iter()
         .copied()
-        .filter(|h| !h.harness_id.has_adapter())
+        .filter(|h| !native_service_name_candidates(h.harness_id).is_empty())
         .collect()
 }
 
@@ -820,10 +823,12 @@ fn apply_diag_pipelines(yaml: String, tag_harnesses: &[&HarnessMapping]) -> Stri
         return yaml;
     }
 
-    // Build the filter processor block(s) and the matching pipeline
-    // entries. One processor per harness keeps the
-    // `otelcol_processor_outgoing_items_total{processor=...}` counter
-    // attributable.
+    // Each filter processor drops records whose resource service.name
+    // doesn't match the harness's known candidates — the `outgoing_items`
+    // counter on the processor then equals the per-harness count for
+    // that signal type. One processor block carries `traces.span`,
+    // `metrics.datapoint`, and `logs.log_record` rules so the same
+    // processor can be plugged into all three diagnostic pipelines.
     let mut processor_defs = String::new();
     let mut pipeline_entries = String::new();
     for h in &diag {
@@ -837,10 +842,24 @@ fn apply_diag_pipelines(yaml: String, tag_harnesses: &[&HarnessMapping]) -> Stri
 
         let _ = writeln!(processor_defs, "  filter/diag-{suffix}:");
         let _ = writeln!(processor_defs, "    error_mode: ignore");
+        let _ = writeln!(processor_defs, "    traces:");
+        let _ = writeln!(processor_defs, "      span:");
+        let _ = writeln!(processor_defs, "        - '{drop_clause}'");
+        let _ = writeln!(processor_defs, "    metrics:");
+        let _ = writeln!(processor_defs, "      datapoint:");
+        let _ = writeln!(processor_defs, "        - '{drop_clause}'");
         let _ = writeln!(processor_defs, "    logs:");
         let _ = writeln!(processor_defs, "      log_record:");
         let _ = writeln!(processor_defs, "        - '{drop_clause}'");
 
+        let _ = writeln!(pipeline_entries, "    traces/diag-{suffix}:");
+        let _ = writeln!(pipeline_entries, "      receivers: [otlp]");
+        let _ = writeln!(pipeline_entries, "      processors: [filter/diag-{suffix}]");
+        let _ = writeln!(pipeline_entries, "      exporters: [debug/diag-noop]");
+        let _ = writeln!(pipeline_entries, "    metrics/diag-{suffix}:");
+        let _ = writeln!(pipeline_entries, "      receivers: [otlp]");
+        let _ = writeln!(pipeline_entries, "      processors: [filter/diag-{suffix}]");
+        let _ = writeln!(pipeline_entries, "      exporters: [debug/diag-noop]");
         let _ = writeln!(pipeline_entries, "    logs/diag-{suffix}:");
         let _ = writeln!(pipeline_entries, "      receivers: [otlp]");
         let _ = writeln!(pipeline_entries, "      processors: [filter/diag-{suffix}]");
@@ -1361,19 +1380,51 @@ mod tests {
     }
 
     #[test]
-    fn mapping_overlay_skips_diag_pipeline_when_every_harness_has_an_adapter() {
-        // After Claude Desktop moved to adapter-backed (audit-log tap),
-        // there are no adapterless native emitters left in the default
-        // mapping table, so `apply_diag_pipelines` must short-circuit
-        // and emit no `filter/diag-*` processor or pipeline. The watcher
-        // bumps its own in-process counter for detection; the diag-log
-        // counter is unused for claude-desktop today.
+    fn mapping_overlay_emits_diag_pipelines_for_every_native_emitter() {
+        // FlowChart depends on per-harness diag counts to animate the
+        // active harness's lane only. Diag is emitted for every enabled
+        // harness with native `service.name` candidates — Claude Code,
+        // Codex CLI, Gemini CLI, Qwen Code, OpenCode, and Claude Desktop.
+        // Each gets a `filter/diag-<suffix>` processor plus three
+        // pipelines (traces, metrics, logs) that pipe into the shared
+        // `debug/diag-noop` exporter.
         let state = crate::mappings::default_state();
         let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let out = apply_mapping_overlay(yaml, &state);
-        assert!(!out.contains("filter/diag-claude-desktop:"));
-        assert!(!out.contains("logs/diag-claude-desktop:"));
-        assert!(!out.contains("debug/diag-noop:"));
+        assert!(out.contains("debug/diag-noop:"));
+        for suffix in [
+            "claude-code",
+            "codex-cli",
+            "gemini-cli",
+            "qwen-code",
+            "opencode",
+            "claude-desktop",
+        ] {
+            assert!(
+                out.contains(&format!("filter/diag-{suffix}:")),
+                "missing filter for {suffix}"
+            );
+            assert!(
+                out.contains(&format!("traces/diag-{suffix}:")),
+                "missing traces pipeline for {suffix}"
+            );
+            assert!(
+                out.contains(&format!("metrics/diag-{suffix}:")),
+                "missing metrics pipeline for {suffix}"
+            );
+            assert!(
+                out.contains(&format!("logs/diag-{suffix}:")),
+                "missing logs pipeline for {suffix}"
+            );
+        }
+        // Watcher-emitter harnesses have no `service.name` candidates
+        // so they are explicitly excluded.
+        for suffix in ["cursor-ide", "cursor-cli", "cline", "aider", "copilot-cli"] {
+            assert!(
+                !out.contains(&format!("filter/diag-{suffix}:")),
+                "watcher harness {suffix} should not get a diag filter"
+            );
+        }
     }
 
     #[test]
@@ -1432,7 +1483,10 @@ mod tests {
     }
 
     #[test]
-    fn mapping_overlay_omits_diag_pipeline_when_claude_desktop_disabled() {
+    fn mapping_overlay_omits_diag_pipeline_for_disabled_harness_only() {
+        // Disabling one harness drops only that harness's diag pipeline;
+        // the others (still enabled native emitters) keep theirs and the
+        // shared `debug/diag-noop` exporter remains.
         let mut state = crate::mappings::default_state();
         for h in &mut state.harnesses {
             if h.harness_id == HarnessId::ClaudeDesktop {
@@ -1442,8 +1496,12 @@ mod tests {
         let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
         let out = apply_mapping_overlay(yaml, &state);
         assert!(!out.contains("filter/diag-claude-desktop"));
-        assert!(!out.contains("debug/diag-noop"));
         assert!(!out.contains("logs/diag-claude-desktop"));
+        assert!(!out.contains("traces/diag-claude-desktop"));
+        assert!(!out.contains("metrics/diag-claude-desktop"));
+        // Other native emitters remain.
+        assert!(out.contains("filter/diag-claude-code:"));
+        assert!(out.contains("debug/diag-noop:"));
     }
 
     #[test]

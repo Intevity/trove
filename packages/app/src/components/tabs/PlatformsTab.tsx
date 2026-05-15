@@ -1,10 +1,12 @@
-import { useCallback, useState } from 'react';
+import { Plus, Search, X } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 
-import { presetMetadataFor } from '@trove/collector-presets';
+import { PRESETS, type PresetMetadata } from '@trove/collector-presets';
 import type { AppState, Backend, BackendInstance } from '@trove/shared';
 
 import { TroveIpcError, removeBackend } from '../../lib/ipc.js';
-import { Button, Card, CardHeader, CardTitle, StatusDot } from '../ui/index.js';
+import { BackendLogo } from '../../lib/logos.js';
+import { Button, Card, CardHeader, CardTitle, Pill, StatusDot } from '../ui/index.js';
 import { BackendWizard, type WizardMode } from '../wizard/BackendWizard.js';
 
 interface Props {
@@ -15,19 +17,22 @@ interface Props {
   onAppStateRefresh: () => void | Promise<void>;
 }
 
+type PresetKind = Backend['kind'];
 type WizardState = { open: false } | { open: true; mode: WizardMode };
 
-/** Multi-platform management page. Renders one card per configured
- *  destination with Edit / Remove affordances, plus an "Add platform"
- *  button that hosts the [`BackendWizard`] in add or edit mode. */
+/** Platforms page. Shows every supported destination (one row per
+ *  preset kind) with logo + description; configured instances appear
+ *  inline under their kind with Edit / Remove affordances. Mirrors the
+ *  Harnesses tab's "see them all, search, enable from the list" UX. */
 export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Element {
   const [wizardState, setWizardState] = useState<WizardState>({ open: false });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
-  const openAdd = useCallback(() => {
+  const openAddForKind = useCallback((presetKind: PresetKind) => {
     setError(null);
-    setWizardState({ open: true, mode: { kind: 'add' } });
+    setWizardState({ open: true, mode: { kind: 'add', presetKind } });
   }, []);
 
   const openEdit = useCallback((instance: BackendInstance) => {
@@ -56,6 +61,24 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
     [onAppStateRefresh],
   );
 
+  // Group configured instances by preset kind so each preset row can
+  // render its own instances inline.
+  const instancesByKind = useMemo(() => {
+    const out: Record<string, BackendInstance[]> = {};
+    for (const inst of appState.backends) {
+      const k = inst.backend.kind;
+      (out[k] ??= []).push(inst);
+    }
+    return out;
+  }, [appState.backends]);
+
+  const q = query.trim().toLowerCase();
+  const filteredPresets = useMemo(
+    () =>
+      q ? PRESETS.filter((p) => p.label.toLowerCase().includes(q) || p.kind.includes(q)) : PRESETS,
+    [q],
+  );
+
   if (wizardState.open) {
     return (
       <div className="flex flex-col gap-3 px-4 py-3">
@@ -66,18 +89,13 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
-      <header className="flex items-center justify-between">
-        <div>
-          <h2 className="text-[15px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
-            Platforms
-          </h2>
-          <p className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
-            Every signal is forwarded to every configured destination.
-          </p>
-        </div>
-        <Button variant="primary" size="sm" testid="add-platform" onClick={openAdd}>
-          Add platform
-        </Button>
+      <header>
+        <h2 className="text-[15px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
+          Platforms
+        </h2>
+        <p className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
+          Every signal is forwarded to every configured destination.
+        </p>
       </header>
 
       {error ? (
@@ -90,65 +108,164 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
         </div>
       ) : null}
 
-      {appState.backends.length === 0 ? (
-        <Card testid="platforms-empty">
-          <div className="flex flex-col items-start gap-2">
-            <p className="text-[14px] font-medium text-fg-primary dark:text-fg-primary-dark">
-              No platforms configured
-            </p>
-            <p className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
-              Telemetry is being received locally but not forwarded yet. Add a destination to start
-              fanning out spans, metrics, and logs.
-            </p>
-            <Button variant="primary" size="md" onClick={openAdd}>
-              Configure a platform
-            </Button>
-          </div>
-        </Card>
-      ) : (
-        <ul className="flex flex-col gap-2" data-testid="platforms-list">
-          {appState.backends.map((instance) => (
-            <PlatformRow
-              key={instance.id}
-              instance={instance}
-              busy={busyId === instance.id}
-              onEdit={() => openEdit(instance)}
-              onRemove={() => void handleRemove(instance.id)}
-            />
-          ))}
-        </ul>
-      )}
+      <Card as="section" padding="sm" testid="platforms-section">
+        <CardHeader>
+          <CardTitle>Supported platforms</CardTitle>
+        </CardHeader>
+
+        <div className="relative mb-2">
+          <Search
+            size={13}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-tertiary dark:text-fg-tertiary-dark"
+          />
+          <input
+            type="text"
+            role="searchbox"
+            data-testid="platform-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter platforms by name…"
+            aria-label="Filter platforms by name"
+            className="w-full rounded-[8px] border border-hairline bg-surface-elevated py-1.5 pl-8 pr-8 text-[12px] text-fg-primary placeholder:text-fg-tertiary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark"
+          />
+          {query ? (
+            <button
+              type="button"
+              data-testid="platform-search-clear"
+              aria-label="Clear search"
+              onClick={() => setQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-tertiary hover:text-fg-primary dark:text-fg-tertiary-dark dark:hover:text-fg-primary-dark"
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+
+        {filteredPresets.length === 0 ? (
+          <p
+            className="text-[13px] text-fg-secondary dark:text-fg-secondary-dark"
+            data-testid="platforms-no-matches"
+          >
+            No platforms match “{query.trim()}”.
+          </p>
+        ) : (
+          <ul
+            className="divide-y divide-hairline overflow-hidden rounded-card border border-hairline dark:divide-hairline-dark dark:border-hairline-dark"
+            data-testid="platforms-list"
+          >
+            {filteredPresets.map((preset) => (
+              <PlatformRow
+                key={preset.kind}
+                preset={preset}
+                instances={instancesByKind[preset.kind] ?? []}
+                busyId={busyId}
+                onAdd={() => openAddForKind(preset.kind)}
+                onEdit={openEdit}
+                onRemove={(id) => void handleRemove(id)}
+              />
+            ))}
+          </ul>
+        )}
+      </Card>
     </div>
   );
 }
 
 interface PlatformRowProps {
-  instance: BackendInstance;
-  busy: boolean;
-  onEdit: () => void;
-  onRemove: () => void;
+  preset: PresetMetadata;
+  instances: BackendInstance[];
+  busyId: string | null;
+  onAdd: () => void;
+  onEdit: (instance: BackendInstance) => void;
+  onRemove: (id: string) => void;
 }
 
-function PlatformRow({ instance, busy, onEdit, onRemove }: PlatformRowProps): JSX.Element {
-  const meta = presetMetadataFor(instance.backend.kind);
+function PlatformRow({
+  preset,
+  instances,
+  busyId,
+  onAdd,
+  onEdit,
+  onRemove,
+}: PlatformRowProps): JSX.Element {
+  const configured = instances.length > 0;
   return (
-    <Card testid={`platform-row-${instance.id}`}>
-      <CardHeader>
-        <CardTitle>{instance.label ?? meta.label}</CardTitle>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={onEdit} disabled={busy}>
-            Edit
-          </Button>
-          <Button variant="ghost" size="sm" onClick={onRemove} disabled={busy}>
-            {busy ? 'Removing…' : 'Remove'}
-          </Button>
+    <li data-testid={`platform-row-${preset.kind}`} data-configured={configured}>
+      <div className="flex items-start gap-3 px-3 py-2.5">
+        <BackendLogo kind={preset.kind} size={32} dimmed={!configured} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
+              {preset.label}
+            </p>
+            {preset.recommended ? (
+              <Pill tone="brand" size="xs">
+                Recommended
+              </Pill>
+            ) : null}
+            {configured ? (
+              <span className="flex items-center gap-1">
+                <StatusDot status="green" size="sm" />
+                <span className="text-[11px] text-fg-secondary dark:text-fg-secondary-dark">
+                  {instances.length === 1 ? 'Enabled' : `Enabled · ${instances.length} configured`}
+                </span>
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-0.5 text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
+            {preset.description}
+          </p>
         </div>
-      </CardHeader>
-      <p className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
-        {meta.label}
-        <BackendDetail backend={instance.backend} />
-      </p>
-    </Card>
+        <Button
+          variant={configured ? 'secondary' : 'primary'}
+          size="sm"
+          testid={`platform-${preset.kind}-add`}
+          onClick={onAdd}
+        >
+          <Plus size={12} aria-hidden />
+          {configured ? 'Add another' : 'Add'}
+        </Button>
+      </div>
+
+      {configured ? (
+        <ul
+          className="border-t border-hairline bg-canvas/40 dark:border-hairline-dark dark:bg-canvas-dark/40"
+          data-testid={`platform-instances-${preset.kind}`}
+        >
+          {instances.map((instance) => (
+            <li
+              key={instance.id}
+              data-testid={`platform-instance-${instance.id}`}
+              className="flex items-center gap-2 px-3 py-1.5 pl-12"
+            >
+              <span className="min-w-0 flex-1 truncate text-[12px] text-fg-primary dark:text-fg-primary-dark">
+                {instance.label ?? preset.label}
+                <BackendDetail backend={instance.backend} />
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                testid={`platform-instance-edit-${instance.id}`}
+                onClick={() => onEdit(instance)}
+                disabled={busyId === instance.id}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                testid={`platform-instance-remove-${instance.id}`}
+                onClick={() => onRemove(instance.id)}
+                disabled={busyId === instance.id}
+              >
+                {busyId === instance.id ? 'Removing…' : 'Remove'}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </li>
   );
 }
 

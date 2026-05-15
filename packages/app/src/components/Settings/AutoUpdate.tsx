@@ -1,3 +1,4 @@
+import { Download } from 'lucide-react';
 import { useState } from 'react';
 
 import type { UpdateMetadata } from '@trove/shared';
@@ -36,7 +37,17 @@ export function AutoUpdate({ enabled, onToggle }: Props): JSX.Element {
   return (
     <Card testid="auto-update-panel">
       <CardHeader>
-        <CardTitle>Updates</CardTitle>
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-brand/[0.14] text-brand">
+            <Download size={14} strokeWidth={2.2} aria-hidden="true" />
+          </span>
+          <div className="flex flex-col">
+            <CardTitle>Updates</CardTitle>
+            <span className="text-[11px] text-fg-tertiary dark:text-fg-tertiary-dark">
+              Trove checks GitHub Releases for new versions.
+            </span>
+          </div>
+        </div>
       </CardHeader>
 
       <label className="flex items-start gap-3 text-[13px] text-fg-secondary dark:text-fg-secondary-dark">
@@ -45,7 +56,7 @@ export function AutoUpdate({ enabled, onToggle }: Props): JSX.Element {
           data-testid="auto-update-toggle"
           checked={enabled}
           onChange={handleToggle}
-          className="mt-0.5 h-4 w-4 rounded border-fg-tertiary focus:ring-ios-blue dark:border-fg-tertiary-dark"
+          className="mt-0.5 h-4 w-4 rounded border-fg-tertiary focus:ring-brand dark:border-fg-tertiary-dark"
         />
         <span className="flex flex-col">
           <span className="text-fg-primary dark:text-fg-primary-dark">

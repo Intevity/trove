@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { Stethoscope } from 'lucide-react';
+
 import type {
   AppState,
   CollectorRunState,
@@ -72,6 +74,7 @@ export function DiagnosticsPanel({ appState, state, metrics }: Props): JSX.Eleme
           disabled={busy}
           onClick={() => void handleRunBackendCheck()}
         >
+          <Stethoscope size={12} aria-hidden />
           {busy ? 'Checking…' : 'Run backend check'}
         </Button>
       </CardHeader>

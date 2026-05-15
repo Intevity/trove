@@ -16,18 +16,44 @@ import { Button, Card, CardTitle } from './ui/index.js';
 const VISIBLE_CAP = 500;
 
 const LEVEL_LABEL: Record<LogLevel, string> = {
-  debug: 'DEBUG',
-  info: 'INFO',
-  warn: 'WARN',
-  error: 'ERROR',
+  debug: 'DBG',
+  info: 'INF',
+  warn: 'WRN',
+  error: 'ERR',
 };
 
-const LEVEL_STYLE: Record<LogLevel, string> = {
-  debug: 'text-fg-tertiary dark:text-fg-tertiary-dark',
-  info: 'text-fg-primary dark:text-fg-primary-dark',
-  warn: 'text-ios-orange',
-  error: 'text-ios-red',
+/** Translucent pill behind the 3-letter level token. Brand teal for
+ *  the steady-state INFO line, iOS amber/red for problems, neutral
+ *  for DEBUG noise. */
+const LEVEL_BADGE: Record<LogLevel, string> = {
+  debug: 'bg-black/[0.06] text-fg-tertiary dark:bg-white/[0.08] dark:text-fg-tertiary-dark',
+  info: 'bg-brand/[0.16] text-brand',
+  warn: 'bg-ios-orange/[0.16] text-ios-orange',
+  error: 'bg-ios-red/[0.18] text-ios-red',
 };
+
+/** Left-border rail — colours the row's edge without repainting the
+ *  whole line. Debug/info stay transparent so the panel reads quiet;
+ *  warn/error pull the eye. */
+const ROW_RAIL: Record<LogLevel, string> = {
+  debug: 'border-l-transparent',
+  info: 'border-l-transparent',
+  warn: 'border-l-ios-orange/50',
+  error: 'border-l-ios-red/60',
+};
+
+/** Whisper-thin row tint for severe rows — stays under 9% alpha so
+ *  multi-line tracebacks don't become a wall of colour. */
+const ROW_TINT: Record<LogLevel, string> = {
+  debug: '',
+  info: '',
+  warn: 'bg-ios-orange/[0.04] dark:bg-ios-orange/[0.07]',
+  error: 'bg-ios-red/[0.05] dark:bg-ios-red/[0.09]',
+};
+
+/** 12 spaces — matches "HH:MM:SS.mmm" render width so the level badge
+ *  column stays aligned across rows with and without a timestamp. */
+const EMPTY_TIME_PLACEHOLDER = '            ';
 
 export function LogsPanel(): JSX.Element {
   const { lines, loading } = useCollectorLogTail();
@@ -89,6 +115,9 @@ export function LogsPanel(): JSX.Element {
     : hasQuery
       ? `${filtered.length} of ${parsed.length} lines`
       : `${parsed.length} lines`;
+  const counterClass = hasQuery
+    ? 'flex-shrink-0 text-[11px] font-medium tabular-nums text-brand'
+    : 'flex-shrink-0 text-[11px] tabular-nums text-fg-tertiary dark:text-fg-tertiary-dark';
 
   return (
     <Card testid="logs-panel" padding="sm" className="flex flex-1 min-h-0 flex-col">
@@ -108,7 +137,7 @@ export function LogsPanel(): JSX.Element {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter…"
             aria-label="Filter logs"
-            className="w-full rounded-[8px] border border-hairline bg-surface-elevated py-1 pl-7 pr-7 text-[12px] text-fg-primary placeholder:text-fg-tertiary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark"
+            className="w-full rounded-[8px] border border-hairline bg-surface-elevated py-1 pl-7 pr-7 text-[12px] text-fg-primary placeholder:text-fg-tertiary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark"
           />
           {hasQuery ? (
             <button
@@ -122,10 +151,7 @@ export function LogsPanel(): JSX.Element {
             </button>
           ) : null}
         </div>
-        <span
-          data-testid="logs-counter"
-          className="flex-shrink-0 text-[11px] tabular-nums text-fg-tertiary dark:text-fg-tertiary-dark"
-        >
+        <span data-testid="logs-counter" className={counterClass}>
           {counter}
         </span>
       </header>
@@ -188,22 +214,21 @@ export function LogsPanel(): JSX.Element {
 
 function LogRow({ line }: { line: ParsedLogLine }): JSX.Element {
   const time = formatLogTime(line.timestamp);
-  const levelClass = LEVEL_STYLE[line.level];
   return (
     <div
       data-stream={line.stream}
       data-level={line.level}
-      className="flex gap-2 whitespace-pre-wrap break-words py-px"
+      className={`flex items-baseline gap-2 whitespace-pre-wrap break-words border-l-2 py-[1px] pl-2 pr-1 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${ROW_RAIL[line.level]} ${ROW_TINT[line.level]}`}
     >
-      {time ? (
-        <span className="flex-shrink-0 text-fg-tertiary dark:text-fg-tertiary-dark">{time}</span>
-      ) : (
-        <span className="flex-shrink-0 text-fg-quaternary dark:text-fg-quaternary-dark"> </span>
-      )}
-      <span className={`flex-shrink-0 font-semibold ${levelClass}`}>
-        {LEVEL_LABEL[line.level].padEnd(5)}
+      <span className="flex-shrink-0 tabular-nums text-fg-tertiary dark:text-fg-tertiary-dark">
+        {time || EMPTY_TIME_PLACEHOLDER}
       </span>
-      <span className={`min-w-0 ${levelClass}`}>{line.message}</span>
+      <span
+        className={`inline-flex flex-shrink-0 items-center justify-center rounded-[4px] px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-wider ${LEVEL_BADGE[line.level]}`}
+      >
+        {LEVEL_LABEL[line.level]}
+      </span>
+      <span className="min-w-0 text-fg-primary dark:text-fg-primary-dark">{line.message}</span>
     </div>
   );
 }

@@ -14,12 +14,17 @@ export default {
           gray: '#94a3b8',
         },
         // iOS system palette used by the shell chrome (header, tabs, footer).
-        'ios-blue': '#007AFF',
-        'ios-blue-hover': '#0066CC',
         'ios-green': '#32D74B',
         'ios-red': '#FF453A',
         'ios-orange': '#FF9F0A',
         'ios-gray': '#8E8E93',
+
+        // Trove brand teal — mirrored in `packages/app/src-tauri/src/
+        // tray_icon_render.rs` as `TintColor::Brand` (the healthy-state
+        // tray retint). Used for subtle brand accents in chrome while
+        // primary buttons / focus rings stay on `ios-blue`.
+        brand: '#2dbfb8',
+        'brand-hover': '#26a8a2',
 
         // macOS-native surface tokens. Light + dark are sibling utility
         // names rather than DEFAULT/dark because most use sites read

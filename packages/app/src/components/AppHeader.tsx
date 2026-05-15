@@ -4,8 +4,6 @@ import { motion } from 'motion/react';
 import type { OverallHealth } from '@trove/shared';
 
 import troveLogo from '../assets/trove-logo.svg';
-import { overallHealthLabel } from '../lib/health.js';
-import { StatusDot, type DotStatus } from './ui/index.js';
 
 export type TabId = 'overview' | 'harnesses' | 'platforms' | 'mappings' | 'logs' | 'settings';
 
@@ -24,100 +22,76 @@ const TABS: readonly TabDef[] = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-const DOT_STATUS: Record<OverallHealth, DotStatus> = {
-  green: 'green',
-  amber: 'amber',
-  red: 'red',
-};
-
-const DOT_TOOLTIP_SUFFIX: Record<OverallHealth, string> = {
-  green: 'receiving telemetry',
-  amber: 'collector or metrics endpoint not fully live',
-  red: 'sidecar is not running',
-};
-
 interface Props {
+  /** Still received so the tray icon / dashboard badge surfaces can
+   *  share derivation; surfaced here as a `data-health` attribute on
+   *  the header element for tests and accessibility tooling. The
+   *  inline status dot was retired since the tray icon and the
+   *  Overview tab already convey collector health. */
   health: OverallHealth;
-  /** Optional reason / detail line shown in the dot tooltip, e.g.
-   *  "metrics endpoint unreachable". Sourced from Dashboard.badgeDetail(). */
-  detail?: string | undefined;
   activeTab: TabId;
   onTabChange: (next: TabId) => void;
 }
 
-function dotTooltip(health: OverallHealth, detail: string | undefined): string {
-  const label = overallHealthLabel(health);
-  const reason = detail ?? DOT_TOOLTIP_SUFFIX[health];
-  return reason ? `${label} — ${reason}` : label;
-}
-
-export function AppHeader({ health, detail, activeTab, onTabChange }: Props): JSX.Element {
-  const tooltip = dotTooltip(health, detail);
+export function AppHeader({ health, activeTab, onTabChange }: Props): JSX.Element {
   return (
-    <header
-      data-testid="app-header-bar"
-      className="flex flex-shrink-0 items-center gap-2 border-b border-hairline px-3 pb-2 pt-2 dark:border-hairline-dark"
-    >
-      <div className="flex flex-shrink-0 items-center gap-2">
-        <img
-          src={troveLogo}
-          alt=""
-          aria-hidden="true"
-          width={18}
-          height={18}
-          className="rounded-[4px]"
-        />
-        <span
-          data-testid="app-header"
-          className="text-[15px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark"
-        >
-          Trove
-        </span>
-        <StatusDot
-          status={DOT_STATUS[health]}
-          size="sm"
-          label={tooltip}
-          testid="app-health-dot"
-          dataAttrs={{ 'data-health': health }}
-          className="ml-0.5"
-        />
-      </div>
-
-      <div
-        role="tablist"
-        className="ml-auto flex min-w-0 rounded-xl bg-black/[0.06] p-[3px] dark:bg-white/[0.08]"
+    <>
+      <header
+        data-testid="app-header-bar"
+        data-health={health}
+        className="flex flex-shrink-0 items-center gap-2 border-b border-hairline px-3 pb-2 pt-2 dark:border-hairline-dark"
       >
-        {TABS.map(({ id, label, icon: Icon }) => {
-          const active = activeTab === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              data-testid={`tab-${id}`}
-              onClick={() => onTabChange(id)}
-              className={`relative flex items-center justify-center gap-1 rounded-[9px] px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${
-                active
-                  ? 'text-fg-primary dark:text-fg-primary-dark'
-                  : 'text-ios-gray hover:text-fg-primary dark:hover:text-fg-primary-dark'
-              }`}
-            >
-              {active && (
-                <motion.span
-                  layoutId="trove-tab-pill"
-                  className="absolute inset-0 rounded-[9px] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.15)] dark:bg-[#3A3A3C]"
-                  transition={{ type: 'spring', stiffness: 500, damping: 40 }}
-                />
-              )}
-              <span className="relative z-10 flex items-center gap-1 transform-gpu">
-                <Icon size={11} strokeWidth={2.2} />
-                {label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </header>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <img src={troveLogo} alt="" aria-hidden="true" width={18} height={18} />
+          <span
+            data-testid="app-header"
+            className="text-[15px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark"
+          >
+            Trove
+          </span>
+        </div>
+
+        <div
+          role="tablist"
+          className="ml-auto flex min-w-0 rounded-xl bg-black/[0.06] p-[3px] dark:bg-white/[0.08]"
+        >
+          {TABS.map(({ id, label, icon: Icon }) => {
+            const active = activeTab === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                data-testid={`tab-${id}`}
+                onClick={() => onTabChange(id)}
+                className={`relative flex items-center justify-center gap-1 rounded-[9px] px-2 py-1 text-[11px] font-medium transition-colors duration-150 ${
+                  active
+                    ? 'text-fg-primary dark:text-fg-primary-dark'
+                    : 'text-ios-gray hover:text-fg-primary dark:hover:text-fg-primary-dark'
+                }`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="trove-tab-pill"
+                    className="absolute inset-0 rounded-[9px] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.15)] dark:bg-[#3A3A3C]"
+                    transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                  />
+                )}
+                <span className="relative z-10 flex items-center gap-1 transform-gpu">
+                  <Icon size={11} strokeWidth={2.2} />
+                  {label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </header>
+      <div
+        aria-hidden="true"
+        data-testid="app-header-brand-accent"
+        className="h-px flex-shrink-0 bg-brand/40 dark:bg-brand/30"
+      />
+    </>
   );
 }

@@ -38,7 +38,7 @@ export function Footer(): JSX.Element {
           data-testid="footer-report-bug"
           aria-label="Report a bug"
           title="Report a bug"
-          className="flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:text-fg-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ios-blue dark:hover:text-fg-primary-dark"
+          className="flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:text-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand dark:hover:text-brand"
         >
           <Bug size={11} strokeWidth={2.2} />
           <span>Report</span>
@@ -49,7 +49,7 @@ export function Footer(): JSX.Element {
         onClick={handleOpenIntevity}
         data-testid="footer-built-by"
         aria-label="Built by Intevity; open intevity.com"
-        className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:text-fg-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ios-blue dark:hover:text-fg-primary-dark"
+        className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:text-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand dark:hover:text-brand"
       >
         <span>Built by</span>
         <img src={intevityLogo} alt="Intevity" className="h-3.5 w-auto" />

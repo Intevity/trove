@@ -422,6 +422,14 @@ export const MetricsSnapshotWire = z.object({
   scrapedMsAgo: z.number().int().nonnegative(),
   unreachable: z.boolean(),
   overallHealth: OverallHealth,
+  /** Per-harness outgoing counts from the collector's diag filter
+   *  pipelines. Keyed by harness suffix (e.g. `"gemini-cli"`); each
+   *  entry holds span / metric-point / log-record counters this run.
+   *  Only populated for native-OTel emitters with `service.name`
+   *  candidates; watcher-emitter harnesses are absent. Defaults to `{}`
+   *  for forward-compat with snapshots produced before this field
+   *  existed. */
+  diagObservations: z.record(z.string(), SignalCounts).default({}),
 });
 export type MetricsSnapshotWire = z.infer<typeof MetricsSnapshotWire>;
 

@@ -1,77 +1,141 @@
+import { Maximize2, Minimize2 } from 'lucide-react';
+import { AnimatePresence, motion, useAnimationFrame } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 
-import { useAnimationFrame } from 'motion/react';
 import { presetMetadataFor } from '@trove/collector-presets';
-import type { BackendInstance, CollectorRunState, MetricsSnapshotWire } from '@trove/shared';
+import type {
+  BackendInstance,
+  CollectorRunState,
+  HarnessConfig,
+  MetricsSnapshotWire,
+} from '@trove/shared';
 
-import { Card, CardHeader, CardTitle, StatusDot } from './ui/index.js';
+import { HARNESS_LABELS, NodeLogoSvg } from '../lib/logos.js';
+import { Card, CardHeader, CardTitle } from './ui/index.js';
 
 interface FlowChartProps {
-  harnessCount: number;
+  harnesses: HarnessConfig[];
   backends: BackendInstance[];
   metrics: MetricsSnapshotWire | null;
   state: CollectorRunState | null;
 }
 
-/** Per-signal-type lane color. Matches the iOS palette tokens used
- *  elsewhere in the dashboard so the chart reads as part of the same
- *  visual language. */
+type Mode = 'standard' | 'expanded';
+
+/** Persist the user's view-mode choice across launches. WebKit
+ *  localStorage survives Tauri restarts for the same app identifier. */
+const MODE_STORAGE_KEY = 'trove.flow-chart.mode';
+
+function readStoredMode(): Mode {
+  try {
+    const v = localStorage.getItem(MODE_STORAGE_KEY);
+    if (v === 'expanded' || v === 'standard') return v;
+  } catch {
+    /* localStorage may throw in private mode or under sandbox; ignore. */
+  }
+  return 'standard';
+}
+
+function persistMode(mode: Mode): void {
+  try {
+    localStorage.setItem(MODE_STORAGE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
 const LANE_COLORS = {
-  spans: '#0A84FF', // ios-blue
-  metrics: '#30D158', // ios-green
-  logs: '#FF9F0A', // ios-orange
+  spans: '#0A84FF',
+  metrics: '#30D158',
+  logs: '#FF9F0A',
 } as const;
 
-/** SignalKind → label / accessor. */
 const LANES = [
   { kind: 'spans', label: 'Spans', accessor: 'spans' as const },
   { kind: 'metrics', label: 'Metrics', accessor: 'metricPoints' as const },
   { kind: 'logs', label: 'Logs', accessor: 'logRecords' as const },
 ] as const;
 
-/** Fixed-coordinate viewBox the SVG uses; the wrapping element scales
- *  the whole thing to its container width while preserving aspect.
- *  240 vertical units gives enough room for up to 4 platform sub-nodes
- *  without crowding; more than that and the rows shrink proportionally. */
 const VIEW_W = 800;
-const VIEW_H = 240;
-
-/** Node geometry. Centers + half-extents in viewBox units. */
-const HARNESS_NODE = { cx: 110, cy: VIEW_H / 2, hw: 60, hh: 30 };
-const COLLECTOR_NODE = { cx: 400, cy: VIEW_H / 2, hw: 70, hh: 38 };
+const HARNESS_COL_X = 110;
+const COLLECTOR_X = 400;
 const PLATFORM_COL_X = 700;
-const PLATFORM_NODE_HW = 60;
-const PLATFORM_NODE_HH_MAX = 26;
-
-/** y-offsets per signal lane around a node's center. */
-const LANE_Y_OFFSETS = { spans: -14, metrics: 0, logs: 14 } as const;
-
-/** Number of particles that orbit each lane, regardless of throughput.
- *  Particle period (not count) is what scales with rate. */
+const COLLECTOR_HW = 70;
+const COLLECTOR_HH = 36;
+/** Floor for column half-width. Most labels fit; the actual hw grows
+ *  to envelop the widest label in the column (see [`columnHalfWidth`]). */
+const NODE_HW_MIN = 60;
+/** Ceiling for column half-width — keeps columns from colliding with
+ *  the collector when a user names a backend with a very long string. */
+const NODE_HW_MAX = 95;
+const NODE_HH_MAX = 24;
+const COL_PADDING = 22;
+const LANE_Y_OFFSETS = { spans: -13, metrics: 0, logs: 13 } as const;
 const PARTICLES_PER_LANE = 5;
 
-/** Throughput → particle period (ms). Three bands so the chart reads
- *  differently at idle, casual, and peak rates without being noisy
- *  about precise values. */
+/** Inner-node geometry — kept aligned with FlowNode below. Logo +
+ *  text padding + inter-glyph estimate combine to give a quick width
+ *  estimate without mounting a measurement DOM. */
+const NODE_PADDING_X = 8;
+const NODE_LOGO_GAP = 6;
+const NODE_LOGO_SIZE = 24;
+const TITLE_AVG_GLYPH_PX = 6.8;
+
+/** Estimate the rendered width of a node title at the chart's title
+ *  font size. Adds logo + paddings so callers get a complete node
+ *  width, not just text width. */
+function estimateNodeWidth(title: string, hasLogo: boolean): number {
+  const text = Math.ceil(title.length * TITLE_AVG_GLYPH_PX);
+  const logoSlot = hasLogo ? NODE_LOGO_SIZE + NODE_LOGO_GAP : 0;
+  return logoSlot + text + NODE_PADDING_X * 2;
+}
+
+/** Largest half-width any node in a column needs to fit its label.
+ *  Clamped to [NODE_HW_MIN, NODE_HW_MAX] so every box in a column
+ *  shares the same width regardless of which row holds the long
+ *  string. */
+function columnHalfWidth(titles: string[], hasLogo: boolean): number {
+  const widest = titles.reduce((acc, t) => Math.max(acc, estimateNodeWidth(t, hasLogo)), 0);
+  const hw = Math.ceil(widest / 2);
+  return Math.min(NODE_HW_MAX, Math.max(NODE_HW_MIN, hw));
+}
+
+/** Compute total SVG height based on row count. Slimmer than the
+ *  previous fixed 240 — standard mode renders at 150; expanded grows
+ *  proportional to the bigger column. The legend now lives outside the
+ *  SVG so we don't reserve space for it here. */
+function computeViewHeight(rows: number): number {
+  return Math.min(270, Math.max(150, 60 + rows * 36));
+}
+
+/** Distribute `count` row centers vertically across the canvas. */
+function computeColumnCenters(count: number, viewH: number, padding = COL_PADDING): number[] {
+  if (count <= 1) return [viewH / 2];
+  const usable = viewH - 2 * padding;
+  const step = usable / (count - 1);
+  return Array.from({ length: count }, (_, i) => padding + step * i);
+}
+
 function periodForRate(rate: number): number {
   if (rate >= 10) return 1200;
   if (rate >= 1) return 2400;
   if (rate > 0) return 4800;
-  return 0; // sentinel: lane is idle
+  return 0;
 }
 
-/** Track received-counter deltas across snapshots to derive a rate per
- *  second per signal type. The first snapshot establishes a baseline;
- *  subsequent snapshots produce a rate from the delta. Falls back to 0
- *  when the counter went backward (collector restart) or when there's
- *  no snapshot yet. */
-function useReceivedRates(metrics: MetricsSnapshotWire | null): {
+interface LaneRates {
   spans: number;
   metrics: number;
   logs: number;
-} {
+}
+
+function emptyLaneRates(): LaneRates {
+  return { spans: 0, metrics: 0, logs: 0 };
+}
+
+function useReceivedRates(metrics: MetricsSnapshotWire | null): LaneRates {
   const prev = useRef<{ snap: MetricsSnapshotWire; at: number } | null>(null);
-  const [rates, setRates] = useState({ spans: 0, metrics: 0, logs: 0 });
+  const [rates, setRates] = useState<LaneRates>(emptyLaneRates);
 
   useEffect(() => {
     if (!metrics) return;
@@ -98,175 +162,499 @@ function useReceivedRates(metrics: MetricsSnapshotWire | null): {
   return rates;
 }
 
+/** Derive per-harness rates from `metrics.diagObservations` deltas. The
+ *  collector emits one diag pipeline per native-OTel emitter, so any
+ *  enabled harness with a `service.name` candidate (Claude Code,
+ *  Gemini, Codex, Qwen, OpenCode, Claude Desktop) gets its own entry.
+ *  Watcher-emitter harnesses don't appear here; the caller falls back
+ *  to aggregate animation for those. */
+function usePerHarnessRates(metrics: MetricsSnapshotWire | null): Record<string, LaneRates> {
+  const prev = useRef<{ snap: MetricsSnapshotWire; at: number } | null>(null);
+  const [rates, setRates] = useState<Record<string, LaneRates>>({});
+
+  useEffect(() => {
+    if (!metrics) return;
+    const now = performance.now();
+    const last = prev.current;
+    if (!last) {
+      prev.current = { snap: metrics, at: now };
+      return;
+    }
+    const dtSec = (now - last.at) / 1000;
+    if (dtSec <= 0) {
+      prev.current = { snap: metrics, at: now };
+      return;
+    }
+    const next: Record<string, LaneRates> = {};
+    const prevObs = last.snap.diagObservations ?? {};
+    for (const [suffix, counts] of Object.entries(metrics.diagObservations ?? {})) {
+      const p = prevObs[suffix];
+      next[suffix] = {
+        spans: deltaPerSec(counts.spans, p?.spans ?? 0, dtSec),
+        metrics: deltaPerSec(counts.metricPoints, p?.metricPoints ?? 0, dtSec),
+        logs: deltaPerSec(counts.logRecords, p?.logRecords ?? 0, dtSec),
+      };
+    }
+    prev.current = { snap: metrics, at: now };
+    setRates(next);
+  }, [metrics]);
+
+  return rates;
+}
+
 function deltaPerSec(curr: number, prev: number, dtSec: number): number {
   const delta = curr - prev;
-  if (delta < 0) return 0; // collector restart resets counters
+  if (delta < 0) return 0;
   return delta / dtSec;
 }
 
-export function FlowChart({ harnessCount, backends, metrics, state }: FlowChartProps): JSX.Element {
-  const rates = useReceivedRates(metrics);
+/** Short, human-friendly identifier for a backend's destination. Used
+ *  as the third line on platform nodes in expanded mode. Honeycomb and
+ *  Datadog don't expose a raw endpoint URL, so we surface the
+ *  dataset / site instead. */
+function destinationHint(backend: BackendInstance['backend']): string | undefined {
+  switch (backend.kind) {
+    case 'honeycomb':
+      return backend.dataset;
+    case 'datadog':
+      return backend.site;
+    case 'signoz':
+    case 'grafana-cloud':
+    case 'otlp-generic':
+    case 'otelcol-passthrough':
+      try {
+        return new URL(backend.endpoint).host;
+      } catch {
+        return backend.endpoint;
+      }
+  }
+}
 
-  // Per-signal periods. When all three are zero the chart goes idle
-  // (particles hidden, lanes dimmed) so the user sees at a glance that
-  // nothing is flowing yet.
+export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProps): JSX.Element {
+  const [mode, setMode] = useState<Mode>(readStoredMode);
+  useEffect(() => {
+    persistMode(mode);
+  }, [mode]);
+  const rates = useReceivedRates(metrics);
+  const perHarnessRates = usePerHarnessRates(metrics);
+
   const periods = {
     spans: periodForRate(rates.spans),
     metrics: periodForRate(rates.metrics),
     logs: periodForRate(rates.logs),
   };
   const allIdle = periods.spans === 0 && periods.metrics === 0 && periods.logs === 0;
+  const running = state?.kind === 'running';
 
-  // Platform sub-node geometry. Distribute centers vertically so the
-  // outermost rows still fit inside VIEW_H minus a small margin.
-  const platformCenters = computePlatformCenters(
-    Math.max(backends.length, 1), // 1 placeholder sub-node when zero configured
-  );
-  const platformNodeHH = Math.min(
-    PLATFORM_NODE_HH_MAX,
-    Math.floor((VIEW_H - 40) / (backends.length || 1) / 2),
-  );
+  /** Pick the period for a harness's lane. In standard mode (one node
+   *  represents all harnesses) we use the aggregate. In expanded mode,
+   *  we look up the per-harness rate from `diagObservations`; native
+   *  emitters get an accurate per-signal period, watcher-emitters
+   *  (absent from diag) fall back to the aggregate so their lane still
+   *  reflects "something is flowing" rather than going silent. */
+  function laneRateForHarness(harnessId: import('@trove/shared').HarnessId | null): LaneRates {
+    if (!harnessId || mode === 'standard') return rates;
+    const direct = perHarnessRates[harnessId];
+    if (direct) return direct;
+    // Watcher-emitters (no diag pipeline) — fall back to aggregate.
+    return rates;
+  }
+
+  const harnessRows = mode === 'expanded' ? Math.max(harnesses.length, 1) : 1;
+  const backendRows = Math.max(backends.length, 1);
+  const rows = Math.max(harnessRows, backendRows);
+  const viewH = computeViewHeight(rows);
+  const collectorCy = viewH / 2;
+
+  const harnessCenters = computeColumnCenters(harnessRows, viewH);
+  const backendCenters = computeColumnCenters(backendRows, viewH);
+  const nodeHH = Math.min(NODE_HH_MAX, Math.floor((viewH - 50) / Math.max(rows, 1) / 2));
+
+  // Per-column uniform width. Computed from the longest title in the
+  // column so every node in the column visually matches, regardless of
+  // which row holds the long string. Standard mode uses the collapsed
+  // "Harnesses" title (always short) plus the backend titles.
+  const harnessTitles =
+    mode === 'expanded' && harnesses.length > 0
+      ? harnesses.map((h) => HARNESS_LABELS[h.id] ?? h.id)
+      : ['Harnesses']; // standard / empty case
+  const backendTitles =
+    backends.length > 0
+      ? backends.map((b) => b.label ?? presetMetadataFor(b.backend.kind).label)
+      : ['No platforms'];
+  const harnessHW = columnHalfWidth(harnessTitles, true);
+  const platformHW = columnHalfWidth(backendTitles, true);
+
+  // SVG render height scales with viewBox so aspect stays sensible.
+  const renderH = Math.round((viewH / 240) * 200);
 
   return (
     <Card testid="flow-chart">
-      <CardHeader>
+      <CardHeader className="mb-1.5">
         <CardTitle>Data flow</CardTitle>
-        <span className="flex items-center gap-1.5">
-          <StatusDot status={state?.kind === 'running' ? 'green' : 'gray'} size="sm" />
-          <span className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
-            {allIdle ? 'idle' : 'live'}
+        <div className="flex items-center gap-2">
+          <ModeToggle mode={mode} onChange={setMode} />
+          <span className="flex items-center gap-1.5">
+            <span className="relative flex h-2 w-2 items-center justify-center">
+              <span
+                className={`relative inline-block h-1.5 w-1.5 rounded-full ${
+                  allIdle ? 'bg-fg-tertiary dark:bg-fg-tertiary-dark' : 'bg-ios-green'
+                }`}
+              />
+              {!allIdle ? (
+                <span className="absolute inline-flex h-2 w-2 animate-ping rounded-full bg-ios-green opacity-60" />
+              ) : null}
+            </span>
+            <span className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
+              {allIdle ? 'idle' : 'live'}
+            </span>
           </span>
-        </span>
+        </div>
       </CardHeader>
 
       <svg
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        viewBox={`0 0 ${VIEW_W} ${viewH}`}
         role="img"
         aria-label="Telemetry flow from harnesses through the collector to configured platforms"
-        className="h-[200px] w-full"
+        className="w-full"
+        style={{ height: renderH }}
         data-testid="flow-chart-svg"
       >
-        {/* Connectors first so node fills paint on top */}
-        {LANES.map((lane) => (
-          <FlowLane
-            key={`in-${lane.kind}`}
-            pathD={incomingPathD(lane.kind)}
-            color={LANE_COLORS[lane.kind]}
-            periodMs={periods[lane.kind]}
-          />
-        ))}
-        {platformCenters.map((cy, i) =>
+        <defs>
+          <filter id="lane-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="1.4" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* Incoming lanes (Harnesses → Collector). One set per harness row.
+            In standard mode the single row uses the aggregate rate. In
+            expanded mode each row uses its harness's per-signal rate
+            from `diagObservations` so an idle harness's lane stays still
+            while the active one streams particles. */}
+        {harnessCenters.map((hcy, hi) => {
+          const harnessId = mode === 'expanded' ? (harnesses[hi]?.id ?? null) : null;
+          const laneRates = laneRateForHarness(harnessId);
+          return LANES.map((lane) => (
+            <FlowLane
+              key={`in-${hi}-${lane.kind}`}
+              pathD={connectorPath(
+                HARNESS_COL_X + harnessHW,
+                hcy + LANE_Y_OFFSETS[lane.kind],
+                COLLECTOR_X - COLLECTOR_HW,
+                collectorCy + LANE_Y_OFFSETS[lane.kind],
+              )}
+              color={LANE_COLORS[lane.kind]}
+              periodMs={periodForRate(
+                lane.kind === 'spans'
+                  ? laneRates.spans
+                  : lane.kind === 'metrics'
+                    ? laneRates.metrics
+                    : laneRates.logs,
+              )}
+            />
+          ));
+        })}
+
+        {/* Outgoing lanes (Collector → Platforms). One set per backend row. */}
+        {backendCenters.map((bcy, bi) =>
           LANES.map((lane) => (
             <FlowLane
-              key={`out-${i}-${lane.kind}`}
-              pathD={outgoingPathD(lane.kind, cy)}
+              key={`out-${bi}-${lane.kind}`}
+              pathD={connectorPath(
+                COLLECTOR_X + COLLECTOR_HW,
+                collectorCy + LANE_Y_OFFSETS[lane.kind],
+                PLATFORM_COL_X - platformHW,
+                bcy + LANE_Y_OFFSETS[lane.kind],
+              )}
               color={LANE_COLORS[lane.kind]}
               periodMs={periods[lane.kind]}
             />
           )),
         )}
 
-        {/* Harnesses node */}
-        <FlowNode
-          cx={HARNESS_NODE.cx}
-          cy={HARNESS_NODE.cy}
-          hw={HARNESS_NODE.hw}
-          hh={HARNESS_NODE.hh}
-          title="Harnesses"
-          subtitle={`${harnessCount} active`}
-        />
+        {/* Per-lane rate labels (expanded mode only, when non-idle). */}
+        {mode === 'expanded' && !allIdle ? (
+          <g>
+            {LANES.map((lane) => {
+              const r = rates[lane.kind as 'spans' | 'metrics' | 'logs'];
+              if (r === 0) return null;
+              const labelX = (COLLECTOR_X + COLLECTOR_HW + (PLATFORM_COL_X - platformHW)) / 2;
+              const labelY = collectorCy + LANE_Y_OFFSETS[lane.kind] - 3;
+              return (
+                <text
+                  key={`rate-${lane.kind}`}
+                  x={labelX}
+                  y={labelY}
+                  textAnchor="middle"
+                  fontSize={9}
+                  fontWeight={600}
+                  className="fill-fg-secondary dark:fill-fg-secondary-dark"
+                >
+                  {Math.round(r)}/s
+                </text>
+              );
+            })}
+          </g>
+        ) : null}
+
+        {/* Collector halo pulse when running */}
+        {running ? (
+          <rect
+            x={COLLECTOR_X - COLLECTOR_HW - 2}
+            y={collectorCy - COLLECTOR_HH - 2}
+            width={(COLLECTOR_HW + 2) * 2}
+            height={(COLLECTOR_HH + 2) * 2}
+            rx={12}
+            ry={12}
+            fill="none"
+            stroke="#0A84FF"
+            strokeWidth={1.5}
+            strokeOpacity={0.35}
+          >
+            <animate
+              attributeName="stroke-opacity"
+              values="0.35;0;0.35"
+              dur="2.4s"
+              repeatCount="indefinite"
+            />
+            <animate
+              attributeName="stroke-width"
+              values="1.5;5;1.5"
+              dur="2.4s"
+              repeatCount="indefinite"
+            />
+          </rect>
+        ) : null}
+
+        {/* Harness column */}
+        <AnimatePresence mode="popLayout" initial={false}>
+          {mode === 'standard' ? (
+            <motion.g
+              key="harness-collapsed"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+            >
+              <FlowNode
+                cx={HARNESS_COL_X}
+                cy={harnessCenters[0]!}
+                hw={harnessHW}
+                hh={NODE_HH_MAX}
+                title="Harnesses"
+                subtitle={`${harnesses.length} active`}
+                muted={harnesses.length === 0}
+              />
+            </motion.g>
+          ) : harnesses.length === 0 ? (
+            <motion.g
+              key="harness-empty"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+            >
+              <FlowNode
+                cx={HARNESS_COL_X}
+                cy={harnessCenters[0]!}
+                hw={harnessHW}
+                hh={NODE_HH_MAX}
+                title="No harnesses"
+                subtitle="enable one"
+                muted
+              />
+            </motion.g>
+          ) : (
+            harnessCenters.map((hcy, i) => {
+              const h = harnesses[i]!;
+              return (
+                <motion.g
+                  key={`harness-${h.id}`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <FlowNode
+                    cx={HARNESS_COL_X}
+                    cy={hcy}
+                    hw={harnessHW}
+                    hh={nodeHH}
+                    title={HARNESS_LABELS[h.id] ?? h.id}
+                    subtitle="enabled"
+                    harnessId={h.id}
+                  />
+                </motion.g>
+              );
+            })
+          )}
+        </AnimatePresence>
 
         {/* Collector node */}
         <FlowNode
-          cx={COLLECTOR_NODE.cx}
-          cy={COLLECTOR_NODE.cy}
-          hw={COLLECTOR_NODE.hw}
-          hh={COLLECTOR_NODE.hh}
+          cx={COLLECTOR_X}
+          cy={collectorCy}
+          hw={COLLECTOR_HW}
+          hh={COLLECTOR_HH}
           title="Collector"
-          subtitle={state?.kind === 'running' ? 'running' : (state?.kind ?? 'idle')}
+          subtitle={running ? 'running' : (state?.kind ?? 'idle')}
           highlight
         />
 
-        {/* Platforms */}
+        {/* Platform column */}
         {backends.length === 0 ? (
           <FlowNode
             cx={PLATFORM_COL_X}
-            cy={VIEW_H / 2}
-            hw={PLATFORM_NODE_HW}
-            hh={PLATFORM_NODE_HH_MAX}
+            cy={viewH / 2}
+            hw={platformHW}
+            hh={NODE_HH_MAX}
             title="No platforms"
             subtitle="not forwarding"
             muted
           />
         ) : (
-          backends.map((instance, i) => {
+          backendCenters.map((bcy, i) => {
+            const instance = backends[i]!;
             const meta = presetMetadataFor(instance.backend.kind);
+            const host = mode === 'expanded' ? destinationHint(instance.backend) : undefined;
             return (
-              <FlowNode
+              <motion.g
                 key={instance.id}
-                cx={PLATFORM_COL_X}
-                cy={platformCenters[i]!}
-                hw={PLATFORM_NODE_HW}
-                hh={platformNodeHH}
-                title={instance.label ?? meta.label}
-                subtitle={meta.label}
-              />
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.18 }}
+              >
+                <FlowNode
+                  cx={PLATFORM_COL_X}
+                  cy={bcy}
+                  hw={platformHW}
+                  hh={nodeHH}
+                  title={instance.label ?? meta.label}
+                  subtitle={meta.label}
+                  backendKind={instance.backend.kind}
+                  {...(host ? { tertiary: host } : {})}
+                />
+              </motion.g>
             );
           })
         )}
-
-        {/* Lane legend at the bottom-left */}
-        <g transform={`translate(20, ${VIEW_H - 14})`}>
-          {LANES.map((lane, i) => (
-            <g key={lane.kind} transform={`translate(${i * 70}, 0)`}>
-              <circle cx={0} cy={0} r={3.5} fill={LANE_COLORS[lane.kind]} />
-              <text
-                x={8}
-                y={3}
-                fontSize={10}
-                className="fill-fg-secondary dark:fill-fg-secondary-dark"
-              >
-                {lane.label}
-              </text>
-            </g>
-          ))}
-        </g>
-
-        {allIdle ? (
-          <text
-            x={VIEW_W / 2}
-            y={VIEW_H - 16}
-            textAnchor="middle"
-            fontSize={11}
-            className="fill-fg-tertiary dark:fill-fg-tertiary-dark"
-          >
-            Waiting for telemetry…
-          </text>
-        ) : null}
       </svg>
+
+      <div className="mt-1 flex items-center gap-3 px-1">
+        {LANES.map((lane) => (
+          <span key={lane.kind} className="flex items-center gap-1.5">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ backgroundColor: LANE_COLORS[lane.kind] }}
+            />
+            <span className="text-[10px] text-fg-secondary dark:text-fg-secondary-dark">
+              {lane.label}
+            </span>
+          </span>
+        ))}
+        {allIdle ? (
+          <span className="ml-auto text-[10px] italic text-fg-tertiary dark:text-fg-tertiary-dark">
+            Waiting for telemetry…
+          </span>
+        ) : null}
+      </div>
     </Card>
   );
 }
 
-/** Imperatively animates `PARTICLES_PER_LANE` circles along a single
- *  bezier path. Skipped (and particles hidden) when `periodMs === 0`
- *  so an idle lane doesn't pin a rAF callback. */
-function FlowLane({
-  pathD,
-  color,
-  periodMs,
+interface ModeToggleProps {
+  mode: Mode;
+  onChange: (m: Mode) => void;
+}
+
+/** macOS-style segmented icon pair. Two square buttons in a hairline
+ *  pill; the active one renders with an elevated surface so it reads
+ *  as recessed. */
+function ModeToggle({ mode, onChange }: ModeToggleProps): JSX.Element {
+  return (
+    <div
+      role="group"
+      aria-label="Data flow view"
+      className="inline-flex items-center gap-0.5 rounded-[7px] border border-hairline p-0.5 dark:border-hairline-dark"
+    >
+      <ToggleButton
+        active={mode === 'standard'}
+        onClick={() => onChange('standard')}
+        label="Standard view"
+        testid="flow-chart-mode-standard"
+      >
+        <Minimize2 size={11} aria-hidden />
+      </ToggleButton>
+      <ToggleButton
+        active={mode === 'expanded'}
+        onClick={() => onChange('expanded')}
+        label="Expanded view"
+        testid="flow-chart-mode-expanded"
+      >
+        <Maximize2 size={11} aria-hidden />
+      </ToggleButton>
+    </div>
+  );
+}
+
+function ToggleButton({
+  active,
+  onClick,
+  label,
+  testid,
+  children,
 }: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  testid: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      onClick={onClick}
+      data-testid={testid}
+      className={`flex items-center justify-center rounded-[5px] px-1.5 py-1 transition-colors ${
+        active
+          ? 'bg-surface-elevated text-fg-primary shadow-sm dark:bg-surface-elevated-dark dark:text-fg-primary-dark'
+          : 'text-fg-tertiary hover:text-fg-secondary dark:text-fg-tertiary-dark dark:hover:text-fg-secondary-dark'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+interface FlowLaneProps {
   pathD: string;
   color: string;
   periodMs: number;
-}): JSX.Element {
+  /** Suppress particle + dash-flow animation while keeping the base
+   *  line rendered. Used for incoming lanes in expanded mode where
+   *  per-harness attribution is not available — drawing animated
+   *  particles per harness would falsely imply each is emitting. */
+  staticLane?: boolean;
+}
+
+/** A single lane: dim base path, an animated dashed "river" beneath
+ *  the particles, and a glowing particle train. Skipped when the
+ *  lane is idle (periodMs === 0) or marked static. */
+function FlowLane({ pathD, color, periodMs, staticLane = false }: FlowLaneProps): JSX.Element {
   const pathRef = useRef<SVGPathElement | null>(null);
   const particleRefs = useRef<(SVGCircleElement | null)[]>([]);
   const startRef = useRef<number | null>(null);
   const idle = periodMs === 0;
+  const animated = !idle && !staticLane;
 
   useAnimationFrame((time) => {
-    if (idle) return;
+    if (!animated) return;
     const path = pathRef.current;
     if (!path) return;
     const total = path.getTotalLength();
@@ -283,26 +671,52 @@ function FlowLane({
     }
   });
 
+  // Dash flow dur: scale with period so faster lanes stream faster.
+  const dashDur = animated ? `${Math.max(0.6, periodMs / 1000 / 2)}s` : '0s';
+  // Static lanes get the normal-weight base stroke so the user still
+  // sees "this harness is wired up", just without per-harness particles.
+  const baseOpacity = idle ? 0.12 : 0.28;
+
   return (
     <g>
       <path
         ref={pathRef}
         d={pathD}
         stroke={color}
-        strokeOpacity={idle ? 0.12 : 0.28}
+        strokeOpacity={baseOpacity}
         strokeWidth={1.5}
         fill="none"
       />
-      {!idle &&
+      {animated ? (
+        <path
+          d={pathD}
+          stroke={color}
+          strokeOpacity={0.45}
+          strokeWidth={1.5}
+          fill="none"
+          strokeDasharray="3 9"
+          strokeLinecap="round"
+        >
+          <animate
+            attributeName="stroke-dashoffset"
+            from="12"
+            to="0"
+            dur={dashDur}
+            repeatCount="indefinite"
+          />
+        </path>
+      ) : null}
+      {animated &&
         Array.from({ length: PARTICLES_PER_LANE }, (_, i) => (
           <circle
             key={i}
             ref={(el) => {
               particleRefs.current[i] = el;
             }}
-            r={2.6}
+            r={2.4}
             fill={color}
             opacity={0.95}
+            filter="url(#lane-glow)"
           />
         ))}
     </g>
@@ -316,13 +730,17 @@ interface FlowNodeProps {
   hh: number;
   title: string;
   subtitle?: string;
+  /** Third line — typically the endpoint host shown in expanded mode. */
+  tertiary?: string;
   highlight?: boolean;
   muted?: boolean;
+  /** When set, renders the harness brand logo (or monogram fallback)
+   *  inside the node and shifts the text right of it. */
+  harnessId?: import('@trove/shared').HarnessId;
+  /** When set, renders the backend monogram badge. */
+  backendKind?: import('@trove/shared').Backend['kind'];
 }
 
-/** macOS-native pill-shaped node. Single hairline border + subtle
- *  surface fill so the chart reads as part of the same visual language
- *  as the rest of the dashboard. */
 function FlowNode({
   cx,
   cy,
@@ -330,11 +748,26 @@ function FlowNode({
   hh,
   title,
   subtitle,
+  tertiary,
   highlight,
   muted,
+  harnessId,
+  backendKind,
 }: FlowNodeProps): JSX.Element {
   const x = cx - hw;
   const y = cy - hh;
+  const hasLogo = harnessId !== undefined || backendKind !== undefined;
+  const logoSize = hasLogo ? Math.min(hh * 1.4, 24) : 0;
+  const logoX = x + 6;
+  const logoY = cy - logoSize / 2;
+  const hasTertiary = Boolean(tertiary);
+  // With a logo: left-align the text starting just right of the logo.
+  // Without: keep the original centered layout (used by the Collector node).
+  const textX = hasLogo ? logoX + logoSize + 6 : cx;
+  const textAnchor: 'start' | 'middle' = hasLogo ? 'start' : 'middle';
+  const titleY = hasTertiary ? cy - 8 : cy - 2;
+  const subtitleY = hasTertiary ? cy + 4 : cy + 12;
+  const tertiaryY = cy + 14;
   return (
     <g>
       <rect
@@ -348,15 +781,24 @@ function FlowNode({
           muted
             ? 'fill-surface-elevated stroke-hairline dark:fill-surface-elevated-dark dark:stroke-hairline-dark'
             : highlight
-              ? 'fill-surface-elevated stroke-ios-blue/40 dark:fill-surface-elevated-dark'
+              ? 'fill-surface-elevated stroke-brand/40 dark:fill-surface-elevated-dark'
               : 'fill-surface-elevated stroke-hairline dark:fill-surface-elevated-dark dark:stroke-hairline-dark'
         }
         strokeWidth={highlight ? 1.5 : 1}
       />
+      {hasLogo ? (
+        <NodeLogoSvg
+          x={logoX}
+          y={logoY}
+          size={logoSize}
+          {...(harnessId ? { harnessId } : {})}
+          {...(backendKind ? { backendKind } : {})}
+        />
+      ) : null}
       <text
-        x={cx}
-        y={cy - 2}
-        textAnchor="middle"
+        x={textX}
+        y={titleY}
+        textAnchor={textAnchor}
         fontSize={12}
         fontWeight={600}
         className={
@@ -369,9 +811,9 @@ function FlowNode({
       </text>
       {subtitle ? (
         <text
-          x={cx}
-          y={cy + 12}
-          textAnchor="middle"
+          x={textX}
+          y={subtitleY}
+          textAnchor={textAnchor}
           fontSize={10}
           className={
             muted
@@ -382,42 +824,26 @@ function FlowNode({
           {subtitle}
         </text>
       ) : null}
+      {tertiary ? (
+        <text
+          x={textX}
+          y={tertiaryY}
+          textAnchor={textAnchor}
+          fontSize={9}
+          className="fill-fg-tertiary dark:fill-fg-tertiary-dark"
+        >
+          {tertiary}
+        </text>
+      ) : null}
     </g>
   );
 }
 
-/** Cubic-bezier path from Harnesses right-edge to Collector left-edge
- *  for `lane`. Slight vertical offset per signal type so the three
- *  lanes don't overlap visually. */
-function incomingPathD(lane: 'spans' | 'metrics' | 'logs'): string {
-  const startX = HARNESS_NODE.cx + HARNESS_NODE.hw;
-  const endX = COLLECTOR_NODE.cx - COLLECTOR_NODE.hw;
-  const startY = HARNESS_NODE.cy + LANE_Y_OFFSETS[lane];
-  const endY = COLLECTOR_NODE.cy + LANE_Y_OFFSETS[lane];
-  const c1x = startX + (endX - startX) * 0.45;
-  const c2x = startX + (endX - startX) * 0.55;
-  return `M ${startX} ${startY} C ${c1x} ${startY}, ${c2x} ${endY}, ${endX} ${endY}`;
-}
-
-/** Cubic-bezier from Collector right-edge to a Platforms sub-node
- *  centered at `platformCy`. Lane Y-offset is applied at both ends so
- *  the three lanes remain parallel through the fan-out. */
-function outgoingPathD(lane: 'spans' | 'metrics' | 'logs', platformCy: number): string {
-  const startX = COLLECTOR_NODE.cx + COLLECTOR_NODE.hw;
-  const endX = PLATFORM_COL_X - PLATFORM_NODE_HW;
-  const startY = COLLECTOR_NODE.cy + LANE_Y_OFFSETS[lane];
-  const endY = platformCy + LANE_Y_OFFSETS[lane];
+/** Cubic-bezier connector between two points on different columns.
+ *  Control points sit at the horizontal midpoint so the curve has a
+ *  natural S-shape regardless of vertical separation. */
+function connectorPath(startX: number, startY: number, endX: number, endY: number): string {
   const c1x = startX + (endX - startX) * 0.5;
   const c2x = startX + (endX - startX) * 0.5;
   return `M ${startX} ${startY} C ${c1x} ${startY}, ${c2x} ${endY}, ${endX} ${endY}`;
-}
-
-/** Distribute `count` platform sub-node centers vertically so the
- *  outermost rows fit inside the canvas with reasonable padding. */
-function computePlatformCenters(count: number): number[] {
-  const padding = 30;
-  const usable = VIEW_H - 2 * padding;
-  if (count === 1) return [VIEW_H / 2];
-  const step = usable / (count - 1);
-  return Array.from({ length: count }, (_, i) => padding + step * i);
 }

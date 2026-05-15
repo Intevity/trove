@@ -142,6 +142,7 @@ describe('Sprint 6 PR 1 — collector status surface', () => {
       scrapedMsAgo: 100,
       unreachable: false,
       overallHealth: 'green' as const,
+      diagObservations: {},
     };
     expect(GetMetricsSnapshotResponse.parse(snap)).toEqual(snap);
   });

@@ -64,7 +64,7 @@ export function HarnessSetupGuideModal({
             href={guide.docsUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="mr-auto inline-flex items-center gap-1 text-[12px] text-ios-blue hover:underline"
+            className="mr-auto inline-flex items-center gap-1 text-[12px] text-brand hover:underline"
           >
             <ExternalLink size={12} aria-hidden="true" />
             {guide.docsLabel}
@@ -101,7 +101,7 @@ export function HarnessSetupGuideModal({
             >
               <span
                 aria-hidden="true"
-                className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-ios-blue/15 text-[11px] font-semibold text-ios-blue"
+                className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand/15 text-[11px] font-semibold text-brand"
               >
                 {i + 1}
               </span>
@@ -162,7 +162,7 @@ function CopyRow({ label, value, index }: CopyRowProps): JSX.Element {
         type="button"
         onClick={() => void handleClick()}
         data-testid={`setup-guide-copy-${index}`}
-        className="rounded-[6px] border border-ios-blue/40 bg-surface px-2 py-1 text-[11px] font-medium text-ios-blue hover:bg-ios-blue/[0.10] dark:bg-surface-dark"
+        className="rounded-[6px] border border-brand/40 bg-surface px-2 py-1 text-[11px] font-medium text-brand hover:bg-brand/[0.10] dark:bg-surface-dark"
         aria-label={`Copy ${label}`}
       >
         {copied ? 'Copied' : 'Copy'}

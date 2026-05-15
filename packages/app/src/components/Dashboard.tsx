@@ -55,7 +55,6 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
   const state = status?.state ?? null;
   const metrics = snapshot ?? null;
   const health = deriveOverallHealth(state ?? { kind: 'idle' }, metrics, enabledHarnessCount);
-  const detail = badgeDetail(status, snapshot);
 
   const handleEnable = useCallback((id: HarnessId) => {
     setRevertError(null);
@@ -98,7 +97,7 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
 
   return (
     <div data-testid="dashboard" className="flex h-full flex-col bg-canvas dark:bg-canvas-dark">
-      <AppHeader health={health} detail={detail} activeTab={activeTab} onTabChange={setActiveTab} />
+      <AppHeader health={health} activeTab={activeTab} onTabChange={setActiveTab} />
 
       <main className="flex-1 min-h-0 overflow-auto">
         {activeTab === 'overview' && (
@@ -149,15 +148,4 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
       {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
     </div>
   );
-}
-
-function badgeDetail(
-  status: ReturnType<typeof useCollectorStatus>['status'],
-  snapshot: ReturnType<typeof useMetricsSnapshot>['snapshot'],
-): string | undefined {
-  if (!status) return undefined;
-  if (snapshot && snapshot.unreachable) return 'metrics endpoint unreachable';
-  if (status.state.kind === 'failed') return status.state.reason;
-  if (status.state.kind === 'crashed') return `${status.state.restarts} restart(s)`;
-  return undefined;
 }

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 
 import type { DetectedHarness, HarnessId } from '@trove/shared';
 
+import { HARNESS_LABELS, HarnessLogo } from '../lib/logos.js';
 import { HARNESS_SETUP_GUIDES, HarnessSetupGuideModal } from './HarnessSetupGuide.js';
 import {
   Button,
@@ -14,81 +15,6 @@ import {
   type DotStatus,
   type PillTone,
 } from './ui/index.js';
-
-const HARNESS_LABELS: Record<HarnessId, string> = {
-  'claude-code': 'Claude Code',
-  'claude-desktop': 'Claude Desktop',
-  'gemini-cli': 'Gemini CLI',
-  'codex-cli': 'OpenAI Codex CLI',
-  'qwen-code': 'Qwen Code',
-  opencode: 'OpenCode',
-  'cursor-ide': 'Cursor IDE',
-  'cursor-cli': 'Cursor CLI',
-  cline: 'Cline',
-  aider: 'Aider',
-  'copilot-cli': 'GitHub Copilot CLI',
-};
-
-/** Per-harness mark rendered as an inline SVG fallback to the left of
- *  each row. `bg` is the brand-aligned color of the rounded-square
- *  tile; `mark` is the 1–2 character monogram drawn in white at the
- *  centre. The SVG root carries no background, so the tile sits cleanly
- *  over either light or dark row backgrounds.
- *
- *  This fallback renders only when no real brand artwork is present in
- *  `packages/app/src/assets/harness-logos/<id>.svg`. To ship the real
- *  brand mark for a harness, drop a transparent-background SVG file at
- *  that path; Vite picks it up at build time via the `BRAND_LOGO_URLS`
- *  glob below and the component switches to `<img>` rendering. */
-interface HarnessLogoSpec {
-  bg: string;
-  mark: string;
-}
-const HARNESS_LOGOS: Record<HarnessId, HarnessLogoSpec> = {
-  'claude-code': { bg: '#CC785C', mark: 'C' },
-  'claude-desktop': { bg: '#CC785C', mark: 'CD' },
-  'gemini-cli': { bg: '#1A73E8', mark: 'G' },
-  'codex-cli': { bg: '#10A37F', mark: 'O' },
-  'qwen-code': { bg: '#FF6A00', mark: 'Q' },
-  opencode: { bg: '#0F766E', mark: '{}' },
-  'cursor-ide': { bg: '#0EA5E9', mark: 'C' },
-  'cursor-cli': { bg: '#0284C7', mark: 'C$' },
-  cline: { bg: '#EF4444', mark: 'CL' },
-  aider: { bg: '#A855F7', mark: 'A' },
-  'copilot-cli': { bg: '#24292E', mark: 'gh' },
-};
-
-const BRAND_LOGO_SOURCES = import.meta.glob<string>('../assets/harness-logos/*.svg', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-});
-
-interface ParsedBrandLogo {
-  viewBox: string;
-  inner: string;
-}
-
-const PARSED_BRAND_LOGOS: Map<string, ParsedBrandLogo | null> = new Map();
-for (const [path, raw] of Object.entries(BRAND_LOGO_SOURCES)) {
-  PARSED_BRAND_LOGOS.set(path, parseBrandLogo(raw));
-}
-
-function parseBrandLogo(raw: string): ParsedBrandLogo | null {
-  const open = raw.match(/<svg\b([^>]*)>/i);
-  const close = raw.lastIndexOf('</svg>');
-  if (!open || open.index === undefined || close === -1) return null;
-  const openAttrs = open[1] ?? '';
-  const viewBoxMatch = openAttrs.match(/viewBox\s*=\s*"([^"]+)"/i);
-  const viewBox = viewBoxMatch?.[1];
-  if (!viewBox) return null;
-  const inner = raw.slice(open.index + open[0].length, close).trim();
-  return { viewBox, inner };
-}
-
-function brandLogo(id: HarnessId): ParsedBrandLogo | undefined {
-  return PARSED_BRAND_LOGOS.get(`../assets/harness-logos/${id}.svg`) ?? undefined;
-}
 
 interface CoverageNote {
   text: string;
@@ -220,7 +146,7 @@ export function HarnessList({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter harnesses by name…"
             aria-label="Filter harnesses by name"
-            className="w-full rounded-[8px] border border-hairline bg-surface-elevated py-1.5 pl-8 pr-8 text-[12px] text-fg-primary placeholder:text-fg-tertiary focus:border-ios-blue focus:outline-none focus:ring-1 focus:ring-ios-blue dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark"
+            className="w-full rounded-[8px] border border-hairline bg-surface-elevated py-1.5 pl-8 pr-8 text-[12px] text-fg-primary placeholder:text-fg-tertiary focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-hairline-dark dark:bg-surface-elevated-dark dark:text-fg-primary-dark dark:placeholder:text-fg-tertiary-dark"
           />
           {hasQuery ? (
             <button
@@ -283,55 +209,6 @@ export function HarnessList({
         />
       ) : null}
     </Card>
-  );
-}
-
-function HarnessLogo({ id, dimmed }: { id: HarnessId; dimmed: boolean }): JSX.Element {
-  const className = `shrink-0 ${dimmed ? 'opacity-40 grayscale' : ''}`;
-  const brand = brandLogo(id);
-  if (brand) {
-    return (
-      <svg
-        width="32"
-        height="32"
-        viewBox={brand.viewBox}
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-label={`${HARNESS_LABELS[id]} logo`}
-        data-testid={`harness-logo-${id}`}
-        className={className}
-        dangerouslySetInnerHTML={{ __html: brand.inner }}
-      />
-    );
-  }
-
-  const { bg, mark } = HARNESS_LOGOS[id];
-  const fontSize = mark.length >= 2 ? 11 : 14;
-  return (
-    <svg
-      width="32"
-      height="32"
-      viewBox="0 0 32 32"
-      xmlns="http://www.w3.org/2000/svg"
-      role="img"
-      aria-label={`${HARNESS_LABELS[id]} logo`}
-      data-testid={`harness-logo-${id}`}
-      className={className}
-    >
-      <rect x="0" y="0" width="32" height="32" rx="8" fill={bg} />
-      <text
-        x="16"
-        y="17"
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontFamily="system-ui, -apple-system, sans-serif"
-        fontSize={fontSize}
-        fontWeight="700"
-        fill="#ffffff"
-      >
-        {mark}
-      </text>
-    </svg>
   );
 }
 

@@ -67,6 +67,13 @@ impl SignalCounts {
     }
 }
 
+/// Per-harness outgoing counters from the diag filter pipelines. One
+/// `SignalCounts` per harness suffix; populated only for harnesses with
+/// a `filter/diag-<suffix>` processor in the collector YAML (every
+/// enabled native-OTel emitter). The dashboard `FlowChart` subtracts
+/// successive snapshots to derive a per-harness rate per signal type.
+pub type DiagObservations = HashMap<String, SignalCounts>;
+
 /// One scrape's worth of state. Wrapped in `Option` by the watch
 /// publisher; the snapshot itself is always concrete.
 ///
@@ -78,15 +85,13 @@ impl SignalCounts {
 pub struct MetricsSnapshot {
     pub received: SignalCounts,
     pub sent: SignalCounts,
-    /// Per-diagnostic-filter log-record outgoing counters, keyed by the
-    /// filter processor's harness suffix (e.g. `"claude-desktop"`).
-    /// Populated only when the collector YAML includes a
-    /// `filter/diag-<suffix>` processor (currently only emitted for
-    /// adapterless native emitters). The detection IPC handler uses
-    /// these to flip a harness's `telemetry` pill from Unknown → On
-    /// once any record with the harness's `service.name` is observed.
+    /// Per-`filter/diag-<suffix>` outgoing counters, keyed by harness
+    /// suffix (e.g. `"gemini-cli"`). Each entry counts spans, metric
+    /// points, and log records the diag pipeline observed for that
+    /// harness. Populated only for native-OTel emitters (those with
+    /// non-empty `native_service_name_candidates`).
     #[serde(default)]
-    pub diag_log_records: HashMap<String, u64>,
+    pub diag_observations: DiagObservations,
     /// Local monotonic timestamp of the most recent scrape that saw a
     /// strict increase in `received`. `None` means "no traffic seen
     /// since the tap started".
@@ -108,7 +113,7 @@ impl Default for MetricsSnapshot {
         Self {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
-            diag_log_records: HashMap::new(),
+            diag_observations: HashMap::new(),
             last_signal_at: None,
             scraped_at: Instant::now(),
             unreachable: false,
@@ -239,7 +244,7 @@ async fn scrape_loop(
             ScrapeOutcome::Ok {
                 received,
                 sent,
-                diag_log_records,
+                diag_observations,
             } => {
                 let total_now = received.total();
                 if total_now > prev_received_total {
@@ -249,7 +254,7 @@ async fn scrape_loop(
                 sender.send_replace(Some(MetricsSnapshot {
                     received,
                     sent,
-                    diag_log_records,
+                    diag_observations,
                     last_signal_at,
                     scraped_at: now,
                     unreachable: false,
@@ -257,13 +262,13 @@ async fn scrape_loop(
             }
             ScrapeOutcome::Unreachable => {
                 let prev = sender.borrow().clone();
-                let (received, sent, diag_log_records) = prev
-                    .map(|s| (s.received, s.sent, s.diag_log_records))
+                let (received, sent, diag_observations) = prev
+                    .map(|s| (s.received, s.sent, s.diag_observations))
                     .unwrap_or_default();
                 sender.send_replace(Some(MetricsSnapshot {
                     received,
                     sent,
-                    diag_log_records,
+                    diag_observations,
                     last_signal_at,
                     scraped_at: now,
                     unreachable: true,
@@ -282,7 +287,7 @@ enum ScrapeOutcome {
     Ok {
         received: SignalCounts,
         sent: SignalCounts,
-        diag_log_records: HashMap<String, u64>,
+        diag_observations: DiagObservations,
     },
     Unreachable,
 }
@@ -307,20 +312,21 @@ async fn scrape_once(client: &reqwest::Client, url: &str) -> ScrapeOutcome {
         }
     };
     let (received, sent) = parse_signal_counts(&body);
-    let diag_log_records = parse_diag_log_records(&body);
+    let diag_observations = parse_diag_observations(&body);
     ScrapeOutcome::Ok {
         received,
         sent,
-        diag_log_records,
+        diag_observations,
     }
 }
 
-/// Extract per-`filter/diag-<suffix>` log-record outgoing counts from the
+/// Extract per-`filter/diag-<suffix>` outgoing counts from the
 /// Prometheus exposition body. Returns a map keyed by the suffix
-/// (e.g. `"claude-desktop"`). Empty when no diag pipeline is configured.
+/// (e.g. `"gemini-cli"`) holding per-signal-type counts. Empty when
+/// no diag pipeline is configured.
 #[must_use]
-pub fn parse_diag_log_records(body: &str) -> HashMap<String, u64> {
-    let mut out: HashMap<String, u64> = HashMap::new();
+pub fn parse_diag_observations(body: &str) -> DiagObservations {
+    let mut out: DiagObservations = HashMap::new();
     for raw in body.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -334,8 +340,8 @@ pub fn parse_diag_log_records(body: &str) -> HashMap<String, u64> {
             continue;
         }
         // Pull the `processor` and `otel_signal` labels out of the raw
-        // line. Only count rows where signal=logs and processor starts
-        // with "filter/diag-".
+        // line. Count rows whose processor starts with "filter/diag-",
+        // routing the value into the matching SignalCounts field.
         let Some(brace_open) = raw.find('{') else { continue };
         let Some(brace_close_rel) = raw[brace_open..].find('}') else { continue };
         let labels = &raw[brace_open + 1..brace_open + brace_close_rel];
@@ -349,16 +355,20 @@ pub fn parse_diag_log_records(body: &str) -> HashMap<String, u64> {
                 signal_label = rest.strip_suffix('"');
             }
         }
-        if signal_label != Some("logs") {
-            continue;
-        }
         let Some(processor) = processor_label else { continue };
         let Some(suffix) = processor.strip_prefix("filter/diag-") else {
             continue;
         };
+        let Some(signal) = signal_label else { continue };
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let count = if value < 0.0 { 0u64 } else { value.floor() as u64 };
-        *out.entry(suffix.to_string()).or_insert(0) += count;
+        let entry = out.entry(suffix.to_string()).or_default();
+        match signal {
+            "traces" => entry.spans = entry.spans.saturating_add(count),
+            "metrics" => entry.metric_points = entry.metric_points.saturating_add(count),
+            "logs" => entry.log_records = entry.log_records.saturating_add(count),
+            _ => {}
+        }
     }
     out
 }
@@ -591,7 +601,7 @@ otelcol_receiver_accepted_spans 1\n\
                 log_records: 3,
             },
             sent: SignalCounts::default(),
-            diag_log_records: HashMap::new(),
+            diag_observations: HashMap::new(),
             last_signal_at: None,
             scraped_at: Instant::now(),
             unreachable: false,
@@ -603,28 +613,36 @@ otelcol_receiver_accepted_spans 1\n\
         assert!(!json.contains("scraped_at"));
         assert!(json.contains("\"received\""));
         assert!(json.contains("\"unreachable\":false"));
-        assert!(json.contains("\"diag_log_records\""));
+        assert!(json.contains("\"diag_observations\""));
     }
 
     #[test]
-    fn parses_diag_filter_outgoing_log_counter() {
-        // Sums otelcol_processor_outgoing_items_total{processor=filter/diag-*, otel_signal=logs}
-        // by harness suffix; ignores other signal types and other processors.
+    fn parses_diag_filter_outgoing_per_signal_counters() {
+        // Sums otelcol_processor_outgoing_items_total{processor=filter/diag-*}
+        // by (harness suffix, signal), routing each `otel_signal` value into
+        // the matching SignalCounts field. Ignores non-diag processors.
         let body = "\
 otelcol_processor_outgoing_items_total{otel_signal=\"logs\",processor=\"filter/diag-claude-desktop\"} 4\n\
 otelcol_processor_outgoing_items_total{otel_signal=\"metrics\",processor=\"filter/diag-claude-desktop\"} 99\n\
+otelcol_processor_outgoing_items_total{otel_signal=\"traces\",processor=\"filter/diag-claude-desktop\"} 11\n\
 otelcol_processor_outgoing_items_total{otel_signal=\"logs\",processor=\"transform/harness-tag\"} 17\n\
 otelcol_processor_outgoing_items_total{otel_signal=\"logs\",processor=\"filter/diag-some-other\"} 2\n\
 ";
-        let map = parse_diag_log_records(body);
-        assert_eq!(map.get("claude-desktop"), Some(&4));
-        assert_eq!(map.get("some-other"), Some(&2));
+        let map = parse_diag_observations(body);
+        let cd = map.get("claude-desktop").expect("claude-desktop counts");
+        assert_eq!(cd.log_records, 4);
+        assert_eq!(cd.metric_points, 99);
+        assert_eq!(cd.spans, 11);
+        let some = map.get("some-other").expect("some-other counts");
+        assert_eq!(some.log_records, 2);
+        assert_eq!(some.metric_points, 0);
+        assert_eq!(some.spans, 0);
         assert_eq!(map.len(), 2);
     }
 
     #[test]
-    fn diag_log_records_empty_when_no_filter_pipeline_configured() {
+    fn diag_observations_empty_when_no_filter_pipeline_configured() {
         let body = "otelcol_receiver_accepted_spans 5\n";
-        assert!(parse_diag_log_records(body).is_empty());
+        assert!(parse_diag_observations(body).is_empty());
     }
 }

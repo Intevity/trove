@@ -1,3 +1,4 @@
+import { Zap } from 'lucide-react';
 import { useState } from 'react';
 
 import type {
@@ -57,15 +58,27 @@ export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
     <Card testid="sidecar-panel">
       <CardHeader>
         <CardTitle>Collector</CardTitle>
-        <span className="flex items-center gap-1.5">
-          <StatusDot status={dotForState(state)} size="sm" />
-          <span
-            data-testid="sidecar-state"
-            className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark"
-          >
-            {formatState(state)}
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5">
+            <StatusDot status={dotForState(state)} size="sm" />
+            <span
+              data-testid="sidecar-state"
+              className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark"
+            >
+              {formatState(state)}
+            </span>
           </span>
-        </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            testid="test-pipeline-button"
+            disabled={busy}
+            onClick={() => void handleTest()}
+          >
+            <Zap size={12} aria-hidden />
+            {busy ? 'Testing…' : 'Test Pipeline'}
+          </Button>
+        </div>
       </CardHeader>
 
       <div className="grid grid-cols-3 gap-2">
@@ -87,17 +100,8 @@ export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
         />
       </div>
 
-      <div className="mt-3 flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="primary"
-            size="md"
-            testid="test-pipeline-button"
-            disabled={busy}
-            onClick={() => void handleTest()}
-          >
-            {busy ? 'Testing…' : 'Test Pipeline'}
-          </Button>
+      {result || error ? (
+        <div className="mt-2 flex items-center gap-2">
           {result ? (
             <span
               data-testid="test-pipeline-result"
@@ -113,8 +117,12 @@ export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
             <span className="text-[12px] text-ios-red">Test failed: {error.cause.kind}</span>
           ) : null}
         </div>
-        {result?.status === 'ok' ? <SyntheticSpanHints backendKind={primaryBackendKind} /> : null}
-      </div>
+      ) : null}
+      {result?.status === 'ok' ? (
+        <div className="mt-2">
+          <SyntheticSpanHints backendKind={primaryBackendKind} />
+        </div>
+      ) : null}
     </Card>
   );
 }

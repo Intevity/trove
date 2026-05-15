@@ -195,20 +195,25 @@ function DiffPre({ before, after }: DiffPreProps): JSX.Element {
   const parts = diffLines(before, after);
   return (
     <pre className="max-h-[40vh] overflow-auto rounded-card border border-hairline bg-canvas p-3 text-[12px] leading-snug dark:border-hairline-dark dark:bg-canvas-dark">
-      {parts.map((part, idx) => (
-        <span
-          key={idx}
-          className={
-            part.added
-              ? 'block bg-ios-green/[0.18] text-ios-green'
-              : part.removed
-                ? 'block bg-ios-red/[0.18] text-ios-red'
-                : 'block text-fg-secondary dark:text-fg-secondary-dark'
-          }
-        >
-          {(part.added ? '+ ' : part.removed ? '- ' : '  ') + part.value.replace(/\n$/, '')}
-        </span>
-      ))}
+      {/* inline-block wrapper expands to the widest line so block-level
+          line highlights paint across the full scroll width, not just
+          the visible viewport. */}
+      <div className="inline-block min-w-full">
+        {parts.map((part, idx) => (
+          <span
+            key={idx}
+            className={
+              part.added
+                ? 'block bg-ios-green/[0.18] text-ios-green'
+                : part.removed
+                  ? 'block bg-ios-red/[0.18] text-ios-red'
+                  : 'block text-fg-secondary dark:text-fg-secondary-dark'
+            }
+          >
+            {(part.added ? '+ ' : part.removed ? '- ' : '  ') + part.value.replace(/\n$/, '')}
+          </span>
+        ))}
+      </div>
     </pre>
   );
 }

@@ -59,9 +59,9 @@ pub fn list_detected_harnesses(app: tauri::AppHandle) -> Result<Vec<DetectedHarn
     let mut observed: HashMap<HarnessId, u64> = metrics
         .latest()
         .map(|snap| {
-            snap.diag_log_records
+            snap.diag_observations
                 .iter()
-                .filter_map(|(k, v)| harness_id_from_suffix(k).map(|id| (id, *v)))
+                .filter_map(|(k, v)| harness_id_from_suffix(k).map(|id| (id, v.total())))
                 .collect()
         })
         .unwrap_or_default();
@@ -263,7 +263,12 @@ where
 /// enum but is no longer returned by this command.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
-pub fn apply_patch(
+// `async` so Tauri executes this on the tokio runtime: `spawn_tier3_watcher`
+// below calls `tokio::spawn` for tier-3 adapters (Claude Desktop, Cline,
+// Aider, Copilot CLI, Gemini CLI), which aborts the process if invoked
+// from a sync command's worker thread (no runtime context). Same fix
+// pattern as `respawn_persisted_watchers` in `lib.rs`.
+pub async fn apply_patch(
     app: tauri::AppHandle,
     harness_id: HarnessId,
     options: ApplyOptions,

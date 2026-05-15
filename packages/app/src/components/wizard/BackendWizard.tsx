@@ -14,8 +14,12 @@ type Step = 'pick-preset' | 'enter-creds' | 'test-export';
  *  the preset picker is skipped (kind is fixed) and the credentials
  *  form is pre-seeded from the instance's non-secret fields; the user
  *  still re-types every secret because the keychain values are never
- *  read back into JS. */
-export type WizardMode = { kind: 'add' } | { kind: 'edit'; instance: BackendInstance };
+ *  read back into JS. In add mode, an optional `presetKind` likewise
+ *  skips the picker — used when the Platforms list launches the wizard
+ *  for a specific row. */
+export type WizardMode =
+  | { kind: 'add'; presetKind?: Kind }
+  | { kind: 'edit'; instance: BackendInstance };
 
 export interface BackendWizardProps {
   /** Defaults to `{ kind: 'add' }` for the first-run wizard host. */
@@ -28,9 +32,10 @@ export function BackendWizard({
   onComplete,
 }: BackendWizardProps): JSX.Element {
   const isEdit = mode.kind === 'edit';
-  const initialKind: Kind | null = isEdit ? mode.instance.backend.kind : null;
+  const initialKind: Kind | null = isEdit ? mode.instance.backend.kind : (mode.presetKind ?? null);
+  const skipPicker = initialKind !== null;
 
-  const [step, setStep] = useState<Step>(isEdit ? 'enter-creds' : 'pick-preset');
+  const [step, setStep] = useState<Step>(skipPicker ? 'enter-creds' : 'pick-preset');
   const [kind, setKind] = useState<Kind | null>(initialKind);
   const [draft, setDraft] = useState<BackendDraft | null>(null);
   const [testResult, setTestResult] = useState<TestExportResult | null>(null);
@@ -51,8 +56,9 @@ export function BackendWizard({
   }, []);
 
   const handleBackToPicker = useCallback(() => {
-    // In edit mode there is no preset picker step; "Back" cancels.
-    if (isEdit) {
+    // In edit mode (or any flow that bypassed the picker) there's
+    // nowhere to step back to — cancel instead.
+    if (isEdit || skipPicker) {
       onComplete();
       return;
     }
@@ -61,7 +67,7 @@ export function BackendWizard({
     setDraft(null);
     setTestResult(null);
     setError(null);
-  }, [isEdit, onComplete]);
+  }, [isEdit, skipPicker, onComplete]);
 
   const handleBackToCreds = useCallback(() => {
     setStep('enter-creds');

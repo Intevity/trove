@@ -16,26 +16,40 @@ use std::sync::{Arc, OnceLock};
 const TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-icon.png");
 
 /// Tray-icon tint matching the Tailwind `health` palette in
-/// `packages/app/tailwind.config.js`. The mapping from
-/// `OverallHealth → TintColor` lives in `tray.rs::derive_tint_color`.
+/// `packages/app/tailwind.config.js`, plus the Trove `brand` token
+/// (teal) used in place of `Green` for the healthy tray state. The
+/// mapping from `OverallHealth → TintColor` lives in
+/// `tray.rs::derive_tint_color`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TintColor {
-    /// Healthy — collector running, recent telemetry observed.
+    /// Healthy — collector running, recent telemetry observed. Mirrors
+    /// the Tailwind `health.green` token; kept available for tests and
+    /// for future surfaces that want the system-green tint, but the
+    /// tray pipeline routes healthy → `Brand` (teal) instead.
+    #[allow(dead_code)]
     Green,
     /// Warning — running but transitional, no recent traffic, or
     /// metrics endpoint unreachable.
     Amber,
     /// Sidecar crashed, failed to spawn, or otherwise dead.
     Red,
+    /// Healthy — Trove brand teal; mirrors the `brand` Tailwind token.
+    /// Replaces `Green` for the live tray retint so the menu-bar icon
+    /// carries the product brand at rest while still flipping to amber
+    /// or red when something is wrong.
+    Brand,
 }
 
 impl TintColor {
-    /// `(R, G, B)` — matches `tailwind.config.js` `health.{green,amber,red}`.
+    /// `(R, G, B)` — `Green/Amber/Red` match `tailwind.config.js`
+    /// `health.{green,amber,red}`; `Brand` matches the Tailwind
+    /// `brand` token.
     fn rgb(self) -> (u8, u8, u8) {
         match self {
             TintColor::Green => (0x10, 0xB9, 0x81),
             TintColor::Amber => (0xF5, 0x9E, 0x0B),
             TintColor::Red => (0xEF, 0x44, 0x44),
+            TintColor::Brand => (0x2D, 0xBF, 0xB8),
         }
     }
 }
@@ -95,7 +109,12 @@ mod tests {
 
     #[test]
     fn each_tint_returns_buffer_with_expected_color() {
-        for color in [TintColor::Green, TintColor::Amber, TintColor::Red] {
+        for color in [
+            TintColor::Green,
+            TintColor::Amber,
+            TintColor::Red,
+            TintColor::Brand,
+        ] {
             let buf = tinted(color);
             assert_eq!(buf.bytes.len(), (buf.width * buf.height * 4) as usize);
             let (r, g, b) = color.rgb();
@@ -133,12 +152,15 @@ mod tests {
     }
 
     #[test]
-    fn rgb_values_match_tailwind_health_palette() {
-        // Lockstep with `packages/app/tailwind.config.js`. If those
-        // hex values change this test fails on purpose so the tray
-        // and the dashboard badge stay visually consistent.
+    fn rgb_values_match_tailwind_palette() {
+        // Lockstep with `packages/app/tailwind.config.js`. Green/Amber/
+        // Red mirror the `health.*` tokens; Brand mirrors the `brand`
+        // token used by the in-app rebrand surfaces. If any hex value
+        // changes this test fails on purpose so the tray and the
+        // dashboard surfaces stay visually consistent.
         assert_eq!(TintColor::Green.rgb(), (0x10, 0xB9, 0x81));
         assert_eq!(TintColor::Amber.rgb(), (0xF5, 0x9E, 0x0B));
         assert_eq!(TintColor::Red.rgb(), (0xEF, 0x44, 0x44));
+        assert_eq!(TintColor::Brand.rgb(), (0x2D, 0xBF, 0xB8));
     }
 }

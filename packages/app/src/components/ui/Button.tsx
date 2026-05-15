@@ -16,14 +16,14 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
 }
 
 const BASE =
-  'inline-flex items-center justify-center gap-1.5 rounded-[8px] font-medium tracking-tight transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ios-blue focus-visible:ring-offset-1 focus-visible:ring-offset-canvas dark:focus-visible:ring-offset-canvas-dark';
+  'inline-flex items-center justify-center gap-1.5 rounded-[8px] font-medium tracking-tight transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 focus-visible:ring-offset-canvas dark:focus-visible:ring-offset-canvas-dark';
 
 const VARIANT: Record<ButtonVariant, string> = {
-  primary: 'bg-ios-blue text-white hover:bg-ios-blue-hover',
+  primary: 'bg-brand text-white hover:bg-brand-hover',
   secondary:
     'bg-black/[0.04] text-fg-primary hover:bg-black/[0.08] dark:bg-white/[0.06] dark:text-fg-primary-dark dark:hover:bg-white/[0.10]',
   ghost:
-    'bg-transparent text-ios-blue hover:underline underline-offset-2 hover:bg-ios-blue/[0.06] dark:hover:bg-ios-blue/[0.12]',
+    'bg-transparent text-brand hover:underline underline-offset-2 hover:bg-brand/[0.06] dark:hover:bg-brand/[0.12]',
   destructive: 'bg-ios-red text-white hover:opacity-90',
 };
 
