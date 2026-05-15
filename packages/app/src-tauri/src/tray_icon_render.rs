@@ -26,6 +26,7 @@ pub enum TintColor {
     /// the Tailwind `health.green` token; kept available for tests and
     /// for future surfaces that want the system-green tint, but the
     /// tray pipeline routes healthy → `Brand` (teal) instead.
+    #[allow(dead_code)]
     Green,
     /// Warning — running but transitional, no recent traffic, or
     /// metrics endpoint unreachable.

@@ -588,7 +588,7 @@ pub fn apply_mapping_overlay(yaml: String, mappings: &MappingState) -> String {
 
 /// Harnesses we want diagnostic pipelines for. Originally just
 /// `ClaudeDesktop` (for the telemetry-pill overlay); now broadened to
-/// every native-OTel emitter so the dashboard FlowChart can derive
+/// every native-OTel emitter so the dashboard `FlowChart` can derive
 /// per-harness rates for spans, metrics, and logs. Watcher-emitter
 /// harnesses (Cline / Aider / Copilot / Cursor) are skipped — they
 /// have no native `service.name` candidates so the filter has nothing

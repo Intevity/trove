@@ -68,9 +68,9 @@ impl SignalCounts {
 }
 
 /// Per-harness outgoing counters from the diag filter pipelines. One
-/// SignalCounts per harness suffix; populated only for harnesses with
+/// `SignalCounts` per harness suffix; populated only for harnesses with
 /// a `filter/diag-<suffix>` processor in the collector YAML (every
-/// enabled native-OTel emitter). The dashboard FlowChart subtracts
+/// enabled native-OTel emitter). The dashboard `FlowChart` subtracts
 /// successive snapshots to derive a per-harness rate per signal type.
 pub type DiagObservations = HashMap<String, SignalCounts>;
 
