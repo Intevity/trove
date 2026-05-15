@@ -58,20 +58,6 @@ export const PRESETS: readonly PresetMetadata[] = [
     recommended: false,
   },
   {
-    kind: 'otlp-generic',
-    label: 'Generic OTLP',
-    description:
-      'Any backend that accepts OTLP. Provide an endpoint, choose gRPC or HTTP, and add as many auth headers as you need.',
-    recommended: false,
-  },
-  {
-    kind: 'otelcol-passthrough',
-    label: 'Local Collector (passthrough)',
-    description:
-      'For users already running their own OpenTelemetry Collector. Trove forwards harness telemetry to your endpoint without adding credentials.',
-    recommended: false,
-  },
-  {
     kind: 'new-relic',
     label: 'New Relic',
     description:
@@ -132,6 +118,22 @@ export const PRESETS: readonly PresetMetadata[] = [
     label: 'Sentry',
     description:
       'OTLP/HTTP to Sentry’s OTLP intake. Paste the full ingest URL and the `X-Sentry-Auth` header value from your project settings.',
+    recommended: false,
+  },
+  // Generic / escape-hatch entries appear after the named vendors so
+  // users see commercial destinations first.
+  {
+    kind: 'otlp-generic',
+    label: 'Generic OTLP',
+    description:
+      'Any backend that accepts OTLP. Provide an endpoint, choose gRPC or HTTP, and add as many auth headers as you need.',
+    recommended: false,
+  },
+  {
+    kind: 'otelcol-passthrough',
+    label: 'Local Collector (passthrough)',
+    description:
+      'For users already running their own OpenTelemetry Collector. Trove forwards harness telemetry to your endpoint without adding credentials.',
     recommended: false,
   },
 ];
