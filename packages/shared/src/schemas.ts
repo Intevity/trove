@@ -13,6 +13,11 @@ export const HarnessId = z.enum([
   'cline',
   'aider',
   'copilot-cli',
+  'junie-cli',
+  'droid',
+  'kimi-code-cli',
+  'devin',
+  'forgecode',
 ]);
 export type HarnessId = z.infer<typeof HarnessId>;
 
@@ -54,6 +59,55 @@ export const Backend = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('otelcol-passthrough'),
     endpoint: z.string().url(),
+  }),
+  z.object({
+    kind: z.literal('new-relic'),
+    /** 'us' or 'eu' — selects the OTLP intake host. */
+    region: z.string().min(1),
+    licenseKey: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('splunk-observability'),
+    realm: z.string().min(1),
+    accessToken: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('dynatrace'),
+    /** Base environment URL, e.g. https://abc12345.live.dynatrace.com */
+    environmentUrl: z.string().url(),
+    apiToken: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('elastic'),
+    endpoint: z.string().url(),
+    apiKey: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('opensearch'),
+    endpoint: z.string().url(),
+    /** Literal `Authorization` header value (e.g. `Basic <base64(user:pass)>`). */
+    authorization: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('openobserve'),
+    endpoint: z.string().url(),
+    organization: z.string().min(1),
+    authorization: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('clickstack'),
+    endpoint: z.string().url(),
+    ingestionKey: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('chronosphere'),
+    tenant: z.string().min(1),
+    apiToken: SecretRef,
+  }),
+  z.object({
+    kind: z.literal('sentry'),
+    endpoint: z.string().url(),
+    authHeader: SecretRef,
   }),
 ]);
 export type Backend = z.infer<typeof Backend>;
@@ -97,6 +151,52 @@ export const BackendDraft = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('otelcol-passthrough'),
     endpoint: z.string().url(),
+  }),
+  z.object({
+    kind: z.literal('new-relic'),
+    region: z.string().min(1),
+    licenseKey: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('splunk-observability'),
+    realm: z.string().min(1),
+    accessToken: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('dynatrace'),
+    environmentUrl: z.string().url(),
+    apiToken: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('elastic'),
+    endpoint: z.string().url(),
+    apiKey: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('opensearch'),
+    endpoint: z.string().url(),
+    authorization: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('openobserve'),
+    endpoint: z.string().url(),
+    organization: z.string().min(1),
+    authorization: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('clickstack'),
+    endpoint: z.string().url(),
+    ingestionKey: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('chronosphere'),
+    tenant: z.string().min(1),
+    apiToken: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('sentry'),
+    endpoint: z.string().url(),
+    authHeader: z.string().min(1),
   }),
 ]);
 export type BackendDraft = z.infer<typeof BackendDraft>;

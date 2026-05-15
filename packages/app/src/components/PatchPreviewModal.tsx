@@ -19,6 +19,11 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   cline: 'Cline',
   aider: 'Aider',
   'copilot-cli': 'GitHub Copilot CLI',
+  'junie-cli': 'Junie CLI',
+  droid: 'Droid',
+  'kimi-code-cli': 'Kimi Code CLI',
+  devin: 'Devin',
+  forgecode: 'ForgeCode',
 };
 
 export interface PatchPreviewModalProps {

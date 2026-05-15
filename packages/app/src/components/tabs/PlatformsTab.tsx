@@ -289,5 +289,47 @@ function BackendDetail({ backend }: { backend: Backend }): JSX.Element | null {
           {backend.protocol.toUpperCase()} · {backend.endpoint}
         </span>
       );
+    case 'new-relic':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · {backend.region.toUpperCase()}
+        </span>
+      );
+    case 'splunk-observability':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · realm {backend.realm}
+        </span>
+      );
+    case 'dynatrace':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · {backend.environmentUrl}
+        </span>
+      );
+    case 'elastic':
+    case 'opensearch':
+    case 'clickstack':
+    case 'sentry':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark"> · {backend.endpoint}</span>
+      );
+    case 'openobserve':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · {backend.endpoint} · org {backend.organization}
+        </span>
+      );
+    case 'chronosphere':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · tenant {backend.tenant}
+        </span>
+      );
   }
 }

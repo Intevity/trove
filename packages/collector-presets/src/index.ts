@@ -71,6 +71,69 @@ export const PRESETS: readonly PresetMetadata[] = [
       'For users already running their own OpenTelemetry Collector. Trove forwards harness telemetry to your endpoint without adding credentials.',
     recommended: false,
   },
+  {
+    kind: 'new-relic',
+    label: 'New Relic',
+    description:
+      'Forwards to New Relic’s OTLP/HTTP intake using your license key in an `api-key` header. Pick US or EU to select the regional cluster.',
+    recommended: false,
+  },
+  {
+    kind: 'splunk-observability',
+    label: 'Splunk Observability Cloud',
+    description:
+      'OTLP/HTTP to Splunk Observability Cloud. The realm (e.g. us1, eu0) shapes the ingest hostname; the access token authenticates via the `X-SF-Token` header.',
+    recommended: false,
+  },
+  {
+    kind: 'dynatrace',
+    label: 'Dynatrace',
+    description:
+      'OTLP/HTTP to a Dynatrace environment. Trove appends `/api/v2/otlp` to the environment URL and authenticates with `Authorization: Api-Token <token>`.',
+    recommended: false,
+  },
+  {
+    kind: 'elastic',
+    label: 'Elastic',
+    description:
+      'OTLP/HTTP to an Elastic APM Server endpoint. Authenticates via `Authorization: ApiKey <key>`. Works with Elastic Cloud and self-managed deployments.',
+    recommended: false,
+  },
+  {
+    kind: 'opensearch',
+    label: 'OpenSearch',
+    description:
+      'OTLP/HTTP to an OpenSearch ingest endpoint (typically Data Prepper). Authentication is whatever you paste into the Authorization header — usually a `Basic` token.',
+    recommended: false,
+  },
+  {
+    kind: 'openobserve',
+    label: 'OpenObserve',
+    description:
+      'OTLP/HTTP to OpenObserve. Trove appends `/api/<organization>` to your endpoint and forwards the Authorization header as-is (paste the `Basic` value from OpenObserve).',
+    recommended: false,
+  },
+  {
+    kind: 'clickstack',
+    label: 'ClickStack (HyperDX)',
+    description:
+      'OTLP/HTTP to ClickStack / HyperDX. The ingestion key goes into a single `authorization` header; the endpoint is whatever your deployment exposes (default: in-otel.hyperdx.io).',
+    recommended: false,
+  },
+  {
+    kind: 'chronosphere',
+    label: 'Chronosphere',
+    description:
+      'OTLP/HTTP to your Chronosphere tenant. Trove builds `https://<tenant>.chronosphere.io/data/v1/otlp` and authenticates with the `API-Token` header.',
+    recommended: false,
+  },
+  {
+    kind: 'sentry',
+    label: 'Sentry',
+    description:
+      'OTLP/HTTP to Sentry’s OTLP intake. Paste the full ingest URL and the `X-Sentry-Auth` header value from your project settings.',
+    recommended: false,
+  },
 ];
 
 /** Fast lookup by kind. */

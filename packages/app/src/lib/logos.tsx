@@ -17,6 +17,11 @@ export const HARNESS_LABELS: Record<HarnessId, string> = {
   cline: 'Cline',
   aider: 'Aider',
   'copilot-cli': 'GitHub Copilot CLI',
+  'junie-cli': 'Junie CLI',
+  droid: 'Droid',
+  'kimi-code-cli': 'Kimi Code CLI',
+  devin: 'Devin',
+  forgecode: 'ForgeCode',
 };
 
 export interface LogoFallback {
@@ -39,6 +44,12 @@ export const HARNESS_LOGOS: Record<HarnessId, LogoFallback> = {
   cline: { bg: '#EF4444', mark: 'CL' },
   aider: { bg: '#A855F7', mark: 'A' },
   'copilot-cli': { bg: '#24292E', mark: 'gh' },
+  // Detection-only harnesses — monogram tiles until brand SVGs ship.
+  'junie-cli': { bg: '#F97316', mark: 'J' },
+  droid: { bg: '#7C3AED', mark: 'Dr' },
+  'kimi-code-cli': { bg: '#1F2937', mark: 'K' },
+  devin: { bg: '#0891B2', mark: 'Dv' },
+  forgecode: { bg: '#B45309', mark: 'Fg' },
 };
 
 export type BackendKind = Backend['kind'];
@@ -50,6 +61,15 @@ export const BACKEND_LABELS: Record<BackendKind, string> = {
   datadog: 'Datadog',
   'otlp-generic': 'Generic OTLP',
   'otelcol-passthrough': 'Local Collector',
+  'new-relic': 'New Relic',
+  'splunk-observability': 'Splunk',
+  dynatrace: 'Dynatrace',
+  elastic: 'Elastic',
+  opensearch: 'OpenSearch',
+  openobserve: 'OpenObserve',
+  clickstack: 'ClickStack',
+  chronosphere: 'Chronosphere',
+  sentry: 'Sentry',
 };
 
 export const BACKEND_LOGOS: Record<BackendKind, LogoFallback> = {
@@ -59,6 +79,15 @@ export const BACKEND_LOGOS: Record<BackendKind, LogoFallback> = {
   datadog: { bg: '#632CA6', mark: 'D' },
   'otlp-generic': { bg: '#425CC7', mark: 'O' },
   'otelcol-passthrough': { bg: '#F2A33A', mark: 'OC' },
+  'new-relic': { bg: '#1CE783', mark: 'NR' },
+  'splunk-observability': { bg: '#FF375F', mark: 'Sp' },
+  dynatrace: { bg: '#1496FF', mark: 'Dt' },
+  elastic: { bg: '#00BFB3', mark: 'El' },
+  opensearch: { bg: '#005EB8', mark: 'Os' },
+  openobserve: { bg: '#FFC107', mark: 'Oo' },
+  clickstack: { bg: '#FAFF69', mark: 'Cs' },
+  chronosphere: { bg: '#2D5BFF', mark: 'Cr' },
+  sentry: { bg: '#362D59', mark: 'Sn' },
 };
 
 interface ParsedBrandSvg {

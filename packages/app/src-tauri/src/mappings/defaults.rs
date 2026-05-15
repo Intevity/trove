@@ -46,6 +46,15 @@ pub fn default_state() -> MappingState {
             defaults_for(HarnessId::Cline),
             defaults_for(HarnessId::Aider),
             defaults_for(HarnessId::CopilotCli),
+            // Detection-only harnesses ship empty mapping rows so the
+            // codegen overlay leaves them out entirely. They surface in
+            // the dashboard via detection but emit no telemetry until a
+            // future adapter lands.
+            defaults_for(HarnessId::JunieCli),
+            defaults_for(HarnessId::Droid),
+            defaults_for(HarnessId::KimiCodeCli),
+            defaults_for(HarnessId::Devin),
+            defaults_for(HarnessId::Forgecode),
         ],
     }
 }
@@ -78,6 +87,25 @@ pub fn defaults_for(id: HarnessId) -> HarnessMapping {
         HarnessId::Cline => cline_defaults(),
         HarnessId::Aider => aider_defaults(),
         HarnessId::CopilotCli => copilot_cli_defaults(),
+        // Detection-only harnesses: empty source list. The dashboard
+        // shows the row, but no codegen overlay or watcher attaches.
+        HarnessId::JunieCli
+        | HarnessId::Droid
+        | HarnessId::KimiCodeCli
+        | HarnessId::Devin
+        | HarnessId::Forgecode => detection_only_defaults(id),
+    }
+}
+
+/// Empty mapping for a detection-only harness. No sources → codegen's
+/// `apply_mapping_overlay` skips emitting any per-harness processor and
+/// no watcher is attached.
+fn detection_only_defaults(id: HarnessId) -> HarnessMapping {
+    HarnessMapping {
+        harness_id: id,
+        enabled: true,
+        sources: Vec::new(),
+        cost_overrides: BTreeMap::new(),
     }
 }
 
@@ -718,6 +746,11 @@ mod tests {
                 HarnessId::Cline,
                 HarnessId::Aider,
                 HarnessId::CopilotCli,
+                HarnessId::JunieCli,
+                HarnessId::Droid,
+                HarnessId::KimiCodeCli,
+                HarnessId::Devin,
+                HarnessId::Forgecode,
             ]
         );
     }

@@ -312,6 +312,165 @@ fn render_exporter_block(
             );
             (name, block)
         }
+        Backend::NewRelic {
+            region,
+            license_key,
+        } => {
+            let endpoint_var = format!("TROVE_NEW_RELIC_ENDPOINT_{env_suffix_upper}");
+            let key_var = format!("TROVE_NEW_RELIC_LICENSE_KEY_{env_suffix_upper}");
+            // New Relic's OTLP intake is region-keyed. 'eu' lands at the
+            // Frankfurt cluster; everything else maps to the US cluster.
+            let host = match region.as_str() {
+                "eu" => "https://otlp.eu01.nr-data.net:4318",
+                _ => "https://otlp.nr-data.net:4318",
+            };
+            env.insert(endpoint_var.clone(), Zeroizing::new(host.to_string()));
+            env.insert(key_var.clone(), resolver(&license_key.account)?);
+            let name = format!("otlphttp/new-relic-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      api-key: ${{env:{key_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::SplunkObservability {
+            realm,
+            access_token,
+        } => {
+            let endpoint_var = format!("TROVE_SPLUNK_ENDPOINT_{env_suffix_upper}");
+            let token_var = format!("TROVE_SPLUNK_ACCESS_TOKEN_{env_suffix_upper}");
+            env.insert(
+                endpoint_var.clone(),
+                Zeroizing::new(format!("https://ingest.{realm}.signalfx.com")),
+            );
+            env.insert(token_var.clone(), resolver(&access_token.account)?);
+            let name = format!("otlphttp/splunk-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      X-SF-Token: ${{env:{token_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Dynatrace {
+            environment_url,
+            api_token,
+        } => {
+            let endpoint_var = format!("TROVE_DYNATRACE_ENDPOINT_{env_suffix_upper}");
+            let token_var = format!("TROVE_DYNATRACE_API_TOKEN_{env_suffix_upper}");
+            // Dynatrace OTLP intake lives under /api/v2/otlp on the
+            // environment URL. Strip a trailing slash so we don't emit
+            // a double-slash path the gateway rejects.
+            let base = environment_url.trim_end_matches('/');
+            env.insert(
+                endpoint_var.clone(),
+                Zeroizing::new(format!("{base}/api/v2/otlp")),
+            );
+            // Dynatrace expects `Authorization: Api-Token <token>` so we
+            // build the full header value at render time. The supervisor
+            // stores it as a single env var so the YAML never sees the
+            // raw token.
+            let token = resolver(&api_token.account)?;
+            env.insert(
+                token_var.clone(),
+                Zeroizing::new(format!("Api-Token {}", token.as_str())),
+            );
+            let name = format!("otlphttp/dynatrace-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      Authorization: ${{env:{token_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Elastic { endpoint, api_key } => {
+            let endpoint_var = format!("TROVE_ELASTIC_ENDPOINT_{env_suffix_upper}");
+            let key_var = format!("TROVE_ELASTIC_API_KEY_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            // Elastic APM Server expects `Authorization: ApiKey <key>`.
+            let key = resolver(&api_key.account)?;
+            env.insert(
+                key_var.clone(),
+                Zeroizing::new(format!("ApiKey {}", key.as_str())),
+            );
+            let name = format!("otlphttp/elastic-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      Authorization: ${{env:{key_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Opensearch {
+            endpoint,
+            authorization,
+        } => {
+            let endpoint_var = format!("TROVE_OPENSEARCH_ENDPOINT_{env_suffix_upper}");
+            let auth_var = format!("TROVE_OPENSEARCH_AUTH_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            env.insert(auth_var.clone(), resolver(&authorization.account)?);
+            let name = format!("otlphttp/opensearch-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      Authorization: ${{env:{auth_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Openobserve {
+            endpoint,
+            organization,
+            authorization,
+        } => {
+            let endpoint_var = format!("TROVE_OPENOBSERVE_ENDPOINT_{env_suffix_upper}");
+            let auth_var = format!("TROVE_OPENOBSERVE_AUTH_{env_suffix_upper}");
+            // OpenObserve scopes OTLP intake under /api/<org>; the user
+            // supplies the base URL and we append the org segment here.
+            let base = endpoint.trim_end_matches('/');
+            env.insert(
+                endpoint_var.clone(),
+                Zeroizing::new(format!("{base}/api/{organization}")),
+            );
+            env.insert(auth_var.clone(), resolver(&authorization.account)?);
+            let name = format!("otlphttp/openobserve-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      Authorization: ${{env:{auth_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Clickstack {
+            endpoint,
+            ingestion_key,
+        } => {
+            let endpoint_var = format!("TROVE_CLICKSTACK_ENDPOINT_{env_suffix_upper}");
+            let key_var = format!("TROVE_CLICKSTACK_INGESTION_KEY_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            env.insert(key_var.clone(), resolver(&ingestion_key.account)?);
+            let name = format!("otlphttp/clickstack-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      authorization: ${{env:{key_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Chronosphere { tenant, api_token } => {
+            let endpoint_var = format!("TROVE_CHRONOSPHERE_ENDPOINT_{env_suffix_upper}");
+            let token_var = format!("TROVE_CHRONOSPHERE_API_TOKEN_{env_suffix_upper}");
+            env.insert(
+                endpoint_var.clone(),
+                Zeroizing::new(format!("https://{tenant}.chronosphere.io/data/v1/otlp")),
+            );
+            env.insert(token_var.clone(), resolver(&api_token.account)?);
+            let name = format!("otlphttp/chronosphere-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      API-Token: ${{env:{token_var}}}\n",
+            );
+            (name, block)
+        }
+        Backend::Sentry {
+            endpoint,
+            auth_header,
+        } => {
+            let endpoint_var = format!("TROVE_SENTRY_ENDPOINT_{env_suffix_upper}");
+            let auth_var = format!("TROVE_SENTRY_AUTH_{env_suffix_upper}");
+            env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
+            env.insert(auth_var.clone(), resolver(&auth_header.account)?);
+            let name = format!("otlphttp/sentry-{suffix_lower}");
+            let block = format!(
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    headers:\n      X-Sentry-Auth: ${{env:{auth_var}}}\n",
+            );
+            (name, block)
+        }
         Backend::OtelcolPassthrough { endpoint } => {
             let endpoint_var = format!("TROVE_PASSTHROUGH_ENDPOINT_{env_suffix_upper}");
             env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
@@ -461,6 +620,13 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         | HarnessId::Cline
         | HarnessId::Aider
         | HarnessId::CopilotCli => &[],
+        // Detection-only harnesses: no native OTEL emission, so no
+        // service.name candidates to tag.
+        HarnessId::JunieCli
+        | HarnessId::Droid
+        | HarnessId::KimiCodeCli
+        | HarnessId::Devin
+        | HarnessId::Forgecode => &[],
     }
 }
 
@@ -484,6 +650,13 @@ pub fn harness_id_suffix(id: HarnessId) -> &'static str {
         HarnessId::Cline => "cline",
         HarnessId::Aider => "aider",
         HarnessId::CopilotCli => "copilot-cli",
+        // Detection-only — suffix is informational; no mapping overlay
+        // emits processors keyed off these today.
+        HarnessId::JunieCli => "junie-cli",
+        HarnessId::Droid => "droid",
+        HarnessId::KimiCodeCli => "kimi-code-cli",
+        HarnessId::Devin => "devin",
+        HarnessId::Forgecode => "forgecode",
     }
 }
 

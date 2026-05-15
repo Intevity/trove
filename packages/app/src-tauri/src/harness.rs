@@ -23,6 +23,17 @@ pub enum HarnessId {
     Cline,
     Aider,
     CopilotCli,
+    /// JetBrains Junie CLI. Detection-only — no native OTEL today, so
+    /// `has_adapter()` returns false and the UI shows the row disabled.
+    JunieCli,
+    /// factory.ai Droid CLI. Detection-only.
+    Droid,
+    /// Moonshot AI Kimi Code CLI. Detection-only.
+    KimiCodeCli,
+    /// Cognition Devin CLI. Detection-only.
+    Devin,
+    /// ForgeCode CLI. Detection-only.
+    Forgecode,
 }
 
 impl HarnessId {
@@ -42,6 +53,11 @@ impl HarnessId {
             Self::Cline => "Cline",
             Self::Aider => "Aider",
             Self::CopilotCli => "GitHub Copilot CLI",
+            Self::JunieCli => "Junie CLI",
+            Self::Droid => "Droid",
+            Self::KimiCodeCli => "Kimi Code CLI",
+            Self::Devin => "Devin",
+            Self::Forgecode => "ForgeCode",
         }
     }
 
@@ -64,6 +80,14 @@ impl HarnessId {
             Self::Cline,
             Self::Aider,
             Self::CopilotCli,
+            // Detection-only harnesses: appear in the dashboard with the
+            // toggle disabled (has_adapter() returns false because they
+            // are in none of the tier_{1,2,3} arrays).
+            Self::JunieCli,
+            Self::Droid,
+            Self::KimiCodeCli,
+            Self::Devin,
+            Self::Forgecode,
         ]
     }
 
@@ -236,8 +260,26 @@ mod tests {
             HarnessId::Cline,
             HarnessId::Aider,
             HarnessId::CopilotCli,
+            HarnessId::JunieCli,
+            HarnessId::Droid,
+            HarnessId::KimiCodeCli,
+            HarnessId::Devin,
+            HarnessId::Forgecode,
         ] {
             assert!(!id.label().is_empty(), "empty label for {id:?}");
+        }
+    }
+
+    #[test]
+    fn detection_only_harnesses_have_no_adapter() {
+        for id in [
+            HarnessId::JunieCli,
+            HarnessId::Droid,
+            HarnessId::KimiCodeCli,
+            HarnessId::Devin,
+            HarnessId::Forgecode,
+        ] {
+            assert!(!id.has_adapter(), "{id:?} should be detection-only");
         }
     }
 }
