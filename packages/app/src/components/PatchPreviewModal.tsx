@@ -19,6 +19,11 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   cline: 'Cline',
   aider: 'Aider',
   'copilot-cli': 'GitHub Copilot CLI',
+  'junie-cli': 'Junie CLI',
+  droid: 'Droid',
+  'kimi-code-cli': 'Kimi Code CLI',
+  devin: 'Devin',
+  forgecode: 'ForgeCode',
 };
 
 export interface PatchPreviewModalProps {
@@ -77,7 +82,7 @@ export function PatchPreviewModal({
     }
   };
 
-  const title = `Apply Trove patch — ${HARNESS_LABELS[harnessId]}`;
+  const title = `Apply Trove patch; ${HARNESS_LABELS[harnessId]}`;
   const subtitle = preview ? preview.configPath : undefined;
 
   return (
@@ -160,7 +165,7 @@ function DiffView({ preview }: DiffViewProps): JSX.Element {
           <StatusDot status="amber" size="md" pulse={false} className="mt-1" />
           <p>
             A managed Trove block already exists in this file but doesn&apos;t match the patch we
-            would write — it looks like the file was edited outside Trove. Click Apply to open the
+            would write; it looks like the file was edited outside Trove. Click Apply to open the
             3-way merge resolver and decide how to reconcile the changes.
           </p>
         </div>
@@ -248,7 +253,7 @@ function describeIpcError(err: TroveIpcError): string {
     case 'region-conflict':
       return `${cause.path} contains a Trove region that doesn't match this patch.`;
     case 'region-conflict-detected':
-      return `${cause.conflict.configPath}: 3-way conflict — choose Keep mine / Take Trove's / Merge manually.`;
+      return `${cause.conflict.configPath}: 3-way conflict; choose Keep mine / Take Trove's / Merge manually.`;
     case 'harness-not-detected':
       return `${cause.id} is not detected on this machine.`;
     case 'harness-not-implemented':

@@ -164,6 +164,28 @@ function nonSecretFieldsForEdit(instance: BackendInstance): Partial<BackendDraft
       };
     case 'otelcol-passthrough':
       return { kind: 'otelcol-passthrough', endpoint: instance.backend.endpoint };
+    case 'new-relic':
+      return { kind: 'new-relic', region: instance.backend.region };
+    case 'splunk-observability':
+      return { kind: 'splunk-observability', realm: instance.backend.realm };
+    case 'dynatrace':
+      return { kind: 'dynatrace', environmentUrl: instance.backend.environmentUrl };
+    case 'elastic':
+      return { kind: 'elastic', endpoint: instance.backend.endpoint };
+    case 'opensearch':
+      return { kind: 'opensearch', endpoint: instance.backend.endpoint };
+    case 'openobserve':
+      return {
+        kind: 'openobserve',
+        endpoint: instance.backend.endpoint,
+        organization: instance.backend.organization,
+      };
+    case 'clickstack':
+      return { kind: 'clickstack', endpoint: instance.backend.endpoint };
+    case 'chronosphere':
+      return { kind: 'chronosphere', tenant: instance.backend.tenant };
+    case 'sentry':
+      return { kind: 'sentry', endpoint: instance.backend.endpoint };
   }
 }
 

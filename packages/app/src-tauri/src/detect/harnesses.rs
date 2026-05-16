@@ -82,6 +82,12 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
         // config-dir signals instead and returns None here.
         HarnessId::Aider => Some("aider"),
         HarnessId::CopilotCli => Some("gh"),
+        // Detection-only harnesses: PATH binary is the primary signal.
+        HarnessId::JunieCli => Some("junie"),
+        HarnessId::Droid => Some("droid"),
+        HarnessId::KimiCodeCli => Some("kimi"),
+        HarnessId::Devin => Some("devin"),
+        HarnessId::Forgecode => Some("forge"),
         // Claude Desktop is a GUI Electron app; it ships no canonical
         // PATH binary. Detection is bundle-only (handled in
         // `app_bundle_path`).

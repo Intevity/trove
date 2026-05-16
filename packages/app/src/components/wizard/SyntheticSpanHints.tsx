@@ -4,6 +4,8 @@ import { presetMetadataFor } from '@trove/collector-presets';
 import type { BackendDraft } from '@trove/shared';
 import { SYNTHETIC_SERVICE_NAME, SYNTHETIC_SPAN_NAME, SYNTHETIC_TRACE_ID } from '@trove/shared';
 
+import { copyToClipboard } from '../../lib/clipboard.js';
+
 interface Props {
   backendKind?: BackendDraft['kind'] | undefined;
 }
@@ -80,16 +82,4 @@ function CopyButton({ value, testid }: { value: string; testid: string }): JSX.E
       {copied ? 'copied' : 'copy'}
     </button>
   );
-}
-
-async function copyToClipboard(value: string): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return true;
-    } catch {
-      // fall through to noop; clipboard can fail in non-secure contexts
-    }
-  }
-  return false;
 }

@@ -11,6 +11,15 @@ describe('PRESETS', () => {
       'datadog',
       'otlp-generic',
       'otelcol-passthrough',
+      'new-relic',
+      'splunk-observability',
+      'dynatrace',
+      'elastic',
+      'opensearch',
+      'openobserve',
+      'clickstack',
+      'chronosphere',
+      'sentry',
     ];
     expect(PRESETS.map((p) => p.kind).sort()).toEqual([...expected].sort());
   });

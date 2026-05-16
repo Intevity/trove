@@ -8,10 +8,25 @@ pre-commit:
       glob: '*.{js,jsx,ts,tsx}'
       run: pnpm eslint {staged_files}
 
+# Pre-push mirrors CI so failed pushes never reach GitHub Actions. Order
+# is fast-fail: prettier/eslint trip cheap, cargo test runs last. The
+# Rust commands only fire when a .rs or .toml file is in the push; pure
+# TS pushes skip them entirely. eslint --cache writes .eslintcache (in
+# .gitignore) so subsequent invocations are ~5x faster.
 pre-push:
   parallel: false
   commands:
+    format-check:
+      run: pnpm prettier --check .
+    lint:
+      run: pnpm exec eslint --cache --cache-location=.eslintcache .
     typecheck:
       run: pnpm typecheck
     test:
       run: pnpm test
+    clippy:
+      glob: '*.{rs,toml}'
+      run: cargo clippy --manifest-path packages/app/src-tauri/Cargo.toml --all-targets -- -D warnings
+    cargo-test:
+      glob: '*.{rs,toml}'
+      run: cargo test --manifest-path packages/app/src-tauri/Cargo.toml --workspace

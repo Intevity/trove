@@ -261,6 +261,60 @@ pub mod accounts {
             instance_id,
         )
     }
+
+    /// `backend.new-relic.license-key[.<id>]`.
+    #[must_use]
+    pub fn new_relic_license_key(instance_id: &str) -> String {
+        scope("backend.new-relic.license-key", instance_id)
+    }
+
+    /// `backend.splunk-observability.access-token[.<id>]`.
+    #[must_use]
+    pub fn splunk_observability_access_token(instance_id: &str) -> String {
+        scope("backend.splunk-observability.access-token", instance_id)
+    }
+
+    /// `backend.dynatrace.api-token[.<id>]`.
+    #[must_use]
+    pub fn dynatrace_api_token(instance_id: &str) -> String {
+        scope("backend.dynatrace.api-token", instance_id)
+    }
+
+    /// `backend.elastic.api-key[.<id>]`.
+    #[must_use]
+    pub fn elastic_api_key(instance_id: &str) -> String {
+        scope("backend.elastic.api-key", instance_id)
+    }
+
+    /// `backend.opensearch.authorization[.<id>]`.
+    #[must_use]
+    pub fn opensearch_authorization(instance_id: &str) -> String {
+        scope("backend.opensearch.authorization", instance_id)
+    }
+
+    /// `backend.openobserve.authorization[.<id>]`.
+    #[must_use]
+    pub fn openobserve_authorization(instance_id: &str) -> String {
+        scope("backend.openobserve.authorization", instance_id)
+    }
+
+    /// `backend.clickstack.ingestion-key[.<id>]`.
+    #[must_use]
+    pub fn clickstack_ingestion_key(instance_id: &str) -> String {
+        scope("backend.clickstack.ingestion-key", instance_id)
+    }
+
+    /// `backend.chronosphere.api-token[.<id>]`.
+    #[must_use]
+    pub fn chronosphere_api_token(instance_id: &str) -> String {
+        scope("backend.chronosphere.api-token", instance_id)
+    }
+
+    /// `backend.sentry.auth-header[.<id>]`.
+    #[must_use]
+    pub fn sentry_auth_header(instance_id: &str) -> String {
+        scope("backend.sentry.auth-header", instance_id)
+    }
 }
 
 #[cfg(test)]

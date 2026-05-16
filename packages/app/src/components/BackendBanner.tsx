@@ -45,6 +45,15 @@ function BackendDetail({ backend }: { backend: Backend }): JSX.Element | null {
     case 'grafana-cloud':
     case 'otlp-generic':
     case 'otelcol-passthrough':
+    case 'new-relic':
+    case 'splunk-observability':
+    case 'dynatrace':
+    case 'elastic':
+    case 'opensearch':
+    case 'openobserve':
+    case 'clickstack':
+    case 'chronosphere':
+    case 'sentry':
       return null;
   }
 }

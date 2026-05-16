@@ -75,13 +75,13 @@ export function ConflictResolver({
         <p>
           A managed Trove block in{' '}
           <code className="font-mono text-[11px]">{conflict.configPath}</code> was edited outside
-          Trove. Pick how to resolve — Trove will not silently overwrite your changes.
+          Trove. Pick how to resolve; Trove will not silently overwrite your changes.
         </p>
       </div>
 
       {mode === 'three-way' ? (
         <Pane
-          title="Original — what Trove last wrote"
+          title="Original; what Trove last wrote"
           payload={conflict.originalRegionPayload ?? ''}
           mutedTone
           testId="conflict-pane-original"
@@ -91,20 +91,20 @@ export function ConflictResolver({
           className="rounded-card border border-hairline bg-canvas px-3 py-2 text-[12px] text-fg-secondary dark:border-hairline-dark dark:bg-canvas-dark dark:text-fg-secondary-dark"
           data-testid="conflict-orphan-notice"
         >
-          No prior baseline is on file for this harness — Trove can&apos;t show what it last wrote.
+          No prior baseline is on file for this harness; Trove can&apos;t show what it last wrote.
           Compare your version against Trove&apos;s intended write below.
         </p>
       )}
 
       <DiffPane
-        title="Yours — what's in the file now"
+        title="Yours; what's in the file now"
         baseline={conflict.originalRegionPayload}
         payload={conflict.currentRegionPayload}
         testId="conflict-pane-yours"
       />
 
       <DiffPane
-        title="Trove's — what apply would write"
+        title="Trove's; what apply would write"
         baseline={conflict.originalRegionPayload}
         payload={conflict.theirsRegionPayload}
         testId="conflict-pane-theirs"
@@ -243,7 +243,7 @@ function SiblingPathsBanner({
         <StatusDot status="green" size="md" pulse={false} className="mt-1" />
         <p>
           Sibling files written next to your config. Open the host file in your editor and merge by
-          hand. Re-apply once you&apos;re done — Trove will hash the result and either accept it (no
+          hand. Re-apply once you&apos;re done; Trove will hash the result and either accept it (no
           conflict) or surface this resolver again.
         </p>
       </div>

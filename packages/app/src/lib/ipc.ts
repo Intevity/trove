@@ -5,6 +5,8 @@ import {
   ApplyPatchResponse,
   CheckForUpdatesResponse,
   ClearBackendResponse,
+  QuitAppResponse,
+  UninstallAppResponse,
   GetAppStateResponse,
   GetCollectorLogTailResponse,
   GetCollectorStatusResponse,
@@ -169,6 +171,20 @@ export async function removeBackend(id: string): Promise<void> {
  *  empties `state.backends`. Idempotent. */
 export async function clearBackend(): Promise<void> {
   await invokeIpc(IpcCommandName.ClearBackend, undefined, ClearBackendResponse);
+}
+
+/** Trigger a clean app exit. Mirrors the tray menu's "Quit Trove"
+ *  action so the collector supervisor's shutdown path still runs. */
+export async function quitApp(): Promise<void> {
+  await invokeIpc(IpcCommandName.QuitApp, undefined, QuitAppResponse);
+}
+
+/** Uninstall Trove from disk. When `removeData` is true the user's
+ *  config dir, data dir, log dir, and keychain residue are wiped
+ *  before the running app exits and a detached helper removes the
+ *  installed bundle. */
+export async function uninstallApp(removeData: boolean): Promise<void> {
+  await invokeIpc(IpcCommandName.UninstallApp, { removeData }, UninstallAppResponse);
 }
 
 /** Send a synthetic OTLP payload through the local collector and wait

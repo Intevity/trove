@@ -118,6 +118,55 @@ pub enum Backend {
     },
     #[serde(rename_all = "camelCase")]
     OtelcolPassthrough { endpoint: String },
+    #[serde(rename_all = "camelCase")]
+    NewRelic {
+        /// `"us"` or `"eu"` — selects the OTLP intake host.
+        region: String,
+        license_key: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    SplunkObservability {
+        realm: String,
+        access_token: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    Dynatrace {
+        environment_url: String,
+        api_token: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    Elastic {
+        endpoint: String,
+        api_key: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    Opensearch {
+        endpoint: String,
+        /// Literal `Authorization` header value the user supplied
+        /// (typically `Basic <base64(user:pass)>`).
+        authorization: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    Openobserve {
+        endpoint: String,
+        organization: String,
+        authorization: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    Clickstack {
+        endpoint: String,
+        ingestion_key: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    Chronosphere {
+        tenant: String,
+        api_token: SecretRef,
+    },
+    #[serde(rename_all = "camelCase")]
+    Sentry {
+        endpoint: String,
+        auth_header: SecretRef,
+    },
 }
 
 /// Wire-format draft of [`Backend`] with raw secret values inline.
@@ -151,6 +200,52 @@ pub enum BackendDraft {
     },
     #[serde(rename_all = "camelCase")]
     OtelcolPassthrough { endpoint: String },
+    #[serde(rename_all = "camelCase")]
+    NewRelic {
+        region: String,
+        license_key: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    SplunkObservability {
+        realm: String,
+        access_token: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Dynatrace {
+        environment_url: String,
+        api_token: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Elastic {
+        endpoint: String,
+        api_key: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Opensearch {
+        endpoint: String,
+        authorization: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Openobserve {
+        endpoint: String,
+        organization: String,
+        authorization: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Clickstack {
+        endpoint: String,
+        ingestion_key: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Chronosphere {
+        tenant: String,
+        api_token: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Sentry {
+        endpoint: String,
+        auth_header: String,
+    },
 }
 
 /// One configured forwarding destination. Multi-platform support wraps
@@ -571,6 +666,7 @@ pub struct DraftSecret {
 /// the same kind never collide on a single keychain entry. Pass the
 /// stable UUID of the [`BackendInstance`] that owns this draft.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn drain_secrets_from_draft(
     draft: BackendDraft,
     instance_id: &str,
@@ -648,6 +744,128 @@ pub fn drain_secrets_from_draft(
             }
         }
         BackendDraft::OtelcolPassthrough { endpoint } => Backend::OtelcolPassthrough { endpoint },
+        BackendDraft::NewRelic {
+            region,
+            license_key,
+        } => {
+            let account = accounts::new_relic_license_key(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(license_key),
+            });
+            Backend::NewRelic {
+                region,
+                license_key: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::SplunkObservability {
+            realm,
+            access_token,
+        } => {
+            let account = accounts::splunk_observability_access_token(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(access_token),
+            });
+            Backend::SplunkObservability {
+                realm,
+                access_token: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::Dynatrace {
+            environment_url,
+            api_token,
+        } => {
+            let account = accounts::dynatrace_api_token(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(api_token),
+            });
+            Backend::Dynatrace {
+                environment_url,
+                api_token: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::Elastic { endpoint, api_key } => {
+            let account = accounts::elastic_api_key(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(api_key),
+            });
+            Backend::Elastic {
+                endpoint,
+                api_key: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::Opensearch {
+            endpoint,
+            authorization,
+        } => {
+            let account = accounts::opensearch_authorization(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(authorization),
+            });
+            Backend::Opensearch {
+                endpoint,
+                authorization: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::Openobserve {
+            endpoint,
+            organization,
+            authorization,
+        } => {
+            let account = accounts::openobserve_authorization(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(authorization),
+            });
+            Backend::Openobserve {
+                endpoint,
+                organization,
+                authorization: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::Clickstack {
+            endpoint,
+            ingestion_key,
+        } => {
+            let account = accounts::clickstack_ingestion_key(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(ingestion_key),
+            });
+            Backend::Clickstack {
+                endpoint,
+                ingestion_key: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::Chronosphere { tenant, api_token } => {
+            let account = accounts::chronosphere_api_token(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(api_token),
+            });
+            Backend::Chronosphere {
+                tenant,
+                api_token: SecretRef::for_account(account),
+            }
+        }
+        BackendDraft::Sentry {
+            endpoint,
+            auth_header,
+        } => {
+            let account = accounts::sentry_auth_header(instance_id);
+            secrets.push(DraftSecret {
+                account: account.clone(),
+                value: zeroize::Zeroizing::new(auth_header),
+            });
+            Backend::Sentry {
+                endpoint,
+                auth_header: SecretRef::for_account(account),
+            }
+        }
     };
 
     (backend, secrets)
@@ -677,6 +895,7 @@ pub fn harness_config_from_apply(
 /// Used by `clear_backend` to wipe every entry the previous `save_backend`
 /// installed without re-deriving the names per variant.
 #[must_use]
+#[allow(clippy::match_same_arms)]
 pub fn backend_secret_accounts(backend: &Backend) -> Vec<String> {
     let mut out = Vec::new();
     match backend {
@@ -690,6 +909,15 @@ pub fn backend_secret_accounts(backend: &Backend) -> Vec<String> {
             }
         }
         Backend::OtelcolPassthrough { .. } => {}
+        Backend::NewRelic { license_key, .. } => out.push(license_key.account.clone()),
+        Backend::SplunkObservability { access_token, .. } => out.push(access_token.account.clone()),
+        Backend::Dynatrace { api_token, .. } => out.push(api_token.account.clone()),
+        Backend::Elastic { api_key, .. } => out.push(api_key.account.clone()),
+        Backend::Opensearch { authorization, .. } => out.push(authorization.account.clone()),
+        Backend::Openobserve { authorization, .. } => out.push(authorization.account.clone()),
+        Backend::Clickstack { ingestion_key, .. } => out.push(ingestion_key.account.clone()),
+        Backend::Chronosphere { api_token, .. } => out.push(api_token.account.clone()),
+        Backend::Sentry { auth_header, .. } => out.push(auth_header.account.clone()),
     }
     out
 }
@@ -1238,8 +1466,8 @@ mod tests {
         // mappings table.
         assert_eq!(
             state.mappings.harnesses.len(),
-            11,
-            "v5→v6 migration should populate per-harness defaults",
+            16,
+            "v5→v6 migration should populate per-harness defaults (11 mapped + 5 detection-only)",
         );
     }
 

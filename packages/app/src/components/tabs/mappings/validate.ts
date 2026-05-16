@@ -93,7 +93,7 @@ export function validateHarnessMapping(
                 ruleIndex,
                 field: 'emit',
                 severity: 'error',
-                message: `Another rule already fires on "${source.when}" emitting "${source.emit.metric}" — would double-count`,
+                message: `Another rule already fires on "${source.when}" emitting "${source.emit.metric}"; would double-count`,
               });
             }
             seenWhenMetric.add(key);
@@ -197,7 +197,7 @@ export function validateCatalog(catalog: TroveMetricDefinition[]): CatalogIssue[
         metricIndex: idx,
         field: 'id',
         severity: 'error',
-        message: `Duplicate id — also used at row ${prev + 1}`,
+        message: `Duplicate id; also used at row ${prev + 1}`,
       });
     } else {
       seenIds.set(m.id, idx);

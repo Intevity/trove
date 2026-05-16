@@ -1,11 +1,12 @@
 import type { LucideIcon } from 'lucide-react';
-import { Info, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Info, Power, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { AppState } from '@trove/shared';
 
 import troveLogo from '../../assets/trove-logo.svg';
 import { setAutoUpdateEnabled } from '../../lib/ipc.js';
+import { ApplicationActions } from '../Settings/ApplicationActions.js';
 import { AutoUpdate } from '../Settings/AutoUpdate.js';
 import { IdentityPanel } from '../Settings/IdentityPanel.js';
 import { Card } from '../ui/index.js';
@@ -17,7 +18,7 @@ interface Props {
 
 export function SettingsTab({ appState, onAppStateRefresh }: Props): JSX.Element {
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6 px-5 py-5">
+    <div className="flex flex-col gap-3 px-4 py-3">
       <header className="flex flex-col gap-1">
         <h1 className="text-[22px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
           Settings
@@ -49,6 +50,10 @@ export function SettingsTab({ appState, onAppStateRefresh }: Props): JSX.Element
 
       <SettingsSection icon={Info} label="About">
         <AboutCard />
+      </SettingsSection>
+
+      <SettingsSection icon={Power} label="Application">
+        <ApplicationActions />
       </SettingsSection>
     </div>
   );

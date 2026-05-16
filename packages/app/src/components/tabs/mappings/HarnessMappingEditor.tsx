@@ -152,7 +152,7 @@ export function HarnessMappingEditor({
         <div className="mt-3 flex items-center justify-between gap-2 border-t border-black/[0.06] pt-2 dark:border-white/[0.08]">
           <div className="text-[11px] text-fg-tertiary dark:text-fg-tertiary-dark">
             {blocked
-              ? `${issues.filter((i) => i.severity === 'error').length} error(s) — fix before applying`
+              ? `${issues.filter((i) => i.severity === 'error').length} error(s); fix before applying`
               : 'Draft ready to apply'}
           </div>
           <div className="flex items-center gap-2">
@@ -480,7 +480,7 @@ function RuleRow({
           className={`mt-1 text-[11px] ${
             summaryIssue.severity === 'error' ? 'text-ios-red' : 'text-amber-600'
           }`}
-          title={issues.length > 1 ? `${issues.length - 1} more — expand to see all` : undefined}
+          title={issues.length > 1 ? `${issues.length - 1} more; expand to see all` : undefined}
         >
           {summaryIssue.message}
           {issues.length > 1 ? (

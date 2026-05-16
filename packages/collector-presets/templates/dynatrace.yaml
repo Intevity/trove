@@ -1,0 +1,6 @@
+# trove-otelcol — dynatrace preset (reference / documentation).
+#
+# The production collector YAML for this preset is rendered inline by
+# packages/app/src-tauri/src/collector/codegen.rs::render_exporter_block,
+# not loaded from this file. This template exists only so contributors
+# can see the expected exporter shape at a glance.

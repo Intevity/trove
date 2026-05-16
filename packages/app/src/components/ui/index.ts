@@ -10,3 +10,4 @@ export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from '.
 export { Pill, type PillProps, type PillTone, type PillSize } from './Pill.js';
 export { Hairline, type HairlineProps } from './Hairline.js';
 export { Sheet, type SheetProps, type SheetSize } from './Sheet.js';
+export { Popover, type PopoverProps } from './Popover.js';

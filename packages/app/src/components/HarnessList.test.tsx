@@ -265,10 +265,10 @@ describe('HarnessList', () => {
     const toggle = screen.getByLabelText('toggle-cursor-ide') as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(toggle.textContent).toBe('Enable');
-    expect(screen.queryByTestId('harness-coverage-note-cursor-ide')).toBeNull();
+    expect(screen.queryByTestId('harness-badge-cursor-ide')).toBeNull();
   });
 
-  it('enables the cursor-cli toggle (Sprint 7 PR 1) and shows the partial-coverage advisory', () => {
+  it('enables the cursor-cli toggle and surfaces a Partial Coverage badge with the hooks-docs link in its popover', () => {
     render(
       <HarnessList
         harnesses={[
@@ -284,16 +284,17 @@ describe('HarnessList', () => {
     const toggle = screen.getByLabelText('toggle-cursor-cli') as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(toggle.textContent).toBe('Enable');
-    const advisory = screen.getByTestId('harness-coverage-note-cursor-cli') as HTMLAnchorElement;
-    expect(advisory.textContent).toBe('Partial event coverage');
-    // Sprint 7 PR 3: the advisory is a hyperlink to Cursor's hooks docs
-    // and carries a tooltip explaining the coverage gap.
-    expect(advisory.href).toBe('https://cursor.com/docs/hooks');
-    expect(advisory.title).toContain('beforeShellExecution');
-    expect(advisory.target).toBe('_blank');
+    const badge = screen.getByTestId('harness-badge-cursor-cli');
+    expect(badge.textContent).toContain('Partial Coverage');
+    // The popover content (description + docs link) is revealed on hover.
+    fireEvent.mouseEnter(badge);
+    const link = screen.getByRole('link') as HTMLAnchorElement;
+    expect(link.href).toBe('https://cursor.com/docs/hooks');
+    expect(link.target).toBe('_blank');
+    expect(badge.textContent).toMatch(/beforeShellExecution/);
   });
 
-  it('enables the opencode toggle (Sprint 7 PR 2) and shows no advisory note', () => {
+  it('enables the opencode toggle and renders no advisory badge', () => {
     render(
       <HarnessList
         harnesses={[
@@ -309,10 +310,10 @@ describe('HarnessList', () => {
     const toggle = screen.getByLabelText('toggle-opencode') as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(toggle.textContent).toBe('Enable');
-    expect(screen.queryByTestId('harness-coverage-note-opencode')).toBeNull();
+    expect(screen.queryByTestId('harness-badge-opencode')).toBeNull();
   });
 
-  it('does not surface a coverage advisory when opencode is undetected either', () => {
+  it('does not surface an advisory badge when opencode is undetected either', () => {
     render(
       <HarnessList
         harnesses={[
@@ -326,10 +327,10 @@ describe('HarnessList', () => {
         loading={false}
       />,
     );
-    expect(screen.queryByTestId('harness-coverage-note-opencode')).toBeNull();
+    expect(screen.queryByTestId('harness-badge-opencode')).toBeNull();
   });
 
-  it('shows a best-effort advisory on the cline row (Sprint 9 PR 1)', () => {
+  it('shows a Best Effort badge on the cline row with an OpenTelemetry-context popover', () => {
     render(
       <HarnessList
         harnesses={[
@@ -343,14 +344,16 @@ describe('HarnessList', () => {
         loading={false}
       />,
     );
-    const advisory = screen.getByTestId('harness-coverage-note-cline') as HTMLAnchorElement;
-    expect(advisory.textContent).toBe('Best-effort coverage');
-    expect(advisory.title).toContain('OpenTelemetry');
-    expect(advisory.href.startsWith('https://')).toBe(true);
-    expect(advisory.target).toBe('_blank');
+    const badge = screen.getByTestId('harness-badge-cline');
+    expect(badge.textContent).toContain('Best Effort');
+    fireEvent.mouseEnter(badge);
+    expect(badge.textContent).toMatch(/OpenTelemetry/);
+    const link = screen.getByRole('link') as HTMLAnchorElement;
+    expect(link.href.startsWith('https://')).toBe(true);
+    expect(link.target).toBe('_blank');
   });
 
-  it('shows a best-effort advisory on the aider row (Sprint 9 PR 1)', () => {
+  it('shows a Best Effort badge on the aider row mentioning the shell-rc wrapper', () => {
     render(
       <HarnessList
         harnesses={[
@@ -365,9 +368,10 @@ describe('HarnessList', () => {
         loading={false}
       />,
     );
-    const advisory = screen.getByTestId('harness-coverage-note-aider') as HTMLAnchorElement;
-    expect(advisory.textContent).toBe('Best-effort coverage');
-    expect(advisory.title).toContain('shell-rc');
+    const badge = screen.getByTestId('harness-badge-aider');
+    expect(badge.textContent).toContain('Best Effort');
+    fireEvent.mouseEnter(badge);
+    expect(badge.textContent).toMatch(/shell-rc/);
   });
 
   it('renders a Refresh button in the header when onRefresh is provided, hidden otherwise', () => {
@@ -402,7 +406,7 @@ describe('HarnessList', () => {
     expect(screen.getByTestId('harness-list-refresh')).toBeDefined();
   });
 
-  it('shows a best-effort advisory on the copilot-cli row that mentions the gh-copilot rename', () => {
+  it('shows a Best Effort badge on the copilot-cli row that mentions the gh-copilot rename', () => {
     render(
       <HarnessList
         harnesses={[
@@ -417,12 +421,13 @@ describe('HarnessList', () => {
         loading={false}
       />,
     );
-    const advisory = screen.getByTestId('harness-coverage-note-copilot-cli') as HTMLAnchorElement;
-    expect(advisory.textContent).toBe('Best-effort coverage');
-    expect(advisory.title).toContain('gh-copilot');
+    const badge = screen.getByTestId('harness-badge-copilot-cli');
+    expect(badge.textContent).toContain('Best Effort');
+    fireEvent.mouseEnter(badge);
+    expect(badge.textContent).toMatch(/gh-copilot/);
   });
 
-  it('renders an Enable toggle and the audit-log subtext for claude-desktop', () => {
+  it('renders an Enable toggle and an Auto-detected badge for claude-desktop', () => {
     render(
       <HarnessList
         harnesses={[
@@ -437,23 +442,23 @@ describe('HarnessList', () => {
         loading={false}
       />,
     );
-    // No setup button (the admin-managed affordance is gone) and no
-    // orange coverage note — Claude Desktop now uses the standard
-    // toggle button that every adapter-backed harness has.
+    // The legacy "setup" affordance is gone — every adapter-backed
+    // harness uses the standard toggle.
     expect(screen.queryByLabelText('setup-claude-desktop')).toBeNull();
-    expect(screen.queryByTestId('harness-coverage-note-claude-desktop')).toBeNull();
     const toggle = screen.getByLabelText('toggle-claude-desktop') as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(['Enable', 'Disable']).toContain(toggle.textContent);
-    // A short italic line under the pill still explains *how* Trove
-    // detects Claude Desktop (the audit log).
-    const hint = screen.getByTestId('harness-telemetry-hint-claude-desktop');
-    expect(hint.textContent).toMatch(/audit log/i);
+    // The audit-log explanation now sits inside the Auto-detected
+    // popover and reveals on hover.
+    const badge = screen.getByTestId('harness-badge-claude-desktop');
+    expect(badge.textContent).toContain('Auto-detected');
+    fireEvent.mouseEnter(badge);
+    expect(badge.textContent).toMatch(/audit log/i);
   });
 
-  it('does not render a telemetry-detection hint on harnesses without one', () => {
+  it('does not render a coverage badge on harnesses without one', () => {
     render(<HarnessList harnesses={[row({ id: 'claude-code' })]} loading={false} />);
-    expect(screen.queryByTestId('harness-telemetry-hint-claude-code')).toBeNull();
+    expect(screen.queryByTestId('harness-badge-claude-code')).toBeNull();
   });
 
   it('renders no button for an adapterless harness with no setup guide', () => {

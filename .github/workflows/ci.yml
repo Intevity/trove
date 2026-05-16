@@ -23,8 +23,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cost guard: classify which trees a PR touches so the macOS-only
+  # `sidecar-mac` job (10x runner-minute multiplier) runs only when the
+  # supervisor / collector / sidecar pipeline can actually be affected.
+  # Skipped entirely on draft PRs and on `push: main` (the latter has no
+  # diff base, and sidecar-mac is PR-only anyway).
+  changes:
+    name: detect affected paths
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    # dorny/paths-filter@v3 calls the GitHub listFiles API and also
+    # does git fetches as a fallback; the default GITHUB_TOKEN scope set
+    # is fully replaced by a job-level permissions block, so we have to
+    # grant both contents:read (for git operations / actions/checkout)
+    # and pull-requests:read (for the listFiles API).
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      sidecar: ${{ steps.filter.outputs.sidecar }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            sidecar:
+              - 'packages/app/src-tauri/**'
+              - 'resources/otelcol/**'
+              - 'scripts/build-collector.sh'
+              - 'scripts/bundle-sidecar.ts'
+              - 'packages/collector-presets/**'
+              - '.github/workflows/ci.yml'
+
   ci:
     name: lint / typecheck / test (ubuntu)
+    # Drafts: skip CI entirely. Re-trigger via `gh pr ready <n>` (or the
+    # "Ready for review" button). `push: main` always runs.
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -151,7 +188,7 @@ jobs:
 
   e2e:
     name: playwright e2e (ubuntu)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     needs: ci
@@ -217,8 +254,17 @@ jobs:
     # (signal handling, sidecar path resolution, kill_on_drop). PR-only
     # because it adds ~5–8 min and the Ubuntu lane already covers the
     # logic on Linux x86_64.
+    #
+    # Cost gate (May 2026): the macOS runner bills at 10x Linux. We now
+    # skip this job unless the PR actually touches the sidecar/collector
+    # surface — UI / shared / docs PRs cannot meaningfully change what
+    # this test exercises. The `changes` job above publishes the bit.
     name: sidecar integration (macos-14)
-    if: github.event_name == 'pull_request'
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      needs.changes.outputs.sidecar == 'true'
+    needs: changes
     runs-on: macos-14
     timeout-minutes: 20
     steps:

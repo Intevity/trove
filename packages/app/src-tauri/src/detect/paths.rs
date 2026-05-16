@@ -77,6 +77,15 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
         // `read_telemetry` / `read_trove_region_present` hooks use the
         // shell-rc patch state (overlayed by the IPC layer from
         // state.json).
+        // Detection-only harnesses with a canonical dotfile directory.
+        // Trove has no adapter for these, so config_search_paths only
+        // contributes the config-dir detection signal; the dashboard
+        // shows the row but keeps its toggle disabled.
+        HarnessId::JunieCli => paths.push(home.join(".junie")),
+        HarnessId::Droid => paths.push(home.join(".droid")),
+        HarnessId::KimiCodeCli => paths.push(home.join(".kimi")),
+        HarnessId::Devin => paths.push(home.join(".devin")),
+        HarnessId::Forgecode => paths.push(home.join(".forge")),
         HarnessId::ClaudeDesktop | HarnessId::Aider | HarnessId::CopilotCli => {}
     }
     paths

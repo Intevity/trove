@@ -89,15 +89,6 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
 
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
-      <header>
-        <h2 className="text-[15px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
-          Platforms
-        </h2>
-        <p className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
-          Every signal is forwarded to every configured destination.
-        </p>
-      </header>
-
       {error ? (
         <div
           data-testid="platforms-tab-error"
@@ -296,6 +287,48 @@ function BackendDetail({ backend }: { backend: Backend }): JSX.Element | null {
         <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
           {' · '}
           {backend.protocol.toUpperCase()} · {backend.endpoint}
+        </span>
+      );
+    case 'new-relic':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · {backend.region.toUpperCase()}
+        </span>
+      );
+    case 'splunk-observability':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · realm {backend.realm}
+        </span>
+      );
+    case 'dynatrace':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · {backend.environmentUrl}
+        </span>
+      );
+    case 'elastic':
+    case 'opensearch':
+    case 'clickstack':
+    case 'sentry':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark"> · {backend.endpoint}</span>
+      );
+    case 'openobserve':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · {backend.endpoint} · org {backend.organization}
+        </span>
+      );
+    case 'chronosphere':
+      return (
+        <span className="text-fg-tertiary dark:text-fg-tertiary-dark">
+          {' '}
+          · tenant {backend.tenant}
         </span>
       );
   }

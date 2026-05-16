@@ -225,6 +225,11 @@ mod tests {
             HarnessId::Cline,
             HarnessId::Aider,
             HarnessId::CopilotCli,
+            HarnessId::JunieCli,
+            HarnessId::Droid,
+            HarnessId::KimiCodeCli,
+            HarnessId::Devin,
+            HarnessId::Forgecode,
         ] {
             assert!(probe_harness(&detected(id)).is_none(), "harness {id:?} probe must be a stub for now");
         }

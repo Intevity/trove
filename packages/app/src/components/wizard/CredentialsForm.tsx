@@ -32,6 +32,24 @@ function emptyDraft(kind: Kind): BackendDraft {
       return { kind, endpoint: '', protocol: 'http', headers: {} };
     case 'otelcol-passthrough':
       return { kind, endpoint: '' };
+    case 'new-relic':
+      return { kind, region: 'us', licenseKey: '' };
+    case 'splunk-observability':
+      return { kind, realm: 'us1', accessToken: '' };
+    case 'dynatrace':
+      return { kind, environmentUrl: '', apiToken: '' };
+    case 'elastic':
+      return { kind, endpoint: '', apiKey: '' };
+    case 'opensearch':
+      return { kind, endpoint: '', authorization: '' };
+    case 'openobserve':
+      return { kind, endpoint: '', organization: '', authorization: '' };
+    case 'clickstack':
+      return { kind, endpoint: 'https://in-otel.hyperdx.io', ingestionKey: '' };
+    case 'chronosphere':
+      return { kind, tenant: '', apiToken: '' };
+    case 'sentry':
+      return { kind, endpoint: '', authHeader: '' };
   }
 }
 
@@ -81,6 +99,43 @@ function validate(draft: BackendDraft): string | null {
       return null;
     case 'otelcol-passthrough':
       if (!isUrl(draft.endpoint)) return 'Endpoint must be a valid URL';
+      return null;
+    case 'new-relic':
+      if (!['us', 'eu'].includes(draft.region)) return 'Region must be us or eu';
+      if (!draft.licenseKey.trim()) return 'License key is required';
+      return null;
+    case 'splunk-observability':
+      if (!draft.realm.trim()) return 'Realm is required (e.g. us1, eu0)';
+      if (!draft.accessToken.trim()) return 'Access token is required';
+      return null;
+    case 'dynatrace':
+      if (!isUrl(draft.environmentUrl)) return 'Environment URL must be a valid URL';
+      if (!draft.apiToken.trim()) return 'API token is required';
+      return null;
+    case 'elastic':
+      if (!isUrl(draft.endpoint)) return 'Endpoint must be a valid URL';
+      if (!draft.apiKey.trim()) return 'API key is required';
+      return null;
+    case 'opensearch':
+      if (!isUrl(draft.endpoint)) return 'Endpoint must be a valid URL';
+      if (!draft.authorization.trim()) return 'Authorization header is required';
+      return null;
+    case 'openobserve':
+      if (!isUrl(draft.endpoint)) return 'Endpoint must be a valid URL';
+      if (!draft.organization.trim()) return 'Organization is required';
+      if (!draft.authorization.trim()) return 'Authorization header is required';
+      return null;
+    case 'clickstack':
+      if (!isUrl(draft.endpoint)) return 'Endpoint must be a valid URL';
+      if (!draft.ingestionKey.trim()) return 'Ingestion key is required';
+      return null;
+    case 'chronosphere':
+      if (!draft.tenant.trim()) return 'Tenant is required';
+      if (!draft.apiToken.trim()) return 'API token is required';
+      return null;
+    case 'sentry':
+      if (!isUrl(draft.endpoint)) return 'Endpoint must be a valid URL';
+      if (!draft.authHeader.trim()) return 'X-Sentry-Auth header value is required';
       return null;
   }
 }
@@ -220,8 +275,8 @@ function renderFields(
             testId="grafana-cloud-auth"
             helper={
               <span>
-                Paste the &quot;Basic &lt;token&gt;&quot; value from your Grafana Cloud OTel
-                onboarding page.
+                Paste the &quot;Basic &lt;token&gt;&quot; value from your Grafana OTel onboarding
+                page.
               </span>
             }
           />
@@ -293,6 +348,224 @@ function renderFields(
           placeholder="http://127.0.0.1:4318"
           testId="otelcol-passthrough-endpoint"
         />
+      );
+    case 'new-relic':
+      return (
+        <>
+          <fieldset>
+            <legend className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
+              Region
+            </legend>
+            <div className="mt-2 flex gap-4">
+              {(['us', 'eu'] as const).map((r) => (
+                <label
+                  key={r}
+                  className="flex items-center gap-2 text-[13px] text-fg-secondary dark:text-fg-secondary-dark"
+                >
+                  <input
+                    type="radio"
+                    name="new-relic-region"
+                    value={r}
+                    checked={draft.region === r}
+                    onChange={() => setDraft({ ...draft, region: r })}
+                    data-testid={`new-relic-region-${r}`}
+                  />
+                  {r.toUpperCase()}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <PasswordField
+            label="License key"
+            value={draft.licenseKey}
+            onChange={(v) => setDraft({ ...draft, licenseKey: v })}
+            testId="new-relic-license-key"
+            helper={<span>Sent as the `api-key` header to New Relic’s OTLP/HTTP intake.</span>}
+          />
+        </>
+      );
+    case 'splunk-observability':
+      return (
+        <>
+          <TextField
+            label="Realm"
+            value={draft.realm}
+            onChange={(v) => setDraft({ ...draft, realm: v })}
+            placeholder="us1"
+            testId="splunk-realm"
+            helper={
+              <span>
+                The lowercase realm name from your Splunk Observability subscription (e.g. `us1`,
+                `eu0`).
+              </span>
+            }
+          />
+          <PasswordField
+            label="Access token"
+            value={draft.accessToken}
+            onChange={(v) => setDraft({ ...draft, accessToken: v })}
+            testId="splunk-access-token"
+          />
+        </>
+      );
+    case 'dynatrace':
+      return (
+        <>
+          <TextField
+            label="Environment URL"
+            value={draft.environmentUrl}
+            onChange={(v) => setDraft({ ...draft, environmentUrl: v })}
+            placeholder="https://abc12345.live.dynatrace.com"
+            testId="dynatrace-environment-url"
+            helper={<span>Trove appends `/api/v2/otlp` automatically.</span>}
+          />
+          <PasswordField
+            label="API token"
+            value={draft.apiToken}
+            onChange={(v) => setDraft({ ...draft, apiToken: v })}
+            testId="dynatrace-api-token"
+            helper={
+              <span>
+                Sent as `Authorization: Api-Token &lt;token&gt;`. Token needs the OTLP ingest scopes
+                in Dynatrace.
+              </span>
+            }
+          />
+        </>
+      );
+    case 'elastic':
+      return (
+        <>
+          <TextField
+            label="Endpoint"
+            value={draft.endpoint}
+            onChange={(v) => setDraft({ ...draft, endpoint: v })}
+            placeholder="https://my-deployment.apm.region.elastic-cloud.com:443"
+            testId="elastic-endpoint"
+          />
+          <PasswordField
+            label="API key"
+            value={draft.apiKey}
+            onChange={(v) => setDraft({ ...draft, apiKey: v })}
+            testId="elastic-api-key"
+            helper={<span>Sent as `Authorization: ApiKey &lt;key&gt;`.</span>}
+          />
+        </>
+      );
+    case 'opensearch':
+      return (
+        <>
+          <TextField
+            label="Endpoint"
+            value={draft.endpoint}
+            onChange={(v) => setDraft({ ...draft, endpoint: v })}
+            placeholder="https://opensearch.example.com"
+            testId="opensearch-endpoint"
+          />
+          <PasswordField
+            label="Authorization header"
+            value={draft.authorization}
+            onChange={(v) => setDraft({ ...draft, authorization: v })}
+            testId="opensearch-authorization"
+            helper={
+              <span>
+                Whatever your OpenSearch ingest expects — typically `Basic
+                &lt;base64(user:pass)&gt;`.
+              </span>
+            }
+          />
+        </>
+      );
+    case 'openobserve':
+      return (
+        <>
+          <TextField
+            label="Endpoint"
+            value={draft.endpoint}
+            onChange={(v) => setDraft({ ...draft, endpoint: v })}
+            placeholder="https://api.openobserve.ai"
+            testId="openobserve-endpoint"
+          />
+          <TextField
+            label="Organization"
+            value={draft.organization}
+            onChange={(v) => setDraft({ ...draft, organization: v })}
+            placeholder="default"
+            testId="openobserve-organization"
+            helper={<span>Trove appends `/api/&lt;organization&gt;` to your endpoint.</span>}
+          />
+          <PasswordField
+            label="Authorization header"
+            value={draft.authorization}
+            onChange={(v) => setDraft({ ...draft, authorization: v })}
+            testId="openobserve-authorization"
+            helper={<span>Paste the `Basic …` value from your OpenObserve ingest token.</span>}
+          />
+        </>
+      );
+    case 'clickstack':
+      return (
+        <>
+          <TextField
+            label="Endpoint"
+            value={draft.endpoint}
+            onChange={(v) => setDraft({ ...draft, endpoint: v })}
+            placeholder="https://in-otel.hyperdx.io"
+            testId="clickstack-endpoint"
+          />
+          <PasswordField
+            label="Ingestion key"
+            value={draft.ingestionKey}
+            onChange={(v) => setDraft({ ...draft, ingestionKey: v })}
+            testId="clickstack-ingestion-key"
+            helper={<span>Sent as the `authorization` header.</span>}
+          />
+        </>
+      );
+    case 'chronosphere':
+      return (
+        <>
+          <TextField
+            label="Tenant"
+            value={draft.tenant}
+            onChange={(v) => setDraft({ ...draft, tenant: v })}
+            placeholder="acme"
+            testId="chronosphere-tenant"
+            helper={
+              <span>Trove builds `https://&lt;tenant&gt;.chronosphere.io/data/v1/otlp`.</span>
+            }
+          />
+          <PasswordField
+            label="API token"
+            value={draft.apiToken}
+            onChange={(v) => setDraft({ ...draft, apiToken: v })}
+            testId="chronosphere-api-token"
+            helper={<span>Sent as the `API-Token` header.</span>}
+          />
+        </>
+      );
+    case 'sentry':
+      return (
+        <>
+          <TextField
+            label="OTLP endpoint"
+            value={draft.endpoint}
+            onChange={(v) => setDraft({ ...draft, endpoint: v })}
+            placeholder="https://o<org>.ingest.sentry.io/api/<project>/otel/"
+            testId="sentry-endpoint"
+          />
+          <PasswordField
+            label="X-Sentry-Auth header"
+            value={draft.authHeader}
+            onChange={(v) => setDraft({ ...draft, authHeader: v })}
+            testId="sentry-auth-header"
+            helper={
+              <span>
+                The full `Sentry sentry_version=…,sentry_key=…,sentry_client=…` header value.
+              </span>
+            }
+          />
+        </>
       );
   }
 }

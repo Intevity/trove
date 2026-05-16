@@ -84,6 +84,18 @@ export type RemoveBackendResponse = z.infer<typeof RemoveBackendResponse>;
 export const ClearBackendResponse = z.null();
 export type ClearBackendResponse = z.infer<typeof ClearBackendResponse>;
 
+/** `quit_app` — no arguments. Triggers a clean exit (mirror of the
+ *  tray menu's Quit action). Returns nothing. */
+export const QuitAppResponse = z.null();
+export type QuitAppResponse = z.infer<typeof QuitAppResponse>;
+
+/** `uninstall_app` — args: { removeData: boolean }. When `removeData`
+ *  is true, deletes the user's data dirs and keychain residue before
+ *  scheduling a detached helper to remove the installed bundle once
+ *  the app exits. Returns nothing on success. */
+export const UninstallAppResponse = z.null();
+export type UninstallAppResponse = z.infer<typeof UninstallAppResponse>;
+
 /** `test_export` — no arguments. Sends a synthetic OTLP payload through
  *  the local collector and watches the collector log for an otelcol
  *  "successfully sent" line within ~5s. Returns the resolved status. */
@@ -216,6 +228,8 @@ export const IpcCommandName = {
   UpdateBackend: 'update_backend',
   RemoveBackend: 'remove_backend',
   ClearBackend: 'clear_backend',
+  QuitApp: 'quit_app',
+  UninstallApp: 'uninstall_app',
   TestExport: 'test_export',
   GetCollectorStatus: 'get_collector_status',
   GetMetricsSnapshot: 'get_metrics_snapshot',
