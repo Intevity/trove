@@ -33,6 +33,12 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-22.04
     timeout-minutes: 2
+    # dorny/paths-filter@v3 calls the GitHub listFiles API to classify
+    # which trees a PR touches; the default GITHUB_TOKEN denies it
+    # ("Resource not accessible by integration") unless we grant
+    # pull-requests:read explicitly here.
+    permissions:
+      pull-requests: read
     outputs:
       sidecar: ${{ steps.filter.outputs.sidecar }}
     steps:
