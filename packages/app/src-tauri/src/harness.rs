@@ -23,16 +23,16 @@ pub enum HarnessId {
     Cline,
     Aider,
     CopilotCli,
-    /// JetBrains Junie CLI. Detection-only — no native OTEL today, so
+    /// `JetBrains` Junie CLI. Detection-only — no native `OTEL` today, so
     /// `has_adapter()` returns false and the UI shows the row disabled.
     JunieCli,
-    /// factory.ai Droid CLI. Detection-only.
+    /// `factory.ai` Droid CLI. Detection-only.
     Droid,
     /// Moonshot AI Kimi Code CLI. Detection-only.
     KimiCodeCli,
     /// Cognition Devin CLI. Detection-only.
     Devin,
-    /// ForgeCode CLI. Detection-only.
+    /// `ForgeCode` CLI. Detection-only.
     Forgecode,
 }
 

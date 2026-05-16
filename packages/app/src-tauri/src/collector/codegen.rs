@@ -215,6 +215,7 @@ type ExporterBlock = (String, String, HashMap<String, Zeroizing<String>>);
 /// inserted under the top-level `exporters:` map (pre-indented), and
 /// `env_map` carries every `${env:...}` placeholder the block
 /// references.
+#[allow(clippy::too_many_lines)]
 fn render_exporter_block(
     backend: &Backend,
     suffix: &str,
@@ -614,15 +615,14 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // future renames don't silently drop `harness.id` assignment.
         HarnessId::ClaudeDesktop => &["claude-desktop", "claude-cowork"],
         // Hook/watcher harnesses tag `harness.id` themselves in their
-        // OTLP payload — no inference needed.
+        // OTLP payload, and detection-only harnesses have no native OTEL
+        // emission — neither contributes service.name candidates.
         HarnessId::CursorIde
         | HarnessId::CursorCli
         | HarnessId::Cline
         | HarnessId::Aider
-        | HarnessId::CopilotCli => &[],
-        // Detection-only harnesses: no native OTEL emission, so no
-        // service.name candidates to tag.
-        HarnessId::JunieCli
+        | HarnessId::CopilotCli
+        | HarnessId::JunieCli
         | HarnessId::Droid
         | HarnessId::KimiCodeCli
         | HarnessId::Devin

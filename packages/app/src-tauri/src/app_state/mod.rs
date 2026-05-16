@@ -666,6 +666,7 @@ pub struct DraftSecret {
 /// the same kind never collide on a single keychain entry. Pass the
 /// stable UUID of the [`BackendInstance`] that owns this draft.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn drain_secrets_from_draft(
     draft: BackendDraft,
     instance_id: &str,
@@ -894,6 +895,7 @@ pub fn harness_config_from_apply(
 /// Used by `clear_backend` to wipe every entry the previous `save_backend`
 /// installed without re-deriving the names per variant.
 #[must_use]
+#[allow(clippy::match_same_arms)]
 pub fn backend_secret_accounts(backend: &Backend) -> Vec<String> {
     let mut out = Vec::new();
     match backend {
