@@ -33,11 +33,13 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-22.04
     timeout-minutes: 2
-    # dorny/paths-filter@v3 calls the GitHub listFiles API to classify
-    # which trees a PR touches; the default GITHUB_TOKEN denies it
-    # ("Resource not accessible by integration") unless we grant
-    # pull-requests:read explicitly here.
+    # dorny/paths-filter@v3 calls the GitHub listFiles API and also
+    # does git fetches as a fallback; the default GITHUB_TOKEN scope set
+    # is fully replaced by a job-level permissions block, so we have to
+    # grant both contents:read (for git operations / actions/checkout)
+    # and pull-requests:read (for the listFiles API).
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       sidecar: ${{ steps.filter.outputs.sidecar }}
