@@ -1,117 +1,266 @@
-//! Cursor CLI adapter — same hook surface as `cursor_ide`. Both
-//! harnesses share a single managed region in `~/.cursor/hooks.json`,
-//! delegating to [`cursor_common`].
+//! Cursor CLI adapter — Tier 3 wrapper, distinct from `cursor_ide`.
 //!
-//! ## Partial event coverage
+//! ## Why a shell-function wrapper and not the hooks.json patch
 //!
-//! Cursor CLI (`cursor-agent`) supports a strict subset of the events
-//! Cursor IDE fires. As of this writing, only `beforeShellExecution`
-//! and `afterShellExecution` reliably reach hook scripts when invoked
-//! from the CLI. The MVP installs only those two events anyway, so the
-//! coverage gap is invisible at the wire level — but the UI surfaces
-//! a "partial event coverage" advisory on the cursor-cli row to manage
-//! user expectations. See [`HarnessList.tsx`] for that copy.
+//! Cursor's hook system (`beforeShellExecution`, `afterShellExecution`,
+//! `beforeSubmitPrompt`, `afterAgentResponse`) only fires inside the
+//! Cursor IDE. The headless CLI `cursor-agent` does not invoke
+//! `~/.cursor/hooks.json` on any of its commands, so enabling the
+//! cursor-cli harness via the shared hooks.json patch produced **zero**
+//! telemetry — verified during the v0.5 release pairing tests, see
+//! `documentation/harness-platform-matrix.md`.
+//!
+//! This adapter now follows the aider / copilot-cli pattern: Trove
+//! installs a managed block in the user's primary shell rc that defines
+//! a shell function named `cursor-agent` which execs the bundled
+//! `trove-cursor-agent` wrapper. The wrapper runs the real cursor-agent
+//! and appends one JSON-line per invocation to
+//! `~/.local/state/trove/cursor-agent.log`. A [`crate::log_watcher`]
+//! tail emits one OTLP `LogRecord` + one Tier A metric payload per
+//! line.
+//!
+//! Cursor IDE coverage is unaffected: [`super::cursor_ide`] still
+//! patches `~/.cursor/hooks.json` via [`super::cursor_common`]. Both
+//! harnesses can be enabled simultaneously without conflict — they
+//! patch different host files.
 
 use std::path::{Path, PathBuf};
 
+use serde_json::{Value, json};
+
 use crate::ipc::IpcError;
 
-use super::cursor_common;
+use super::wrapper_common::{self, WrapperSpec};
 use super::{ApplyOptions, PatchPreview, TrovePatch};
 
-/// Resolve the absolute path of `~/.cursor/hooks.json` under `home`.
+/// `cursor-agent` shell function name. The user invokes
+/// `cursor-agent <args>` exactly as before; the function defined in
+/// the user's shell rc transparently routes through the wrapper.
+pub const FUNCTION_NAME: &str = "cursor-agent";
+
+/// Subdirectory under the user's state dir where the wrapper writes
+/// its JSON-line log.
+pub const LOG_RELATIVE_PATH: &[&str] = &[".local", "state", "trove", "cursor-agent.log"];
+
+/// Resolve the absolute path of the wrapper's log file under `home`.
 #[must_use]
-pub fn config_path(home: &Path) -> PathBuf {
-    cursor_common::config_path(home)
+pub fn log_path(home: &Path) -> PathBuf {
+    let mut p = home.to_path_buf();
+    for seg in LOG_RELATIVE_PATH {
+        p.push(seg);
+    }
+    p
 }
 
-/// See [`cursor_common::preview`].
+/// Resolve the path of the host file Trove writes its managed block
+/// into. Returns the primary shell rc if one exists; otherwise a
+/// best-guess `~/.zshrc` path that the UI surfaces in the preview as
+/// the *intended* target.
+#[must_use]
+pub fn config_path(home: &Path) -> PathBuf {
+    wrapper_common::primary_shell_rc(home).unwrap_or_else(|| home.join(".zshrc"))
+}
+
+/// Build the [`WrapperSpec`] for an apply with `wrapper_path`.
+#[must_use]
+pub fn spec(wrapper_path: PathBuf) -> WrapperSpec {
+    WrapperSpec {
+        function_name: FUNCTION_NAME,
+        wrapper_path,
+        label: "trove::cursor-cli",
+    }
+}
+
 pub fn preview(
     home: &Path,
     opts: &ApplyOptions,
-    hook_script_path: &Path,
+    wrapper_path: &Path,
 ) -> Result<PatchPreview, IpcError> {
-    cursor_common::preview(home, opts, hook_script_path)
+    wrapper_common::preview_for_primary_shell_rc(home, &spec(wrapper_path.to_path_buf()), opts)
 }
 
-/// See [`cursor_common::apply`].
 pub fn apply(
     home: &Path,
     opts: &ApplyOptions,
-    hook_script_path: &Path,
+    wrapper_path: &Path,
 ) -> Result<TrovePatch, IpcError> {
-    cursor_common::apply(home, opts, hook_script_path)
+    wrapper_common::apply_to_primary_shell_rc(home, &spec(wrapper_path.to_path_buf()), opts)
 }
 
-/// See [`cursor_common::revert`].
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    cursor_common::revert(home)
+    wrapper_common::revert_primary_shell_rc(home)
+}
+
+/// Parse one JSON-line emitted by the bundled `trove-cursor-agent`
+/// wrapper into an OTLP/HTTP/JSON `LogRecord`-shaped payload. Returns
+/// `None` when the line isn't parseable or doesn't carry the expected
+/// `tool` field.
+#[must_use]
+pub fn parse_event_line(line: &str, opts: &ApplyOptions) -> Option<Value> {
+    let event: Value = serde_json::from_str(line.trim()).ok()?;
+    let tool = event.get("tool").and_then(Value::as_str)?;
+    if tool != "cursor-cli" {
+        return None;
+    }
+
+    let argc = event.get("argc").and_then(Value::as_i64).unwrap_or(0);
+    let exit = event.get("exit_code").and_then(Value::as_i64).unwrap_or(0);
+    let duration = event.get("duration_ms").and_then(Value::as_i64).unwrap_or(0);
+    let ts = event.get("ts").and_then(Value::as_str).unwrap_or("");
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+
+    let mut attributes = vec![
+        json!({"key": "trove.source", "value": {"stringValue": "cursor-cli"}}),
+        json!({"key": "cursor.argc", "value": {"intValue": argc.to_string()}}),
+        json!({"key": "cursor.exit_code", "value": {"intValue": exit.to_string()}}),
+        json!({"key": "cursor.duration_ms", "value": {"intValue": duration.to_string()}}),
+        json!({"key": "cursor.ts", "value": {"stringValue": ts}}),
+    ];
+    for (k, v) in &opts.custom_attributes {
+        attributes.push(json!({"key": k, "value": {"stringValue": v}}));
+    }
+
+    Some(json!({
+        "resourceLogs": [{
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": "cursor-cli"}},
+                    {"key": "harness.id", "value": {"stringValue": "cursor-cli"}},
+                    {"key": "harness.name", "value": {"stringValue": "Cursor CLI"}},
+                    {"key": "trove.source", "value": {"stringValue": "cursor-cli"}},
+                ]
+            },
+            "scopeLogs": [{
+                "scope": {"name": "trove.adapters.cursor_cli", "version": env!("CARGO_PKG_VERSION")},
+                "logRecords": [{
+                    "timeUnixNano": now_ns.to_string(),
+                    "severityNumber": 9,
+                    "severityText": "INFO",
+                    "body": {"stringValue": ""},
+                    "attributes": attributes,
+                }]
+            }]
+        }]
+    }))
+}
+
+/// Parse one wrapper line into a Tier A metric payload covering the
+/// invocation it represents. Same shape as the Aider / Copilot CLI
+/// variants — see [`crate::adapters::aider::parse_event_metric_payload`].
+/// Cursor CLI exposes no tokenizer or rate-table either, so token and
+/// cost metrics are intentionally absent.
+#[must_use]
+pub fn parse_event_metric_payload(
+    line: &str,
+    opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
+) -> Option<Value> {
+    super::wrapper_common_metrics::build_invocation_metrics(
+        line,
+        opts,
+        &super::wrapper_common_metrics::WrapperMetricsSpec {
+            expected_tool: "cursor-cli",
+            service_name: "cursor-cli",
+            harness: crate::harness::HarnessId::CursorCli,
+            harness_id: "cursor-cli",
+            harness_name: "Cursor CLI",
+            scope_name: "trove.adapters.cursor_cli",
+        },
+        mappings,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::tempdir;
+    use std::path::PathBuf;
 
-    fn fake_hook_path() -> PathBuf {
-        PathBuf::from("/opt/trove/resources/hooks/cursor-otel-hook.cjs")
+    #[test]
+    fn function_name_is_cursor_agent() {
+        assert_eq!(FUNCTION_NAME, "cursor-agent");
     }
 
     #[test]
-    fn config_path_matches_cursor_ide() {
-        // Both cursor harnesses must resolve to the same host file.
+    fn log_path_resolves_under_state_dir() {
         let home = PathBuf::from("/home/dev");
-        assert_eq!(config_path(&home), super::super::cursor_ide::config_path(&home));
+        let p = log_path(&home);
+        assert_eq!(p, PathBuf::from("/home/dev/.local/state/trove/cursor-agent.log"));
     }
 
     #[test]
-    fn apply_creates_a_valid_hooks_file() {
-        let home = tempdir().unwrap();
-        apply(home.path(), &ApplyOptions::default(), &fake_hook_path()).unwrap();
-
-        let written = fs::read_to_string(config_path(home.path())).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
-        assert_eq!(parsed["version"], 1);
-        assert!(parsed["hooks"]["beforeShellExecution"].is_array());
-        assert!(parsed.get("_trove").is_some());
+    fn parse_event_returns_none_for_unrelated_tool() {
+        let line = r#"{"tool":"aider","argc":1,"exit_code":0}"#;
+        assert!(parse_event_line(line, &ApplyOptions::default()).is_none());
+        let line = r#"{"tool":"copilot-cli","argc":1,"exit_code":0}"#;
+        assert!(parse_event_line(line, &ApplyOptions::default()).is_none());
     }
 
     #[test]
-    fn cli_apply_then_ide_apply_is_idempotent() {
-        // Inverse of cursor_ide's matching test — the CLI side first.
-        let home = tempdir().unwrap();
-        apply(home.path(), &ApplyOptions::default(), &fake_hook_path()).unwrap();
-        let after_cli = fs::read_to_string(config_path(home.path())).unwrap();
-
-        super::super::cursor_ide::apply(
-            home.path(),
-            &ApplyOptions::default(),
-            &fake_hook_path(),
-        )
-        .unwrap();
-        let after_ide = fs::read_to_string(config_path(home.path())).unwrap();
-
-        assert_eq!(after_cli, after_ide);
+    fn parse_event_returns_none_for_garbage() {
+        assert!(parse_event_line("not json", &ApplyOptions::default()).is_none());
+        assert!(parse_event_line("", &ApplyOptions::default()).is_none());
+        assert!(parse_event_line("{}", &ApplyOptions::default()).is_none());
     }
 
     #[test]
-    fn revert_via_cli_clears_block_written_by_ide() {
-        // The shared-region invariant: a revert via either harness must
-        // remove the block entirely. This catches the regression where
-        // the two harnesses might accidentally write distinct blocks.
-        let home = tempdir().unwrap();
-        super::super::cursor_ide::apply(
-            home.path(),
-            &ApplyOptions::default(),
-            &fake_hook_path(),
-        )
-        .unwrap();
+    fn parse_event_emits_canonical_otlp_shape_with_cursor_attributes() {
+        let line = r#"{"ts":"2026-05-18T18:00:00Z","tool":"cursor-cli","argc":3,"exit_code":0,"duration_ms":17}"#;
+        let payload = parse_event_line(line, &ApplyOptions::default()).unwrap();
+        let resource_attrs = payload["resourceLogs"][0]["resource"]["attributes"]
+            .as_array()
+            .unwrap();
+        let by_resource_key = |k: &str| {
+            resource_attrs
+                .iter()
+                .find(|a| a["key"] == k)
+                .map(|a| a["value"]["stringValue"].as_str().unwrap().to_string())
+                .unwrap()
+        };
+        assert_eq!(by_resource_key("service.name"), "cursor-cli");
+        assert_eq!(by_resource_key("harness.id"), "cursor-cli");
+        assert_eq!(by_resource_key("harness.name"), "Cursor CLI");
 
-        revert(home.path()).unwrap();
+        let log_attrs = payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        let by_key = |k: &str| {
+            log_attrs
+                .iter()
+                .find(|a| a["key"] == k)
+                .map(|a| {
+                    a["value"]["stringValue"]
+                        .as_str()
+                        .or_else(|| a["value"]["intValue"].as_str())
+                        .unwrap()
+                        .to_string()
+                })
+                .unwrap()
+        };
+        assert_eq!(by_key("trove.source"), "cursor-cli");
+        assert_eq!(by_key("cursor.argc"), "3");
+        assert_eq!(by_key("cursor.duration_ms"), "17");
+        assert_eq!(by_key("cursor.exit_code"), "0");
+    }
 
-        let written = fs::read_to_string(config_path(home.path())).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
-        assert!(parsed.get("_trove").is_none());
+    #[test]
+    fn parse_event_includes_custom_attributes() {
+        let line = r#"{"ts":"2026-05-18T18:00:00Z","tool":"cursor-cli","argc":1,"exit_code":0,"duration_ms":5}"#;
+        let opts = ApplyOptions {
+            custom_attributes: std::collections::BTreeMap::from([(
+                "team".to_string(),
+                "platform".to_string(),
+            )]),
+        };
+        let payload = parse_event_line(line, &opts).unwrap();
+        let attrs = payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"]
+            .as_array()
+            .unwrap();
+        assert!(
+            attrs.iter().any(|a| a["key"] == "team"
+                && a["value"]["stringValue"] == "platform"),
+            "expected custom attribute `team=platform`, got: {attrs:#?}",
+        );
     }
 }

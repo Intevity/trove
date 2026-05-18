@@ -228,28 +228,51 @@ fn cursor_ide_apply_then_revert_is_byte_identical() {
 }
 
 #[test]
-fn cursor_ide_and_cli_share_a_managed_region() {
-    // Sprint 7 PR 1 contract: enabling either cursor harness writes the
-    // same block; enabling the second is a no-op (idempotent) and
-    // reverting via either fully removes the block.
+fn cursor_ide_and_cli_patch_independent_host_files() {
+    // Pre-Sprint 9-rewrite contract was that both adapters shared a
+    // single managed region in ~/.cursor/hooks.json. After the
+    // cursor-cli wrapper rewrite they patch independent files —
+    // cursor-ide owns hooks.json, cursor-cli owns the shell rc — so
+    // the new contract is: enabling one leaves the other's host file
+    // untouched, and reverting one leaves the other's region intact.
     let home = tempdir().unwrap();
-    let path = cursor_ide::config_path(home.path());
+    let hooks_path = cursor_ide::config_path(home.path());
+    let zshrc = home.path().join(".zshrc");
+    fs::write(&zshrc, "# user content\n").unwrap();
 
+    // 1. Apply both adapters.
     cursor_ide::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
-    let after_ide = fs::read_to_string(&path).unwrap();
+    cursor_cli::apply(
+        home.path(),
+        &ApplyOptions::default(),
+        &PathBuf::from("/opt/trove/wrappers/trove-cursor-agent"),
+    )
+    .unwrap();
 
-    cursor_cli::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
-    let after_cli = fs::read_to_string(&path).unwrap();
-    assert_eq!(
-        after_ide, after_cli,
-        "cursor_cli::apply after cursor_ide::apply must be byte-identical (shared region)"
+    let hooks_after = fs::read_to_string(&hooks_path).unwrap();
+    let zshrc_after = fs::read_to_string(&zshrc).unwrap();
+    assert!(hooks_after.contains("_trove"), "cursor-ide must patch hooks.json");
+    assert!(
+        zshrc_after.contains("cursor-agent()")
+            && zshrc_after.contains("trove-cursor-agent"),
+        "cursor-cli must patch shell rc with its wrapper-routing function, got:\n{zshrc_after}",
     );
 
-    // Revert via cli; cursor_ide's enable state should also be cleared
-    // because they share a region.
+    // 2. Revert cursor-cli; hooks.json (cursor-ide's territory) untouched.
     cursor_cli::revert(home.path()).unwrap();
-    let after_revert: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert!(after_revert.get("_trove").is_none());
+    let hooks_after_cli_revert = fs::read_to_string(&hooks_path).unwrap();
+    assert_eq!(hooks_after, hooks_after_cli_revert);
+    let zshrc_after_cli_revert = fs::read_to_string(&zshrc).unwrap();
+    assert!(
+        !zshrc_after_cli_revert.contains("cursor-agent()"),
+        "cursor-cli revert must remove its wrapper function block",
+    );
+
+    // 3. Revert cursor-ide; hooks.json `_trove` block gone.
+    cursor_ide::revert(home.path()).unwrap();
+    let after_ide_revert: Value =
+        serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
+    assert!(after_ide_revert.get("_trove").is_none());
 }
 
 #[test]

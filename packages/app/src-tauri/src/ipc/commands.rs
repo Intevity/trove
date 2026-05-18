@@ -1623,7 +1623,11 @@ fn external_resource_path(app: &tauri::AppHandle, id: HarnessId) -> Result<PathB
         reason: format!("could not resolve Tauri resource_dir: {e}"),
     })?;
     let rel: &[&str] = match id {
-        HarnessId::CursorIde | HarnessId::CursorCli => &["resources", "hooks", "cursor-otel-hook.cjs"],
+        HarnessId::CursorIde => &["resources", "hooks", "cursor-otel-hook.cjs"],
+        // cursor-cli no longer shares cursor-ide's hooks.json — Cursor's
+        // hook system is IDE-only. See `adapters::cursor_cli` for the
+        // wrapper-based replacement.
+        HarnessId::CursorCli => &["resources", "wrappers", "trove-cursor-agent"],
         HarnessId::Aider => &["resources", "wrappers", "trove-aider"],
         HarnessId::CopilotCli => &["resources", "wrappers", "trove-copilot"],
         _ => {
@@ -1764,6 +1768,11 @@ fn spawn_tier3_watcher(
             ensure_log_parent(&log);
             Some(spawn_wrapper_log_watcher(log, options.clone(), id, mappings))
         }
+        HarnessId::CursorCli => {
+            let log = cursor_cli::log_path(home);
+            ensure_log_parent(&log);
+            Some(spawn_wrapper_log_watcher(log, options.clone(), id, mappings))
+        }
         // Gemini emits Tier B natively, but the chat-log watcher fills
         // the gaps: per-turn `cost.usd` (metricstransform can't do
         // per-model rate × token-count math) and reliable
@@ -1788,7 +1797,6 @@ fn spawn_tier3_watcher(
         HarnessId::ClaudeCode
         | HarnessId::CodexCli
         | HarnessId::CursorIde
-        | HarnessId::CursorCli
         | HarnessId::QwenCode
         | HarnessId::Opencode
         // Detection-only harnesses never spawn a watcher.
@@ -1841,6 +1849,7 @@ fn spawn_wrapper_log_watcher(
             let log_payload = match id {
                 HarnessId::Aider => aider::parse_event_line(&line, &options),
                 HarnessId::CopilotCli => copilot_cli::parse_event_line(&line, &options),
+                HarnessId::CursorCli => cursor_cli::parse_event_line(&line, &options),
                 _ => None,
             };
             let metric_payload = match id {
@@ -1848,6 +1857,11 @@ fn spawn_wrapper_log_watcher(
                     aider::parse_event_metric_payload(&line, &options, mapping_snapshot.clone())
                 }
                 HarnessId::CopilotCli => copilot_cli::parse_event_metric_payload(
+                    &line,
+                    &options,
+                    mapping_snapshot.clone(),
+                ),
+                HarnessId::CursorCli => cursor_cli::parse_event_metric_payload(
                     &line,
                     &options,
                     mapping_snapshot.clone(),
@@ -2240,16 +2254,22 @@ mod tests {
 
     #[test]
     fn preview_patch_inner_routes_cursor_cli_through_resolver_and_adapter() {
+        // After the cursor-cli wrapper rewrite, cursor-cli's preview no
+        // longer renders the hooks.json patch — it renders a shell-rc
+        // function block referencing the bundled wrapper script.
         let home = tempfile::tempdir().unwrap();
-        let fake_hook = std::path::PathBuf::from("/opt/trove/cursor-otel-hook.cjs");
+        // wrapper_common refuses to render a preview when no shell rc
+        // file exists, so seed one.
+        std::fs::write(home.path().join(".zshrc"), "# user content\n").unwrap();
+        let fake_wrapper = std::path::PathBuf::from("/opt/trove/wrappers/trove-cursor-agent");
         let result = preview_patch_inner(
             HarnessId::CursorCli,
             &ApplyOptions::default(),
             home.path(),
-            |_| Ok(fake_hook.clone()),
+            |_| Ok(fake_wrapper.clone()),
         )
         .unwrap();
-        assert!(result.after.contains("/opt/trove/cursor-otel-hook.cjs"));
+        assert!(result.after.contains("/opt/trove/wrappers/trove-cursor-agent"));
     }
 
     #[test]

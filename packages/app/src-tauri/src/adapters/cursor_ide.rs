@@ -75,22 +75,28 @@ mod tests {
     }
 
     #[test]
-    fn apply_then_cli_apply_is_idempotent_byte_for_byte() {
-        // Both cursor adapters share a region — applying via IDE then
-        // CLI must produce no second-write.
+    fn cursor_ide_apply_does_not_touch_cursor_cli_shell_rc() {
+        // Previously the two cursor adapters shared `~/.cursor/hooks.json`
+        // and applying one was byte-for-byte idempotent with the other.
+        // After the cursor-cli wrapper rewrite they patch different host
+        // files — cursor-ide owns hooks.json, cursor-cli owns the shell
+        // rc — so the invariant we care about now is: enabling cursor-ide
+        // leaves cursor-cli's host file unchanged.
         let home = tempdir().unwrap();
+        // Seed a shell rc so cursor-cli has a file to *not* patch here
+        // (wrapper_common refuses to apply when no rc exists).
+        let zshrc = home.path().join(".zshrc");
+        fs::write(&zshrc, "# pre-existing user content\n").unwrap();
+        let zshrc_before = fs::read_to_string(&zshrc).unwrap();
+
         apply(home.path(), &ApplyOptions::default(), &fake_hook_path()).unwrap();
-        let after_ide = fs::read_to_string(config_path(home.path())).unwrap();
 
-        super::super::cursor_cli::apply(
-            home.path(),
-            &ApplyOptions::default(),
-            &fake_hook_path(),
-        )
-        .unwrap();
-        let after_cli = fs::read_to_string(config_path(home.path())).unwrap();
-
-        assert_eq!(after_ide, after_cli);
+        // cursor-ide patched hooks.json …
+        let hooks = fs::read_to_string(config_path(home.path())).unwrap();
+        assert!(hooks.contains("_trove"), "cursor-ide must patch hooks.json");
+        // … and left cursor-cli's shell rc alone.
+        let zshrc_after = fs::read_to_string(&zshrc).unwrap();
+        assert_eq!(zshrc_before, zshrc_after);
     }
 
     #[test]
