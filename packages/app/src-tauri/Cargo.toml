@@ -29,6 +29,11 @@ tauri-plugin-shell = "2"
 # `plugins.updater.pubkey` and verifies the signed `latest.json`
 # manifest tauri-action publishes alongside each release.
 tauri-plugin-updater = "2"
+# Opt-OUT launch-at-startup. Default on; the Settings UI flips
+# `launchAtStartupEnabled` in state.json. The IPC command drives
+# enable()/disable() on the plugin's autolaunch manager, which writes
+# LaunchAgent / Run registry / .desktop autostart files behind one API.
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = [
     "macros",

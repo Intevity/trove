@@ -44,7 +44,7 @@ function appState(opts?: {
   harnesses?: HarnessConfig[];
 }): AppState {
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     backends:
       opts?.backends === undefined
         ? [
@@ -60,6 +60,7 @@ function appState(opts?: {
         : opts.backends,
     harnesses: opts?.harnesses ?? [harnessConfig('claude-code', true)],
     autoUpdateEnabled: false,
+    launchAtStartupEnabled: true,
     identity: { enabled: false, source: 'auto', name: '', email: '' },
     mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
     telemetryObserved: {},

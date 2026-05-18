@@ -319,30 +319,33 @@ describe('AppState', () => {
     harnesses: [],
   };
 
-  it('parses a minimal v7 state with default identity off and empty mappings', () => {
+  it('parses a minimal v8 state with default identity off and empty mappings', () => {
     const parsed = AppState.parse({
-      schemaVersion: 7,
+      schemaVersion: 8,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
+      launchAtStartupEnabled: true,
       identity: defaultIdentity,
       mappings: emptyMappings,
     });
-    expect(parsed.schemaVersion).toBe(7);
+    expect(parsed.schemaVersion).toBe(8);
     expect(parsed.backends).toEqual([]);
     expect(parsed.harnesses).toEqual([]);
     expect(parsed.autoUpdateEnabled).toBe(false);
+    expect(parsed.launchAtStartupEnabled).toBe(true);
     expect(parsed.identity.enabled).toBe(false);
     expect(parsed.identity.source).toBe('auto');
     expect(parsed.mappings.harnesses).toEqual([]);
   });
 
-  it('parses a v7 state with autoUpdateEnabled true and identity tagging on', () => {
+  it('parses a v8 state with autoUpdateEnabled true and identity tagging on', () => {
     const parsed = AppState.parse({
-      schemaVersion: 7,
+      schemaVersion: 8,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: true,
+      launchAtStartupEnabled: false,
       identity: {
         enabled: true,
         source: 'manual',
@@ -352,18 +355,20 @@ describe('AppState', () => {
       mappings: emptyMappings,
     });
     expect(parsed.autoUpdateEnabled).toBe(true);
+    expect(parsed.launchAtStartupEnabled).toBe(false);
     expect(parsed.identity.enabled).toBe(true);
     expect(parsed.identity.source).toBe('manual');
     expect(parsed.identity.name).toBe('Ada Lovelace');
     expect(parsed.identity.email).toBe('ada@example.com');
   });
 
-  it('parses a v7 state with populated mapping rows', () => {
+  it('parses a v8 state with populated mapping rows', () => {
     const parsed = AppState.parse({
-      schemaVersion: 7,
+      schemaVersion: 8,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
+      launchAtStartupEnabled: true,
       identity: defaultIdentity,
       mappings: {
         schemaVersion: 2,
@@ -388,6 +393,19 @@ describe('AppState', () => {
     expect(parsed.mappings.harnesses).toHaveLength(1);
     expect(parsed.mappings.harnesses[0].harnessId).toBe('gemini-cli');
     expect(parsed.mappings.harnesses[0].sources[0].kind).toBe('synthesize-from-native');
+  });
+
+  it('rejects when launchAtStartupEnabled is missing', () => {
+    expect(() =>
+      AppState.parse({
+        schemaVersion: 8,
+        backends: [],
+        harnesses: [],
+        autoUpdateEnabled: false,
+        identity: defaultIdentity,
+        mappings: emptyMappings,
+      }),
+    ).toThrow();
   });
 
   it('rejects when autoUpdateEnabled is missing', () => {
@@ -431,18 +449,18 @@ describe('AppState', () => {
     ).toThrow();
   });
 
-  it('rejects v2..v6 wire payloads (Rust loader migrates them to v7 before IPC return)', () => {
-    // The multi-platform refactor bumped the on-the-wire schema to v7.
-    // Earlier payloads are an internal concern of
-    // `app_state::load_from_dir`; they should never appear at the IPC
-    // boundary, so the Zod literal rejects them outright.
-    for (const schemaVersion of [2, 3, 4, 5, 6]) {
+  it('rejects v2..v7 wire payloads (Rust loader migrates them to v8 before IPC return)', () => {
+    // Migrations live in `app_state::load_from_dir`; older payloads
+    // should never appear at the IPC boundary, so the Zod literal
+    // rejects them outright.
+    for (const schemaVersion of [2, 3, 4, 5, 6, 7]) {
       expect(() =>
         AppState.parse({
           schemaVersion,
           backends: [],
           harnesses: [],
           autoUpdateEnabled: false,
+          launchAtStartupEnabled: true,
           identity: defaultIdentity,
           mappings: emptyMappings,
         }),

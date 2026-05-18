@@ -40,7 +40,7 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
   await installTauriMock(page, {
     // Seed a backend so the dashboard renders directly (no wizard step).
     appState: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       backends: [
         {
           id: '11111111-1111-1111-1111-111111111111',
@@ -53,6 +53,7 @@ test("apply against a hand-edited region surfaces the resolver and Take Trove's 
       ],
       harnesses: [],
       autoUpdateEnabled: false,
+      launchAtStartupEnabled: true,
       identity: { enabled: false, source: 'auto', name: '', email: '' },
       mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
       telemetryObserved: {},
@@ -104,7 +105,7 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
 }) => {
   await installTauriMock(page, {
     appState: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       backends: [
         {
           id: '11111111-1111-1111-1111-111111111111',
@@ -117,6 +118,7 @@ test('orphan-block conflict (originalRegionPayload null) collapses to 2-pane lay
       ],
       harnesses: [],
       autoUpdateEnabled: false,
+      launchAtStartupEnabled: true,
       identity: { enabled: false, source: 'auto', name: '', email: '' },
       mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
       telemetryObserved: {},

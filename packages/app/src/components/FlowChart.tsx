@@ -269,7 +269,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
 
   return (
     <Card testid="flow-chart" className="my-1.5">
-      <CardHeader className="mb-1.5">
+      <CardHeader className="mb-3">
         <CardTitle className="flex items-center gap-1.5 whitespace-nowrap">
           <Share2 size={14} strokeWidth={2.4} className="text-brand" aria-hidden="true" />
           Data flow
@@ -522,7 +522,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
         )}
       </svg>
 
-      <div className="mt-1 flex items-center gap-3 px-1">
+      <div className="mt-3 flex items-center gap-3 px-1">
         {LANES.map((lane) => (
           <span key={lane.kind} className="flex items-center gap-1.5">
             <span
@@ -741,9 +741,10 @@ function FlowNode({
   const textAnchor: 'start' | 'middle' = hasLogo ? 'start' : 'middle';
   // Title baseline: vertically center when there's no subtitle line under
   // it; otherwise keep the original two-line layout (title above, subtitle
-  // below).
-  const titleY = subtitle ? cy - 2 : cy + 4;
-  const subtitleY = cy + 12;
+  // below). The highlight branch leaves a touch more room between the
+  // lines since the type is set larger.
+  const titleY = subtitle ? (highlight ? cy - 3 : cy - 2) : cy + 4;
+  const subtitleY = highlight ? cy + 14 : cy + 12;
   // Collector watermark: trove logo at low opacity behind the title.
   // Sized to fill the node's vertical extent without crowding the text;
   // pinned to the right half so it sits behind / beside the centered
@@ -792,13 +793,14 @@ function FlowNode({
         x={textX}
         y={titleY}
         textAnchor={textAnchor}
-        fontSize={12}
+        fontSize={highlight ? 14 : 12}
         fontWeight={600}
         className={
           muted
             ? 'fill-fg-tertiary dark:fill-fg-tertiary-dark'
             : 'fill-fg-primary dark:fill-fg-primary-dark'
         }
+        style={highlight ? { filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.25))' } : undefined}
       >
         {title}
       </text>
@@ -807,12 +809,13 @@ function FlowNode({
           x={textX}
           y={subtitleY}
           textAnchor={textAnchor}
-          fontSize={10}
+          fontSize={highlight ? 12 : 10}
           className={
             muted
               ? 'fill-fg-tertiary dark:fill-fg-tertiary-dark'
               : 'fill-fg-secondary dark:fill-fg-secondary-dark'
           }
+          style={highlight ? { filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.2))' } : undefined}
         >
           {subtitle}
         </text>
