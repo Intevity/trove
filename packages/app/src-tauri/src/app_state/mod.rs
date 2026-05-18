@@ -16,7 +16,7 @@
 //! ## Migration scaffold
 //!
 //! [`load_from_dir`] reads only `schemaVersion` from the file before
-//! parsing the rest. The current schema is version `7`. Older versions
+//! parsing the rest. The current schema is version `8`. Older versions
 //! are migrated in-place by relying on `#[serde(default)]` for fields
 //! introduced in later schemas:
 //! - v2..=v5 → v6: see prior fields backfilled via `#[serde(default)]`.
@@ -26,11 +26,16 @@
 //!   keychain entries keep their kind-keyed account names — the legacy
 //!   single instance gets the empty-suffix variant so secrets resolve
 //!   without re-prompting the user.
+//! - v7 → v8 (launch-at-startup opt-out): adds
+//!   `launch_at_startup_enabled` defaulting to `true`. Existing installs
+//!   inherit the opt-out on first launch after upgrade; the
+//!   `reconcile_launch_at_startup` hook in the IPC layer registers
+//!   the OS-side login item lazily on that same first launch.
 //! - All earlier versions migrate forward through the same chain.
 //!
 //! After parse, the loader re-stamps
 //! `schema_version = CURRENT_SCHEMA_VERSION` on the in-memory value so
-//! the next save persists v7 to disk. v1 was never written in the wild
+//! the next save persists v8 to disk. v1 was never written in the wild
 //! and remains an explicit error.
 
 use std::collections::BTreeMap;
@@ -50,7 +55,15 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 7;
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+
+/// Serde helper that defaults a `bool` field to `true`. Used for opt-out
+/// settings whose absence in a migrated document should be interpreted
+/// as "user wants this feature on" rather than the language default
+/// `false`.
+fn default_true() -> bool {
+    true
+}
 
 /// Opaque keychain handle. The actual secret never leaves the OS
 /// keychain. Mirrors `SecretRef` in `packages/shared/src/schemas.ts`.
@@ -339,6 +352,17 @@ pub struct AppState {
     /// this flag set, or a click in the UI.
     #[serde(default)]
     pub auto_update_enabled: bool,
+    /// Opt-OUT auto-launch (introduced in v8). When true, Trove registers
+    /// itself with the OS login-items mechanism (`LaunchAgent` on macOS,
+    /// Run registry key on Windows, `.desktop` autostart on Linux) so
+    /// harness telemetry is captured from session start. Mutated via
+    /// `set_launch_at_startup_enabled`, which also drives the OS-side
+    /// registration through `tauri-plugin-autostart`. Default `true`;
+    /// v7 documents missing the field migrate to `true` via
+    /// `default_true` (the reconciler in the IPC layer then registers
+    /// the login item on first launch after upgrade).
+    #[serde(default = "default_true")]
+    pub launch_at_startup_enabled: bool,
     /// Sprint 12 — opt-in `user.name`/`user.email` attribution for
     /// outgoing telemetry. Off by default; flipped via
     /// `set_identity_enabled` and `set_identity_manual`. See
@@ -372,6 +396,7 @@ impl Default for AppState {
             backends: Vec::new(),
             harnesses: Vec::new(),
             auto_update_enabled: false,
+            launch_at_startup_enabled: true,
             identity: Identity::default(),
             mappings: default_mapping_state(),
             telemetry_observed: BTreeMap::new(),
@@ -429,14 +454,15 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2..=v7 migration. Earlier sprints added autoUpdateEnabled,
+        // v2..=v8 migration. Earlier sprints added autoUpdateEnabled,
         // identity, and mappings — all use `#[serde(default)]` so older
         // documents deserialize cleanly. v7 (multi-platform refactor)
         // replaces the single `backend` slot with a `backends` list; the
         // pre-deserialization shim below rewrites the legacy field when
-        // present. We re-stamp schema_version on the returned struct so
-        // the next save persists the current version to disk.
-        2..=7 => {
+        // present. v8 adds launch_at_startup_enabled defaulting to true
+        // via `default_true`. We re-stamp schema_version on the returned
+        // struct so the next save persists the current version to disk.
+        2..=8 => {
             // Field-shape migrations applied at the JSON-value level so
             // we don't need to keep parallel legacy deserializer types
             // around. Applied in chronological order so a v2 document
@@ -1001,10 +1027,11 @@ mod tests {
     fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 7);
+        assert_eq!(s.schema_version, 8);
         assert!(s.backends.is_empty());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
+        assert!(s.launch_at_startup_enabled);
         assert!(!s.identity.enabled);
         assert_eq!(s.identity.source, IdentitySource::Auto);
         assert!(s.identity.name.is_empty());
@@ -1057,6 +1084,7 @@ mod tests {
             backends: vec![sample_signoz_instance()],
             harnesses: vec![sample_harness(HarnessId::ClaudeCode)],
             auto_update_enabled: false,
+            launch_at_startup_enabled: true,
             identity: Identity::default(),
             mappings: default_mapping_state(),
             telemetry_observed: BTreeMap::new(),
@@ -1073,6 +1101,7 @@ mod tests {
             backends: Vec::new(),
             harnesses: Vec::new(),
             auto_update_enabled: true,
+            launch_at_startup_enabled: true,
             identity: Identity::default(),
             mappings: default_mapping_state(),
             telemetry_observed: BTreeMap::new(),
@@ -1081,6 +1110,26 @@ mod tests {
         assert!(json.contains("\"autoUpdateEnabled\":true"));
         let revived: AppState = serde_json::from_str(&json).unwrap();
         assert!(revived.auto_update_enabled);
+    }
+
+    #[test]
+    fn app_state_round_trips_with_launch_at_startup_disabled() {
+        // Confirm the opt-out field serializes when toggled off and
+        // survives a round trip.
+        let state = AppState {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            backends: Vec::new(),
+            harnesses: Vec::new(),
+            auto_update_enabled: false,
+            launch_at_startup_enabled: false,
+            identity: Identity::default(),
+            mappings: default_mapping_state(),
+            telemetry_observed: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"launchAtStartupEnabled\":false"));
+        let revived: AppState = serde_json::from_str(&json).unwrap();
+        assert!(!revived.launch_at_startup_enabled);
     }
 
     #[test]
@@ -1256,6 +1305,28 @@ mod tests {
     }
 
     #[test]
+    fn v7_state_migrates_to_v8_with_launch_at_startup_defaulting_true() {
+        // Existing v7 documents predate the launch_at_startup opt-out.
+        // They must load cleanly, default the new field to `true`, and
+        // re-stamp the version to v8 on the in-memory struct.
+        let dir = tempfile::tempdir().unwrap();
+        let path = state_path_in(dir.path());
+        std::fs::write(
+            &path,
+            br#"{
+                "schemaVersion": 7,
+                "backends": [],
+                "harnesses": [],
+                "autoUpdateEnabled": false
+            }"#,
+        )
+        .unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(state.launch_at_startup_enabled);
+    }
+
+    #[test]
     fn save_then_load_is_identity() {
         let dir = tempfile::tempdir().unwrap();
         let original = AppState {
@@ -1263,6 +1334,7 @@ mod tests {
             backends: vec![sample_signoz_instance()],
             harnesses: vec![sample_harness(HarnessId::GeminiCli)],
             auto_update_enabled: false,
+            launch_at_startup_enabled: true,
             identity: Identity::default(),
             mappings: default_mapping_state(),
             telemetry_observed: BTreeMap::new(),
@@ -1341,7 +1413,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 7"));
+        assert!(on_disk.contains("\"schemaVersion\": 8"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1398,7 +1470,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 7"));
+        assert!(on_disk.contains("\"schemaVersion\": 8"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1490,7 +1562,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 7"));
+        assert!(on_disk.contains("\"schemaVersion\": 8"));
         assert!(on_disk.contains("\"mappings\""));
     }
 
@@ -1668,7 +1740,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 7"));
+        assert!(on_disk.contains("\"schemaVersion\": 8"));
         assert!(on_disk.contains("\"backends\""));
         assert!(!on_disk.contains("\"backend\":"));
     }

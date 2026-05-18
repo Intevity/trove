@@ -1,14 +1,15 @@
 import type { LucideIcon } from 'lucide-react';
-import { Info, Power, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Info, Power, RefreshCw, Rocket, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { AppState } from '@trove/shared';
 
 import troveLogo from '../../assets/trove-logo.svg';
-import { setAutoUpdateEnabled } from '../../lib/ipc.js';
+import { setAutoUpdateEnabled, setLaunchAtStartupEnabled } from '../../lib/ipc.js';
 import { ApplicationActions } from '../Settings/ApplicationActions.js';
 import { AutoUpdate } from '../Settings/AutoUpdate.js';
 import { IdentityPanel } from '../Settings/IdentityPanel.js';
+import { LaunchAtStartup } from '../Settings/LaunchAtStartup.js';
 import { Card } from '../ui/index.js';
 
 interface Props {
@@ -34,6 +35,16 @@ export function SettingsTab({ appState, onAppStateRefresh }: Props): JSX.Element
           enabled={appState.autoUpdateEnabled}
           onToggle={async (next) => {
             await setAutoUpdateEnabled(next);
+            await onAppStateRefresh();
+          }}
+        />
+      </SettingsSection>
+
+      <SettingsSection icon={Rocket} label="Startup">
+        <LaunchAtStartup
+          enabled={appState.launchAtStartupEnabled}
+          onToggle={async (next) => {
+            await setLaunchAtStartupEnabled(next);
             await onAppStateRefresh();
           }}
         />

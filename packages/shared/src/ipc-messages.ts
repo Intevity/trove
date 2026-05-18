@@ -129,6 +129,14 @@ export type GetCollectorLogTailResponse = z.infer<typeof GetCollectorLogTailResp
 export const SetAutoUpdateEnabledResponse = z.null();
 export type SetAutoUpdateEnabledResponse = z.infer<typeof SetAutoUpdateEnabledResponse>;
 
+/** `set_launch_at_startup_enabled`. Args: { enabled: boolean }.
+ *  Toggles the persisted `launchAtStartupEnabled` opt-out and, in the
+ *  same call, drives the OS login-items mechanism (LaunchAgent on
+ *  macOS, Run registry on Windows, .desktop autostart on Linux) via
+ *  `tauri-plugin-autostart`. Returns nothing on success. */
+export const SetLaunchAtStartupEnabledResponse = z.null();
+export type SetLaunchAtStartupEnabledResponse = z.infer<typeof SetLaunchAtStartupEnabledResponse>;
+
 /** Sprint 10 — `check_for_updates`. No arguments. Calls the Tauri
  *  updater plugin against the configured GitHub Releases endpoint and
  *  returns whether an update is available, the candidate version, and
@@ -235,6 +243,7 @@ export const IpcCommandName = {
   GetMetricsSnapshot: 'get_metrics_snapshot',
   GetCollectorLogTail: 'get_collector_log_tail',
   SetAutoUpdateEnabled: 'set_auto_update_enabled',
+  SetLaunchAtStartupEnabled: 'set_launch_at_startup_enabled',
   CheckForUpdates: 'check_for_updates',
   SetIdentityEnabled: 'set_identity_enabled',
   SetIdentityManual: 'set_identity_manual',

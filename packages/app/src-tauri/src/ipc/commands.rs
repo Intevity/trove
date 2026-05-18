@@ -119,19 +119,22 @@ pub fn list_detected_harnesses_inner<S: ::std::hash::BuildHasher>(
 ) -> Result<Vec<DetectedHarness>, IpcError> {
     let mut rows = detect_all();
     let state = app_state::load_from_dir(config_dir)?;
-    overlay_tier3_state(&mut rows, &state);
+    overlay_watcher_only_state(&mut rows, &state);
     overlay_observed_telemetry(&mut rows, observed_log_records);
     overlay_persisted_observations(&mut rows, &state);
     Ok(rows)
 }
 
-/// For each Tier 3 row, override `trove_region_present` (and `telemetry`)
-/// from the corresponding `state.json` entry. Tier 1 / Tier 2 rows
-/// already have authoritative answers from the host-file inspection in
-/// `detect/harnesses.rs` and are left unchanged.
-fn overlay_tier3_state(rows: &mut [DetectedHarness], state: &AppState) {
+/// For each watcher-only row (Tier 3 + Claude Desktop), override
+/// `trove_region_present` (and `telemetry`) from the corresponding
+/// `state.json` entry. Tier 1 / Tier 2 rows that write a managed region
+/// into a host file already have authoritative answers from the
+/// host-file inspection in `detect/harnesses.rs` and are left
+/// unchanged. See [`HarnessId::enables_via_watcher_only`] for the
+/// rationale.
+fn overlay_watcher_only_state(rows: &mut [DetectedHarness], state: &AppState) {
     for row in rows.iter_mut() {
-        if !HarnessId::tier_3().contains(&row.id) {
+        if !row.id.enables_via_watcher_only() {
             continue;
         }
         let enabled = state
@@ -1101,6 +1104,91 @@ pub fn set_auto_update_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(
     Ok(())
 }
 
+/// Flip the persisted `launch_at_startup_enabled` opt-out and apply the
+/// change to the OS login-items mechanism in one step. The plugin
+/// writes a `LaunchAgent` on macOS, a Run-key entry on Windows, and a
+/// `.desktop` autostart file on Linux. A failure to apply the OS-side
+/// change leaves the persisted preference untouched so the UI doesn't
+/// drift out of sync with reality.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_launch_at_startup_enabled(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), IpcError> {
+    let mut state = app_state::load(&app)?;
+    if state.launch_at_startup_enabled == enabled {
+        return Ok(());
+    }
+    apply_launch_at_startup(&app, enabled).map_err(|e| IpcError::Internal {
+        reason: format!("autostart: {e}"),
+    })?;
+    state.launch_at_startup_enabled = enabled;
+    app_state::save(&app, &state)?;
+    Ok(())
+}
+
+/// Apply the launch-at-startup preference to the OS login-items
+/// mechanism via `tauri-plugin-autostart`. Idempotent: re-enabling an
+/// already-registered entry or disabling a non-existent one is a no-op
+/// at the plugin layer.
+fn apply_launch_at_startup(
+    app: &tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri_plugin_autostart::ManagerExt;
+    let mgr = app.autolaunch();
+    if enabled {
+        mgr.enable()?;
+    } else {
+        mgr.disable()?;
+    }
+    Ok(())
+}
+
+/// Bring the OS-side login item into agreement with the user's
+/// persisted `launch_at_startup_enabled` preference. Runs at startup
+/// from `respawn_persisted_watchers`; this is the hook that registers
+/// the `LaunchAgent` the first time a v7→v8 upgrade or a fresh install
+/// produces `launch_at_startup_enabled = true` without a corresponding
+/// entry on disk. Skipped in debug builds so `pnpm tauri dev` doesn't
+/// register a launch agent pointing at a `target/debug` binary path.
+/// All failures are logged at `warn!` and swallowed — the user can fix
+/// drift by toggling the Settings switch.
+pub fn reconcile_launch_at_startup(app: &tauri::AppHandle) {
+    use tauri_plugin_autostart::ManagerExt;
+    if cfg!(debug_assertions) {
+        tracing::debug!("reconcile_launch_at_startup: skipped in debug build");
+        return;
+    }
+    let state = match app_state::load(app) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "reconcile_launch_at_startup: state.json load failed");
+            return;
+        }
+    };
+    let mgr = app.autolaunch();
+    let registered = match mgr.is_enabled() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "reconcile_launch_at_startup: is_enabled failed");
+            return;
+        }
+    };
+    if registered == state.launch_at_startup_enabled {
+        return;
+    }
+    let result = if state.launch_at_startup_enabled {
+        mgr.enable()
+    } else {
+        mgr.disable()
+    };
+    if let Err(e) = result {
+        tracing::warn!(error = %e, "reconcile_launch_at_startup: enable/disable failed");
+    }
+}
+
 /// Sprint 12 — opt-in identity tagging. Flips the persisted
 /// [`AppState::identity::enabled`] flag, then reloads the collector so
 /// the active YAML reflects the new processor list immediately. When
@@ -1566,6 +1654,12 @@ pub fn respawn_persisted_watchers(app: &tauri::AppHandle) {
     // choice (enable/disable) exists in state.json.
     autoenable_claude_desktop_on_first_run(app);
 
+    // Reconcile the OS login-items mechanism with the persisted
+    // launch_at_startup preference. Registers the LaunchAgent on first
+    // launch after a v7→v8 migration, and re-registers it if the user
+    // has manually removed the entry from System Settings.
+    reconcile_launch_at_startup(app);
+
     let state = match app_state::load(app) {
         Ok(s) => s,
         Err(e) => {
@@ -1951,7 +2045,7 @@ mod tests {
     }
 
     #[test]
-    fn list_detected_harnesses_inner_overlays_tier3_state_for_enabled_cline() {
+    fn list_detected_harnesses_inner_overlays_watcher_only_state_for_enabled_cline() {
         // PR 2 — when state.json records cline as enabled, the
         // dashboard row reports trove_region_present = true and
         // telemetry = On, even though the detector itself can't see
@@ -1986,6 +2080,45 @@ mod tests {
         assert!(!aider_row.trove_region_present);
 
         let _ = AppState::default(); // keep import live
+    }
+
+    #[test]
+    fn list_detected_harnesses_inner_overlays_watcher_only_state_for_enabled_claude_desktop() {
+        // Claude Desktop has no host file to patch — its adapter is an
+        // audit-log tap. Detection always returns trove_region_present
+        // = false because read_trove_region_present scans the host file.
+        // When state.json records it as enabled, the row must report
+        // trove_region_present = true so the UI button reads "Disable".
+        use crate::adapters::TrovePatch;
+        use crate::app_state::{HarnessConfig, upsert_harness_in};
+
+        let dir = tempfile::tempdir().unwrap();
+        let entry = HarnessConfig {
+            id: HarnessId::ClaudeDesktop,
+            enabled: true,
+            config_path: "/Users/dev/Library/Application Support/Claude/local-agent-mode-sessions"
+                .to_string(),
+            last_patched_at: "2026-05-17T00:00:00Z".to_string(),
+            trove_patch: TrovePatch {
+                managed_block_hash: "c".repeat(64),
+                file_hash_at_last_write: String::new(),
+                format: crate::safety::sentinels::Format::Json,
+                last_written_region_payload: r#"{"harness":"claude-desktop"}"#.to_string(),
+            },
+            options: ApplyOptions::default(),
+        };
+        upsert_harness_in(dir.path(), entry).unwrap();
+
+        let rows = list_detected_harnesses_inner(dir.path(), &HashMap::new()).unwrap();
+        let cd_row = rows
+            .iter()
+            .find(|r| r.id == HarnessId::ClaudeDesktop)
+            .expect("claude-desktop row missing from detection");
+        assert!(
+            cd_row.trove_region_present,
+            "claude-desktop should overlay enabled — UI button stays 'Enable' otherwise"
+        );
+        assert_eq!(cd_row.telemetry, TelemetryStatus::On);
     }
 
     #[test]

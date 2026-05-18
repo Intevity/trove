@@ -16,7 +16,7 @@
         "label": "main",
         "title": "Trove",
         "width": 960,
-        "height": 760,
+        "height": 860,
         "minWidth": 560,
         "minHeight": 360,
         "resizable": true,

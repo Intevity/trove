@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
-import { Activity, Stethoscope } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Activity, Cable, Cpu, Radio, Stethoscope, Zap } from 'lucide-react';
 
 import type {
   AppState,
@@ -12,7 +13,7 @@ import type {
 import { formatCount } from '../../lib/format.js';
 import { RECENT_SIGNAL_WINDOW_MS } from '../../lib/health.js';
 import { TroveIpcError, testExport } from '../../lib/ipc.js';
-import { Button, Card, CardHeader, CardTitle, StatusDot } from '../ui/index.js';
+import { Button, Card, CardHeader, CardTitle } from '../ui/index.js';
 
 interface Props {
   appState: AppState;
@@ -99,25 +100,63 @@ export function DiagnosticsPanel({ appState, state, metrics }: Props): JSX.Eleme
   );
 }
 
+const ROW_ICON: Record<DiagnosticRow['id'], LucideIcon> = {
+  sidecar: Cpu,
+  backend: Cable,
+  harnesses: Zap,
+  signal: Radio,
+};
+
+const ROW_TINT: Record<DiagnosticStatus, string> = {
+  green: '',
+  amber: 'bg-ios-orange/[0.04] dark:bg-ios-orange/[0.06]',
+  red: 'bg-ios-red/[0.05] dark:bg-ios-red/[0.07]',
+};
+
+function StatusIconChip({
+  icon: Icon,
+  status,
+}: {
+  icon: LucideIcon;
+  status: DiagnosticStatus;
+}): JSX.Element {
+  const tone = {
+    green: 'bg-ios-green/[0.14] text-ios-green',
+    amber: 'bg-ios-orange/[0.14] text-ios-orange',
+    red: 'bg-ios-red/[0.14] text-ios-red',
+  }[status];
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${tone}`}
+    >
+      <Icon size={13} strokeWidth={2.4} />
+    </span>
+  );
+}
+
 function DiagnosticsRow({ row }: { row: DiagnosticRow }): JSX.Element {
+  const Icon = ROW_ICON[row.id];
   return (
     <li
       data-testid={`diagnostics-row-${row.id}`}
       data-status={row.status}
-      className="flex items-center gap-2.5 px-3 py-2 first:rounded-t-card last:rounded-b-card"
+      className={`flex items-center gap-3 px-3.5 py-2.5 transition-colors first:rounded-t-card last:rounded-b-card ${ROW_TINT[row.status]}`}
     >
-      <StatusDot status={row.status} size="md" />
-      <span className="text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark">
-        {row.label}
-      </span>
-      <span className="text-[13px] text-fg-secondary dark:text-fg-secondary-dark">
-        ; {row.detail}
-      </span>
+      <StatusIconChip icon={Icon} status={row.status} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="text-[13px] font-medium leading-tight text-fg-primary dark:text-fg-primary-dark">
+          {row.label}
+        </span>
+        <span className="mt-0.5 text-[12px] leading-snug text-fg-secondary dark:text-fg-secondary-dark">
+          {row.detail}
+        </span>
+      </div>
       {row.fixTargetTestid && row.status !== 'green' ? (
         <Button
           variant="ghost"
           size="sm"
-          className="ml-auto"
+          className="ml-auto self-center"
           testid={`diagnostics-fix-${row.id}`}
           onClick={() => scrollToTestid(row.fixTargetTestid!)}
         >

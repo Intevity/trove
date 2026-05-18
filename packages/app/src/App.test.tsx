@@ -31,21 +31,22 @@ const EMPTY_MAPPINGS = {
   harnesses: [],
 };
 
-/** Default state.json shape: schemaVersion 7, no platforms yet. App
+/** Default state.json shape: schemaVersion 8, no platforms yet. App
  *  swaps in the wizard for this case. The detection-related tests
  *  override `backends` to a one-element list so the dashboard view
  *  renders. */
 const FRESH_APP_STATE = {
-  schemaVersion: 7,
+  schemaVersion: 8,
   backends: [],
   harnesses: [],
   autoUpdateEnabled: false,
+  launchAtStartupEnabled: true,
   identity: DEFAULT_IDENTITY,
   mappings: EMPTY_MAPPINGS,
 };
 
 const SIGNOZ_STATE = {
-  schemaVersion: 7,
+  schemaVersion: 8,
   backends: [
     {
       id: '11111111-1111-1111-1111-111111111111',
@@ -58,6 +59,7 @@ const SIGNOZ_STATE = {
   ],
   harnesses: [],
   autoUpdateEnabled: false,
+  launchAtStartupEnabled: true,
   identity: DEFAULT_IDENTITY,
   mappings: EMPTY_MAPPINGS,
 };

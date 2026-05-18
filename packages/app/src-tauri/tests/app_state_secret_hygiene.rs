@@ -43,6 +43,7 @@ fn state_with(instance_backend: trove_app::app_state::Backend) -> AppState {
         }],
         harnesses: Vec::new(),
         auto_update_enabled: false,
+        launch_at_startup_enabled: true,
         identity: trove_app::app_state::Identity::default(),
         mappings: trove_app::mappings::default_state(),
         telemetry_observed: std::collections::BTreeMap::new(),

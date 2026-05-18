@@ -139,6 +139,21 @@ impl HarnessId {
             || Self::tier_2().contains(&self)
             || Self::tier_3().contains(&self)
     }
+
+    /// Whether enabling this harness only spawns a watcher rather than
+    /// writing a managed region into a host config file. For these,
+    /// `trove_region_present` on a freshly-detected row is always
+    /// `false` (detection scans the host file, which doesn't carry a
+    /// Trove region for watcher-only harnesses), so the dashboard
+    /// derives the enabled state from `state.json` instead.
+    ///
+    /// Today this covers all of Tier 3 (Cline, Aider, Copilot CLI) plus
+    /// Claude Desktop, whose audit-log-tap adapter has no host file to
+    /// patch.
+    #[must_use]
+    pub fn enables_via_watcher_only(self) -> bool {
+        Self::tier_3().contains(&self) || matches!(self, Self::ClaudeDesktop)
+    }
 }
 
 #[cfg(test)]

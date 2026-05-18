@@ -25,6 +25,7 @@ import {
   SetIdentityAutoResponse,
   SetIdentityEnabledResponse,
   SetIdentityManualResponse,
+  SetLaunchAtStartupEnabledResponse,
   TestExportResponse,
   UpdateBackendResponse,
   type AppState,
@@ -223,6 +224,19 @@ export async function getCollectorLogTail(lines: number): Promise<CollectorLogTa
  *  {@link checkForUpdates} directly regardless of this setting. */
 export async function setAutoUpdateEnabled(enabled: boolean): Promise<void> {
   await invokeIpc(IpcCommandName.SetAutoUpdateEnabled, { enabled }, SetAutoUpdateEnabledResponse);
+}
+
+/** Flip the persisted `launchAtStartupEnabled` opt-out AND apply the
+ *  change to the OS login-items mechanism in one IPC round-trip. The
+ *  Rust side reverts the persisted preference if the OS-side
+ *  registration fails, so a successful return implies UI + disk + OS
+ *  are all in sync. */
+export async function setLaunchAtStartupEnabled(enabled: boolean): Promise<void> {
+  await invokeIpc(
+    IpcCommandName.SetLaunchAtStartupEnabled,
+    { enabled },
+    SetLaunchAtStartupEnabledResponse,
+  );
 }
 
 /** Sprint 10 — explicit "check for updates now" probe. Reaches out to

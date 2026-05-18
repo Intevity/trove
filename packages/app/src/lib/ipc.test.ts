@@ -185,10 +185,11 @@ describe('getAppState', () => {
 
   it('returns the parsed AppState on success', async () => {
     const expected = {
-      schemaVersion: 7 as const,
+      schemaVersion: 8 as const,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
+      launchAtStartupEnabled: true,
       identity: { enabled: false, source: 'auto' as const, name: '', email: '' },
       mappings: {
         schemaVersion: 2 as const,

@@ -53,6 +53,15 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Launch-at-startup plugin: writes the LaunchAgent / Run registry
+        // / .desktop autostart entry when enabled. The reconciler in
+        // `ipc::commands::get_app_state` enforces the user's
+        // `launchAtStartupEnabled` preference on each state read; the
+        // `set_launch_at_startup_enabled` IPC command flips both the
+        // preference and the OS-side entry in one step. Args are empty
+        // because we want Trove to start with its normal stored window
+        // state, not a custom flag set.
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             ipc::commands::list_detected_harnesses,
             ipc::commands::preview_patch,
@@ -68,6 +77,7 @@ pub fn run() {
             ipc::commands::uninstall_app,
             ipc::commands::test_export,
             ipc::commands::set_auto_update_enabled,
+            ipc::commands::set_launch_at_startup_enabled,
             ipc::commands::check_for_updates,
             ipc::commands::set_identity_enabled,
             ipc::commands::set_identity_manual,

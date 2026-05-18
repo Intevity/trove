@@ -412,18 +412,31 @@ export const BackendInstance = z.object({
 export type BackendInstance = z.infer<typeof BackendInstance>;
 
 /** Persisted application state. Secrets are referenced via SecretRef only.
- *  Schema version bumped to 7 alongside the multi-platform refactor:
- *  the single nullable `backend` slot is replaced with a list of
- *  `backends`, broadcasting every signal to every configured platform.
- *  Migrations are centralised in the Rust loader: v6 documents with a
- *  single backend are auto-wrapped into a one-element list; the
- *  loader re-stamps schemaVersion to 7 so the next save persists v7 to
- *  disk. Older consumers cannot read v7 files. */
+ *  Schema version 8 adds the opt-out `launchAtStartupEnabled` flag that
+ *  controls whether Trove registers itself with the OS login-items
+ *  mechanism. v7 documents migrate forward by defaulting the new field
+ *  to `true` in the Rust loader (existing installs inherit the opt-out
+ *  on first launch after upgrade).
+ *
+ *  v7 (multi-platform refactor): the single nullable `backend` slot was
+ *  replaced with a `backends` list, broadcasting every signal to every
+ *  configured platform.
+ *
+ *  Migrations are centralised in the Rust loader; the loader re-stamps
+ *  schemaVersion to the current value so the next save persists at the
+ *  current version. Older consumers cannot read newer files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(7),
+  schemaVersion: z.literal(8),
   backends: z.array(BackendInstance),
   harnesses: z.array(HarnessConfig),
   autoUpdateEnabled: z.boolean(),
+  /** Opt-out auto-launch. When true, Trove registers itself with the OS
+   *  login-items mechanism (LaunchAgent on macOS, Run registry key on
+   *  Windows, .desktop autostart on Linux) so harness telemetry is
+   *  captured from session start. Defaults to true on fresh install and
+   *  on v7→v8 migration. Mutated via the `set_launch_at_startup_enabled`
+   *  IPC command, which also drives the OS-side registration. */
+  launchAtStartupEnabled: z.boolean(),
   identity: Identity,
   mappings: MappingState,
   /** Sticky "first telemetry observed at" timestamp (Unix seconds)
