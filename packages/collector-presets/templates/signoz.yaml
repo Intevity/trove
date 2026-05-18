@@ -1,8 +1,13 @@
-# trove-otelcol — SigNoz cloud preset.
+# trove-otelcol — SigNoz preset (cloud + self-hosted OSS).
 #
-# Uses OTLP/gRPC with TLS. The endpoint is supplied verbatim by the user
-# (copied from SigNoz Cloud → Settings → Ingestion Settings, e.g.
-# `ingest.us.signoz.cloud:443`) and authentication is a single header.
+# Uses OTLP/gRPC. The endpoint is supplied verbatim by the user:
+#   - Cloud:       `ingest.us.signoz.cloud:443`  (TLS on)
+#   - Self-hosted: `localhost:14317`             (TLS off)
+#
+# Trove auto-detects loopback endpoints (localhost / 127.0.0.1 / ::1 /
+# 0.0.0.0) and renders `tls.insecure: true` for those. See
+# `packages/app/src-tauri/src/collector/codegen.rs::endpoint_is_loopback`.
+#
 # ${env:...} variables are populated by the Rust supervisor at spawn
 # time from the keychain (TROVE_SIGNOZ_INGESTION_KEY) and the persisted
 # Backend struct (TROVE_SIGNOZ_ENDPOINT). Trove never rewrites this
@@ -36,6 +41,7 @@ exporters:
   otlp/signoz:
     endpoint: ${env:TROVE_SIGNOZ_ENDPOINT}
     tls:
+      # Codegen substitutes `true` here for loopback endpoints.
       insecure: false
     headers:
       signoz-ingestion-key: ${env:TROVE_SIGNOZ_INGESTION_KEY}

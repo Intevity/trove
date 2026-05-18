@@ -235,8 +235,16 @@ fn render_exporter_block(
             env.insert(endpoint_var.clone(), Zeroizing::new(endpoint.clone()));
             env.insert(key_var.clone(), resolver(&ingestion_key.account)?);
             let name = format!("otlp/signoz-{suffix_lower}");
+            // SigNoz Cloud always serves TLS; a vanilla self-hosted
+            // `docker compose up` of SigNoz OSS serves plaintext gRPC
+            // on 4317. Auto-detect by inspecting the endpoint host —
+            // loopback ⇒ insecure, anything else ⇒ TLS-on. Users with
+            // an internal SigNoz behind a non-loopback hostname that
+            // still serves plaintext should put a TLS-terminating
+            // proxy in front; we don't expose a UI override yet.
+            let insecure = endpoint_is_loopback(endpoint);
             let block = format!(
-                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    tls:\n      insecure: false\n    headers:\n      signoz-ingestion-key: ${{env:{key_var}}}\n",
+                "  {name}:\n    endpoint: ${{env:{endpoint_var}}}\n    tls:\n      insecure: {insecure}\n    headers:\n      signoz-ingestion-key: ${{env:{key_var}}}\n",
             );
             (name, block)
         }
@@ -484,6 +492,47 @@ fn render_exporter_block(
     };
 
     Ok((name, block, env))
+}
+
+/// True if `endpoint`'s host segment is a loopback address — used to
+/// auto-disable TLS on presets like SigNoz whose cloud product is
+/// TLS-on but whose self-hosted OSS deploys plaintext gRPC on 4317.
+///
+/// Recognises:
+/// - `host:port` (gRPC convention, no scheme): everything before the
+///   last colon is the host.
+/// - `scheme://host:port` and `scheme://host`: the part between the
+///   `://` and the next `:` or `/` is the host.
+/// - IPv6 in `[::1]:4317` form: bracketed segment is the host.
+///
+/// Loopback hosts: `localhost`, `127.0.0.1`, `::1`, `[::1]`, `0.0.0.0`.
+/// Anything else — including DNS names like `signoz.internal` that
+/// happen to resolve to loopback at runtime — returns false. This is
+/// deliberately a syntactic check so the rendered config is
+/// reproducible without doing DNS at codegen time.
+fn endpoint_is_loopback(endpoint: &str) -> bool {
+    let mut s = endpoint.trim();
+    // Strip the scheme if present.
+    if let Some(idx) = s.find("://") {
+        s = &s[idx + 3..];
+    }
+    // Strip everything after the path (slash) if present.
+    if let Some(idx) = s.find('/') {
+        s = &s[..idx];
+    }
+    // Pull out the host. Bracketed IPv6 → contents between brackets;
+    // otherwise everything before the last `:` (port separator).
+    let host = if let Some(rest) = s.strip_prefix('[') {
+        match rest.find(']') {
+            Some(end) => &rest[..end],
+            None => return false,
+        }
+    } else if let Some(idx) = s.rfind(':') {
+        &s[..idx]
+    } else {
+        s
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
 }
 
 /// Sanitize a header name into a POSIX-safe env var suffix:
@@ -1777,5 +1826,90 @@ mod tests {
         let a = apply_mapping_overlay(yaml.clone(), &state);
         let b = apply_mapping_overlay(yaml, &state);
         assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------
+    // endpoint_is_loopback + Backend::Signoz TLS auto-detect
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn endpoint_is_loopback_matches_common_local_forms() {
+        // gRPC convention — no scheme, just host:port
+        assert!(endpoint_is_loopback("localhost:14317"));
+        assert!(endpoint_is_loopback("127.0.0.1:14317"));
+        assert!(endpoint_is_loopback("[::1]:14317"));
+        assert!(endpoint_is_loopback("0.0.0.0:14317"));
+        // Bare hostname (no port)
+        assert!(endpoint_is_loopback("localhost"));
+        assert!(endpoint_is_loopback("127.0.0.1"));
+        // With scheme (HTTP variant of SigNoz, hypothetical)
+        assert!(endpoint_is_loopback("http://localhost:14318"));
+        assert!(endpoint_is_loopback("http://127.0.0.1:14318/"));
+        // Surrounding whitespace from a UI paste
+        assert!(endpoint_is_loopback("  localhost:14317  "));
+    }
+
+    #[test]
+    fn endpoint_is_loopback_rejects_cloud_and_lan_hosts() {
+        assert!(!endpoint_is_loopback("ingest.us.signoz.cloud:443"));
+        assert!(!endpoint_is_loopback("signoz.internal:4317"));
+        // Not a DNS-resolution check; loopback-by-name only.
+        assert!(!endpoint_is_loopback("loopback.example.com:4317"));
+        // IPv4 outside the 127/8 loopback range — we only match the
+        // exact textual `127.0.0.1` form.
+        assert!(!endpoint_is_loopback("127.0.0.2:4317"));
+        assert!(!endpoint_is_loopback("10.0.0.1:4317"));
+        // Unparseable bracketed IPv6
+        assert!(!endpoint_is_loopback("[::1"));
+        assert!(!endpoint_is_loopback(""));
+    }
+
+    #[test]
+    fn signoz_cloud_endpoint_renders_tls_insecure_false() {
+        let instances = vec![signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")];
+        let yaml = rendered_yaml(&instances);
+        // Inline-rendered block must keep TLS on for the cloud preset.
+        assert!(
+            yaml.contains("tls:\n      insecure: false"),
+            "expected `tls: insecure: false` for cloud endpoint, got:\n{yaml}",
+        );
+    }
+
+    #[test]
+    fn signoz_loopback_endpoint_renders_tls_insecure_true() {
+        let instance = BackendInstance {
+            id: "bbbbbbbb-2222-3333-4444-555566667777".into(),
+            label: None,
+            backend: Backend::Signoz {
+                endpoint: "localhost:14317".into(),
+                ingestion_key: SecretRef::for_account(
+                    "backend.signoz.ingestion-key.bbbbbbbb-2222-3333-4444-555566667777",
+                ),
+            },
+        };
+        let yaml = rendered_yaml(&[instance]);
+        assert!(
+            yaml.contains("tls:\n      insecure: true"),
+            "expected `tls: insecure: true` for loopback endpoint, got:\n{yaml}",
+        );
+        // Sanity: the header line is still present (auth still required
+        // syntactically even if self-hosted OSS ignores it).
+        assert!(yaml.contains("signoz-ingestion-key"));
+    }
+
+    #[test]
+    fn signoz_127_endpoint_also_renders_insecure() {
+        let instance = BackendInstance {
+            id: "cccccccc-3333-4444-5555-666677778888".into(),
+            label: None,
+            backend: Backend::Signoz {
+                endpoint: "127.0.0.1:14317".into(),
+                ingestion_key: SecretRef::for_account(
+                    "backend.signoz.ingestion-key.cccccccc-3333-4444-5555-666677778888",
+                ),
+            },
+        };
+        let yaml = rendered_yaml(&[instance]);
+        assert!(yaml.contains("tls:\n      insecure: true"), "got:\n{yaml}");
     }
 }
