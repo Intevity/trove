@@ -43,7 +43,8 @@
       "../../../resources/hooks/cursor-otel-hook.cjs": "resources/hooks/cursor-otel-hook.cjs",
       "../../../resources/hooks/cursor-otel-hook-impl.cjs": "resources/hooks/cursor-otel-hook-impl.cjs",
       "../../../resources/wrappers/trove-aider": "resources/wrappers/trove-aider",
-      "../../../resources/wrappers/trove-copilot": "resources/wrappers/trove-copilot"
+      "../../../resources/wrappers/trove-copilot": "resources/wrappers/trove-copilot",
+      "../../../resources/wrappers/trove-cursor-agent": "resources/wrappers/trove-cursor-agent"
     },
     "icon": [
       "icons/32x32.png",

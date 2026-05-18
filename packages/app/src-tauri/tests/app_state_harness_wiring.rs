@@ -279,10 +279,20 @@ fn apply_cursor_then_persist(
             cursor_ide::apply(home, &options, hook_path).unwrap(),
             cursor_ide::config_path(home),
         ),
-        HarnessId::CursorCli => (
-            cursor_cli::apply(home, &options, hook_path).unwrap(),
-            cursor_cli::config_path(home),
-        ),
+        HarnessId::CursorCli => {
+            // After the cursor-cli wrapper rewrite, cursor-cli patches
+            // the user's shell rc (not hooks.json). Seed an empty
+            // .zshrc so wrapper_common's "needs a shell rc"
+            // precondition is satisfied in the test tempdir.
+            let zshrc = home.join(".zshrc");
+            if !zshrc.exists() {
+                std::fs::write(&zshrc, "").unwrap();
+            }
+            (
+                cursor_cli::apply(home, &options, hook_path).unwrap(),
+                cursor_cli::config_path(home),
+            )
+        }
         other => panic!("apply_cursor_then_persist called with non-cursor id {other:?}"),
     };
     let entry = harness_config_from_apply(id, &config_path, options, patch.clone());

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# trove-cursor-agent — Tier 3 wrapper for the `cursor-agent` CLI.
+#
+# Invoked from the user's shell rc (Trove appends a function named
+# `cursor-agent` that execs this script). Runs the real cursor-agent
+# binary and writes a single JSON-line per invocation to the Trove log
+# file the log watcher tails. Never blocks the user — write failures
+# fall through to stderr and the real cursor-agent runs unchanged.
+#
+# Why a wrapper and not the Cursor IDE hook system: `cursor-agent` (the
+# headless CLI) does not fire the `beforeShellExecution` /
+# `afterShellExecution` / `beforeSubmitPrompt` / `afterAgentResponse`
+# hooks that Cursor IDE does — those hooks are IDE-only. Without this
+# wrapper, enabling the cursor-cli harness in Trove was a no-op for any
+# `cursor-agent -p "..."` invocation.
+#
+# Each emitted log line:
+#   {"ts":"<ISO-8601>","tool":"cursor-cli","argc":N,"exit_code":<int>,"duration_ms":<int>}
+
+set -uo pipefail
+
+LOG_DIR="${TROVE_STATE_DIR:-$HOME/.local/state/trove}"
+LOG_FILE="$LOG_DIR/cursor-agent.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+
+# Resolve the real cursor-agent binary, skipping the wrapper itself.
+# We look for the first `cursor-agent` on PATH that is not this script
+# — avoids infinite recursion when the shell function shadows the
+# binary.
+SELF="$(readlink -f -- "$0" 2>/dev/null || echo "$0")"
+REAL_CURSOR=""
+IFS=':' read -r -a path_parts <<<"${PATH:-}"
+for dir in "${path_parts[@]}"; do
+  [ -z "$dir" ] && continue
+  candidate="$dir/cursor-agent"
+  if [ -x "$candidate" ] && [ "$(readlink -f -- "$candidate" 2>/dev/null || echo "$candidate")" != "$SELF" ]; then
+    REAL_CURSOR="$candidate"
+    break
+  fi
+done
+
+if [ -z "$REAL_CURSOR" ]; then
+  echo "trove-cursor-agent: real \`cursor-agent\` binary not found on PATH" >&2
+  exit 127
+fi
+
+START_NS="$(date +%s%N 2>/dev/null || echo 0)"
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
+
+"$REAL_CURSOR" "$@"
+EXIT=$?
+
+END_NS="$(date +%s%N 2>/dev/null || echo 0)"
+if [ "$END_NS" -ge "$START_NS" ] 2>/dev/null; then
+  DURATION_MS=$(( (END_NS - START_NS) / 1000000 ))
+else
+  DURATION_MS=0
+fi
+
+LINE=$(printf '{"ts":"%s","tool":"cursor-cli","argc":%d,"exit_code":%d,"duration_ms":%d}\n' \
+  "$TS" "$#" "$EXIT" "$DURATION_MS")
+
+printf '%s' "$LINE" >>"$LOG_FILE" 2>/dev/null || true
+
+exit "$EXIT"
