@@ -74,9 +74,82 @@ pub fn apply(home: &Path, opts: &ApplyOptions) -> Result<TrovePatch, IpcError> {
     common::apply(&SPEC, home, opts)
 }
 
-/// Remove any Trove-managed region from the host file.
+/// Remove the OpenCode managed leaves from the host file.
+///
+/// Custom (does not delegate to [`common::revert`]) because the adapter
+/// opts out of the `_trove` top-level marker — opencode's strict JSON
+/// schema rejects unknown top-level keys. Without the marker the
+/// generic revert path can't tell which leaves are ours, so we read
+/// the canonical `managed_keys` from [`build_region`] and strip them
+/// directly. Also tolerates old-style files that still carry `_trove`
+/// (from a build that predated the opt-out) by removing it too.
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    common::revert(&SPEC, home)
+    use crate::safety::atomic::write_atomic;
+    use crate::safety::backup::{backup_file, prune_backups};
+    use crate::adapters::BACKUPS_TO_KEEP;
+
+    let path = config_path(home);
+    let current = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(IpcError::Io {
+                path: path.display().to_string(),
+                reason: e.to_string(),
+            });
+        }
+    };
+
+    let region =
+        build_region(&ApplyOptions::default()).map_err(|e| IpcError::Internal {
+            reason: format!("could not derive managed_keys for revert: {e}"),
+        })?;
+
+    let mut value: Value =
+        serde_json::from_str(&current).map_err(|e| IpcError::ConfigUnparseable {
+            path: path.display().to_string(),
+            reason: e.to_string(),
+        })?;
+    let Value::Object(obj) = &mut value else {
+        return Err(IpcError::ConfigUnparseable {
+            path: path.display().to_string(),
+            reason: "host JSON document is not an object".into(),
+        });
+    };
+
+    let mut changed = false;
+    // Remove any legacy `_trove` marker left over from a previous build.
+    if obj.shift_remove("_trove").is_some() {
+        changed = true;
+    }
+    // Remove the leaves the adapter manages. `managed_keys` for opencode
+    // are top-level only (`$schema`, `plugin`), so dotted-path traversal
+    // isn't required.
+    for key in &region.managed_keys {
+        if obj.shift_remove(key).is_some() {
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return Ok(());
+    }
+
+    let mut after = serde_json::to_string_pretty(&value).map_err(|e| IpcError::Internal {
+        reason: format!("could not emit revert payload: {e}"),
+    })?;
+    after.push('\n');
+
+    backup_file(&path).map_err(|e| IpcError::Io {
+        path: path.display().to_string(),
+        reason: format!("backup failed: {e}"),
+    })?;
+    write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
+        path: path.display().to_string(),
+        reason: e.to_string(),
+    })?;
+    let _ = prune_backups(&path, BACKUPS_TO_KEEP);
+    Ok(())
 }
 
 /// Build the [`ManagedRegion`] for the OpenCode patch.
@@ -109,7 +182,12 @@ fn build_region(opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
         Value::Array(vec![Value::String(OTEL_PLUGIN_PACKAGE.to_string())]),
     );
 
-    ManagedRegion::for_json_patches(&top)
+    // Opt out of the `_trove` top-level marker: opencode's JSON schema
+    // (`https://opencode.ai/config.json`) rejects unknown top-level keys
+    // and the CLI refuses to start with `Unrecognized key: _trove`.
+    // `revert` (above) re-derives `managed_keys` from this same
+    // `build_region` call, so the marker isn't needed for cleanup.
+    ManagedRegion::for_json_patches_no_marker(&top)
 }
 
 #[cfg(test)]
@@ -137,7 +215,13 @@ mod tests {
         let plugins = parsed.get("plugin").and_then(Value::as_array).unwrap();
         assert_eq!(plugins.len(), 1);
         assert_eq!(plugins[0], OTEL_PLUGIN_PACKAGE);
-        assert!(parsed.get("_trove").is_some(), "missing sentinel block");
+        // Opencode's CLI rejects unknown top-level keys (it validates
+        // against its strict JSON schema). Trove opts out of the
+        // `_trove` marker for this host — see `build_region`.
+        assert!(
+            parsed.get("_trove").is_none(),
+            "opencode opts out of the _trove marker"
+        );
 
         assert_eq!(patch.managed_block_hash.len(), 64);
         assert_eq!(patch.file_hash_at_last_write.len(), 64);
@@ -147,7 +231,11 @@ mod tests {
     // --- 2. Idempotent re-apply ----------------------------------------------
 
     #[test]
-    fn idempotent_reapply_does_not_change_the_file() {
+    fn reapply_produces_byte_identical_content() {
+        // Without the `_trove` marker the conflict-detector treats every
+        // re-apply as Fresh. The write path still produces deterministic
+        // output (sorted keys, fixed leaves) so the resulting file is
+        // byte-identical even though a new backup is created.
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let after_first = read_config(home.path());
@@ -178,10 +266,14 @@ mod tests {
         assert_eq!(parsed["plugin"][0], OTEL_PLUGIN_PACKAGE);
     }
 
-    // --- 4. User-edited inside the managed block (conflict) ----------------
+    // --- 4. User-edited inside the managed leaves (re-apply restores) -----
 
     #[test]
-    fn editing_inside_the_managed_block_yields_conflict() {
+    fn re_apply_after_user_edit_restores_managed_leaves() {
+        // Trade-off: opencode opts out of `_trove`, so the conflict
+        // detector can't tell that a user replaced our `plugin` value
+        // with something else. Apply silently restores the canonical
+        // value. Documented in `build_region`'s trade-off note.
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
 
@@ -194,15 +286,14 @@ mod tests {
         assert_ne!(edited, written);
         fs::write(&path, &edited).unwrap();
 
-        let result = apply(home.path(), &ApplyOptions::default());
-        match result {
-            Err(IpcError::RegionConflict { path: p }) => {
-                assert_eq!(p, path.display().to_string());
-            }
-            other => panic!("expected RegionConflict, got {other:?}"),
-        }
-        // The on-disk file is untouched.
-        assert_eq!(read_config(home.path()), edited);
+        apply(home.path(), &ApplyOptions::default()).unwrap();
+
+        let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
+        assert_eq!(parsed["plugin"][0], OTEL_PLUGIN_PACKAGE);
+        assert!(
+            !read_config(home.path()).contains("@attacker"),
+            "re-apply must overwrite the attacker entry"
+        );
     }
 
     // --- 5. Malformed file ---------------------------------------------------
@@ -286,6 +377,62 @@ mod tests {
         assert_eq!(read_config(home.path()), user_only);
     }
 
+    // --- Bug C: `_trove` marker opt-out -------------------------------------
+
+    #[test]
+    fn apply_does_not_write_top_level_trove_key() {
+        let home = tempdir().unwrap();
+        apply(home.path(), &ApplyOptions::default()).unwrap();
+        let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
+        assert!(parsed.get("_trove").is_none());
+        assert_eq!(parsed["$schema"], OPENCODE_SCHEMA_URL);
+        assert_eq!(parsed["plugin"][0], OTEL_PLUGIN_PACKAGE);
+    }
+
+    #[test]
+    fn revert_uses_build_region_managed_keys_when_no_trove_marker() {
+        let home = tempdir().unwrap();
+        let path = config_path(home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Hand-write the canonical applied form (no `_trove`, has the
+        // two managed leaves) — simulates the new no-marker apply.
+        fs::write(
+            &path,
+            "{\n  \"theme\": \"midnight\",\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"plugin\": [\"@devtheops/opencode-plugin-otel\"]\n}\n",
+        )
+        .unwrap();
+
+        revert(home.path()).unwrap();
+
+        let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
+        assert!(parsed.get("$schema").is_none(), "schema leaf removed");
+        assert!(parsed.get("plugin").is_none(), "plugin leaf removed");
+        assert_eq!(parsed["theme"], "midnight", "user key survives");
+    }
+
+    #[test]
+    fn revert_strips_legacy_trove_marker_if_present() {
+        // Files from a previous build still carry `_trove`. Revert
+        // must remove it alongside the managed leaves so a clean
+        // re-apply doesn't drag the deprecated marker forward.
+        let home = tempdir().unwrap();
+        let path = config_path(home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"theme":"midnight","$schema":"https://opencode.ai/config.json","plugin":["@devtheops/opencode-plugin-otel"],"_trove":{"managed_keys":["$schema","plugin"],"hash":"deadbeef"}}"#,
+        )
+        .unwrap();
+
+        revert(home.path()).unwrap();
+
+        let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
+        assert!(parsed.get("_trove").is_none());
+        assert!(parsed.get("$schema").is_none());
+        assert!(parsed.get("plugin").is_none());
+        assert_eq!(parsed["theme"], "midnight");
+    }
+
     // --- Preview --------------------------------------------------------------
 
     #[test]
@@ -300,16 +447,23 @@ mod tests {
     }
 
     #[test]
-    fn preview_after_apply_returns_idempotent_status() {
+    fn preview_after_apply_reports_fresh_with_unchanged_diff() {
+        // Trade-off of the `_trove` opt-out: classify can't tell that
+        // the leaves are already installed, so status stays Fresh on
+        // every re-preview. The diff is empty (before == after), which
+        // the UI uses to suppress the apply-button affordance.
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let preview = preview(home.path(), &ApplyOptions::default()).unwrap();
-        assert_eq!(preview.status, PreviewStatus::Idempotent);
+        assert_eq!(preview.status, PreviewStatus::Fresh);
         assert_eq!(preview.after, preview.before);
     }
 
     #[test]
-    fn preview_with_tampered_block_returns_conflict_status() {
+    fn preview_with_tampered_block_reports_fresh_diff() {
+        // Same trade-off — the conflict detector is unavailable without
+        // `_trove`. The diff is non-empty (apply would overwrite the
+        // edit) and the UI surfaces that to the user before they apply.
         let home = tempdir().unwrap();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let path = config_path(home.path());
@@ -320,7 +474,10 @@ mod tests {
         fs::write(&path, &edited).unwrap();
 
         let preview = preview(home.path(), &ApplyOptions::default()).unwrap();
-        assert_eq!(preview.status, PreviewStatus::Conflict);
+        assert_eq!(preview.status, PreviewStatus::Fresh);
+        assert_ne!(preview.after, preview.before);
+        assert!(preview.after.contains(OTEL_PLUGIN_PACKAGE));
+        assert!(!preview.after.contains("@attacker"));
     }
 
     #[test]
