@@ -55,7 +55,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 
 /// Serde helper that defaults a `bool` field to `true`. Used for opt-out
 /// settings whose absence in a migrated document should be interpreted
@@ -454,15 +454,18 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2..=v8 migration. Earlier sprints added autoUpdateEnabled,
+        // v2..=v9 migration. Earlier sprints added autoUpdateEnabled,
         // identity, and mappings — all use `#[serde(default)]` so older
         // documents deserialize cleanly. v7 (multi-platform refactor)
         // replaces the single `backend` slot with a `backends` list; the
         // pre-deserialization shim below rewrites the legacy field when
         // present. v8 adds launch_at_startup_enabled defaulting to true
-        // via `default_true`. We re-stamp schema_version on the returned
-        // struct so the next save persists the current version to disk.
-        2..=8 => {
+        // via `default_true`. v9 (release-blockers commit train) flips
+        // `trovePatch.format` from `"yaml"` to `"shell"` for wrapper
+        // adapter entries whose `configPath` is a shell rc. We re-stamp
+        // schema_version on the returned struct so the next save
+        // persists the current version to disk.
+        2..=9 => {
             // Field-shape migrations applied at the JSON-value level so
             // we don't need to keep parallel legacy deserializer types
             // around. Applied in chronological order so a v2 document
@@ -470,12 +473,15 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
             //   (1) SigNoz `region` → `endpoint` (rename inside one
             //       discriminated-union variant).
             //   (2) v6 → v7: `backend: Backend | null` → `backends: [BackendInstance]`.
+            //   (3) v8 → v9: wrapper-adapter `trovePatch.format` `"yaml"`
+            //       → `"shell"` (the new `Format::Shell` variant).
             let mut value: serde_json::Value =
                 serde_json::from_slice(&bytes).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
                 })?;
             migrate_signoz_region_to_endpoint(&mut value);
             migrate_backend_to_backends(&mut value);
+            migrate_wrapper_format_yaml_to_shell(&mut value);
             let mut state: AppState =
                 serde_json::from_value(value).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
@@ -580,6 +586,69 @@ fn migrate_backend_to_backends(value: &mut serde_json::Value) {
         _ => Vec::new(),
     };
     obj.insert("backends".to_string(), serde_json::Value::Array(list));
+}
+
+/// Reshape a v8 document's wrapper-adapter `trovePatch.format` values
+/// from the legacy `"yaml"` token to the new `"shell"` token. Pre-v9
+/// builds reused `Format::Yaml` for shell rc patches even though the
+/// sentinels engine's YAML branch validates the host as YAML — which
+/// erupts as `malformed yaml document` when the conflict-payload IPC
+/// path runs `extract_region` on `~/.zshrc`. v9 introduces a dedicated
+/// `Format::Shell` variant; this migration flips persisted entries
+/// over so existing users don't need to re-Enable each wrapper.
+///
+/// A wrapper entry is identified by a `configPath` whose final segment
+/// is a known shell rc name (`.zshrc`, `.bashrc`, `.bash_profile`, or
+/// `config.fish`). The migration is idempotent: entries already on
+/// `"shell"` are unchanged, and non-shell `"yaml"` entries are
+/// untouched.
+fn migrate_wrapper_format_yaml_to_shell(value: &mut serde_json::Value) {
+    let Some(list) = value
+        .get_mut("harnesses")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for entry in list {
+        let Some(obj) = entry.as_object_mut() else {
+            continue;
+        };
+        let is_shell_rc = obj
+            .get("configPath")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(is_shell_rc_path);
+        if !is_shell_rc {
+            continue;
+        }
+        let Some(patch) = obj
+            .get_mut("trovePatch")
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            continue;
+        };
+        let needs_flip = patch
+            .get("format")
+            .and_then(serde_json::Value::as_str)
+            == Some("yaml");
+        if needs_flip {
+            patch.insert(
+                "format".to_string(),
+                serde_json::Value::String("shell".to_string()),
+            );
+        }
+    }
+}
+
+/// Heuristic for detecting shell rc paths in `configPath` strings. The
+/// migration only flips wrapper-adapter entries (aider, copilot-cli,
+/// cursor-cli) — every other format that touches a shell rc would
+/// already be a coding bug we'd want to surface, not silently rewrite.
+fn is_shell_rc_path(path: &str) -> bool {
+    let tail = path.rsplit('/').next().unwrap_or(path);
+    matches!(
+        tail,
+        ".zshrc" | ".bashrc" | ".bash_profile" | "config.fish"
+    )
 }
 
 /// Backfill `mappings.harnesses` with the default entry for any
@@ -1027,7 +1096,7 @@ mod tests {
     fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 8);
+        assert_eq!(s.schema_version, 9);
         assert!(s.backends.is_empty());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
@@ -1305,6 +1374,112 @@ mod tests {
     }
 
     #[test]
+    fn v8_state_migrates_wrapper_format_yaml_to_shell() {
+        // Pre-v9, wrapper adapters (aider, copilot-cli, cursor-cli)
+        // persisted `trovePatch.format` as `"yaml"` because the
+        // sentinels engine had no `Shell` variant. v9 introduces it;
+        // the migration must flip the legacy token for entries whose
+        // `configPath` is a shell rc, and leave other `"yaml"` entries
+        // (real YAML hosts) alone.
+        let dir = tempfile::tempdir().unwrap();
+        let path = state_path_in(dir.path());
+        std::fs::write(
+            &path,
+            br#"{
+                "schemaVersion": 8,
+                "backends": [],
+                "harnesses": [
+                    {
+                        "id": "aider",
+                        "enabled": true,
+                        "configPath": "/Users/dev/.zshrc",
+                        "lastPatchedAt": "2026-05-01T00:00:00Z",
+                        "trovePatch": {
+                            "managedBlockHash": "abc",
+                            "fileHashAtLastWrite": "def",
+                            "format": "yaml",
+                            "lastWrittenRegionPayload": "aider() { echo aider; }"
+                        },
+                        "options": { "customAttributes": {} }
+                    },
+                    {
+                        "id": "copilot-cli",
+                        "enabled": true,
+                        "configPath": "/home/dev/.bashrc",
+                        "lastPatchedAt": "2026-05-01T00:00:00Z",
+                        "trovePatch": {
+                            "managedBlockHash": "abc",
+                            "fileHashAtLastWrite": "def",
+                            "format": "yaml",
+                            "lastWrittenRegionPayload": ""
+                        },
+                        "options": { "customAttributes": {} }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
+        for entry in &state.harnesses {
+            assert_eq!(
+                entry.trove_patch.format,
+                crate::safety::sentinels::Format::Shell,
+                "{:?} should have migrated to Format::Shell",
+                entry.id,
+            );
+        }
+    }
+
+    #[test]
+    fn migrate_wrapper_format_helper_leaves_non_shell_yaml_alone() {
+        // A purely-YAML host (e.g. a hypothetical adapter targeting
+        // `~/.config/foo/config.yaml`) must keep `format: "yaml"`. The
+        // migration only touches entries whose configPath is a known
+        // shell rc name.
+        let mut value = serde_json::json!({
+            "harnesses": [
+                {
+                    "id": "hypothetical-yaml-adapter",
+                    "configPath": "/Users/dev/.config/foo/config.yaml",
+                    "trovePatch": {
+                        "managedBlockHash": "a",
+                        "fileHashAtLastWrite": "b",
+                        "format": "yaml",
+                        "lastWrittenRegionPayload": ""
+                    }
+                }
+            ]
+        });
+        migrate_wrapper_format_yaml_to_shell(&mut value);
+        assert_eq!(
+            value["harnesses"][0]["trovePatch"]["format"], "yaml",
+        );
+    }
+
+    #[test]
+    fn migrate_wrapper_format_helper_is_idempotent_on_already_shell_entries() {
+        let mut value = serde_json::json!({
+            "harnesses": [
+                {
+                    "id": "aider",
+                    "configPath": "/Users/dev/.zshrc",
+                    "trovePatch": {
+                        "managedBlockHash": "a",
+                        "fileHashAtLastWrite": "b",
+                        "format": "shell",
+                        "lastWrittenRegionPayload": ""
+                    }
+                }
+            ]
+        });
+        migrate_wrapper_format_yaml_to_shell(&mut value);
+        assert_eq!(
+            value["harnesses"][0]["trovePatch"]["format"], "shell",
+        );
+    }
+
+    #[test]
     fn v7_state_migrates_to_v8_with_launch_at_startup_defaulting_true() {
         // Existing v7 documents predate the launch_at_startup opt-out.
         // They must load cleanly, default the new field to `true`, and
@@ -1413,7 +1588,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 8"));
+        assert!(on_disk.contains("\"schemaVersion\": 9"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1470,7 +1645,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 8"));
+        assert!(on_disk.contains("\"schemaVersion\": 9"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1562,7 +1737,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 8"));
+        assert!(on_disk.contains("\"schemaVersion\": 9"));
         assert!(on_disk.contains("\"mappings\""));
     }
 
@@ -1740,7 +1915,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 8"));
+        assert!(on_disk.contains("\"schemaVersion\": 9"));
         assert!(on_disk.contains("\"backends\""));
         assert!(!on_disk.contains("\"backend\":"));
     }

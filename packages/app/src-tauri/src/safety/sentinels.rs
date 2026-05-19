@@ -28,7 +28,12 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// One of the four config-file formats Trove patches.
+/// One of the config-file formats Trove patches. `Shell` shares the
+/// `# trove:start … # trove:end` comment-fence syntax with `Yaml` /
+/// `Toml`, but skips the document-level parser — a real shell rc has
+/// `export FOO="..."` lines and unbalanced quotes that YAML/serde_yml
+/// rejects. Wrapper-style adapters (aider, copilot-cli, cursor-cli)
+/// use `Shell`; tier-1 YAML adapters use `Yaml`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
@@ -36,6 +41,7 @@ pub enum Format {
     Jsonc,
     Toml,
     Yaml,
+    Shell,
 }
 
 impl Format {
@@ -45,6 +51,7 @@ impl Format {
             Self::Jsonc => "jsonc",
             Self::Toml => "toml",
             Self::Yaml => "yaml",
+            Self::Shell => "shell",
         }
     }
 }
@@ -175,6 +182,7 @@ pub fn upsert_region(
         Format::Jsonc => json_like::upsert(content, region, /*is_jsonc=*/ true),
         Format::Toml => comment_fence::upsert_toml(content, region),
         Format::Yaml => comment_fence::upsert_yaml(content, region),
+        Format::Shell => comment_fence::upsert_shell(content, region),
     }
 }
 
@@ -185,6 +193,7 @@ pub fn remove_region(format: Format, content: &str) -> Result<String, SentinelEr
         Format::Jsonc => json_like::remove(content, /*is_jsonc=*/ true),
         Format::Toml => comment_fence::remove_toml(content),
         Format::Yaml => comment_fence::remove_yaml(content),
+        Format::Shell => comment_fence::remove_shell(content),
     }
 }
 
@@ -199,6 +208,7 @@ pub fn extract_region(
         Format::Jsonc => json_like::extract(content, /*is_jsonc=*/ true),
         Format::Toml => comment_fence::extract_toml(content),
         Format::Yaml => comment_fence::extract_yaml(content),
+        Format::Shell => comment_fence::extract_shell(content),
     }
 }
 
@@ -511,6 +521,28 @@ mod comment_fence {
         content: &str,
     ) -> Result<Option<ManagedRegion>, SentinelError> {
         validate_yaml(content)?;
+        extract_block(content)
+    }
+
+    // Shell rc files share the comment-fence convention but are not a
+    // document-level parseable format (they have `export FOO="bar"`,
+    // unbalanced quotes, multi-statement lines, etc.). The Shell trio
+    // skips validation and only operates on the fenced region.
+
+    pub(super) fn upsert_shell(
+        content: &str,
+        region: &ManagedRegion,
+    ) -> Result<String, SentinelError> {
+        replace_or_append(content, region)
+    }
+
+    pub(super) fn remove_shell(content: &str) -> Result<String, SentinelError> {
+        strip_block(content)
+    }
+
+    pub(super) fn extract_shell(
+        content: &str,
+    ) -> Result<Option<ManagedRegion>, SentinelError> {
         extract_block(content)
     }
 
@@ -839,7 +871,13 @@ mod tests {
 
     #[test]
     fn format_label_round_trip() {
-        for f in [Format::Json, Format::Jsonc, Format::Toml, Format::Yaml] {
+        for f in [
+            Format::Json,
+            Format::Jsonc,
+            Format::Toml,
+            Format::Yaml,
+            Format::Shell,
+        ] {
             assert!(!f.label().is_empty());
             assert_eq!(f.to_string(), f.label());
         }
@@ -1060,6 +1098,58 @@ mod tests {
         let err =
             upsert_region(Format::Yaml, "service:\n\tname: trove\n", &region).unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
+    }
+
+    // --- Shell ---
+
+    #[test]
+    fn shell_extract_does_not_validate_as_yaml() {
+        // A real shell rc is not a parseable YAML document — it carries
+        // `export FOO="bar"` lines, multi-statement chains, comments
+        // with `#!`, etc. The YAML branch errors with
+        // `Malformed { format: Yaml }` on this input; the Shell branch
+        // must pass it through as plain text and return `None` (no
+        // fence present).
+        let rc = r#"# user shell rc
+export PATH="$HOME/bin:$PATH"
+alias ll='ls -la'
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+"#;
+        // Sanity: confirm the same input does error on the YAML branch.
+        let region = text_region("aider() { :; }\n", &["aider"]);
+        let yaml_err = upsert_region(Format::Yaml, rc, &region).unwrap_err();
+        assert!(matches!(yaml_err, SentinelError::Malformed { format: Format::Yaml, .. }));
+        // Shell branch: extract returns Ok(None) — no fence present.
+        let got = extract_region(Format::Shell, rc).unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn shell_upsert_writes_fence_around_block() {
+        let rc = "export FOO=bar\n";
+        let region = text_region("aider() { \"/opt/trove-aider\" \"$@\"; }\n", &["aider"]);
+        let after = upsert_region(Format::Shell, rc, &region).unwrap();
+        assert!(after.starts_with("export FOO=bar"));
+        assert!(after.contains("# trove:start"));
+        assert!(after.contains("aider() { \"/opt/trove-aider\" \"$@\"; }"));
+        assert!(after.contains("# trove:end"));
+    }
+
+    #[test]
+    fn shell_remove_strips_fence_only() {
+        let rc = r#"export FOO=bar
+
+# trove:start hash=deadbeef keys=aider
+aider() { :; }
+# trove:end
+alias ll='ls -la'
+"#;
+        let after = remove_region(Format::Shell, rc).unwrap();
+        assert!(!after.contains("# trove:start"));
+        assert!(!after.contains("# trove:end"));
+        assert!(!after.contains("aider() {"));
+        assert!(after.contains("export FOO=bar"));
+        assert!(after.contains("alias ll='ls -la'"));
     }
 
     // --- helpers ---
