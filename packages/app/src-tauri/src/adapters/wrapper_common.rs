@@ -36,15 +36,39 @@ use crate::safety::sentinels::Format;
 
 use super::{ApplyOptions, BACKUPS_TO_KEEP, PatchPreview, PreviewStatus, TrovePatch};
 
-/// Trove's fence markers in shell rc files. Same as TOML / YAML.
-const FENCE_START: &str = "# trove:start";
-const FENCE_END: &str = "# trove:end";
+/// Trove's legacy fence markers in shell rc files. Pre-v0.5.1, all
+/// wrapper adapters wrote the same un-namespaced fence pair, which
+/// meant a second wrapper-style Enable would overwrite the first one's
+/// block. The current code writes per-adapter fences (see
+/// [`fence_start`] / [`fence_end`]); these legacy constants are kept
+/// only so [`locate_block`] can detect an existing pre-namespace block
+/// and migrate it forward on the next upsert.
+const LEGACY_FENCE_START: &str = "# trove:start";
+const LEGACY_FENCE_END: &str = "# trove:end";
+
+/// Per-adapter fence start marker. Each wrapper adapter writes a block
+/// fenced with its own id so multiple wrapper adapters (aider,
+/// copilot-cli, cursor-cli) can coexist in the same shell rc.
+#[must_use]
+fn fence_start(adapter_id: &str) -> String {
+    format!("# trove:{adapter_id}:start")
+}
+
+/// Per-adapter fence end marker. See [`fence_start`].
+#[must_use]
+fn fence_end(adapter_id: &str) -> String {
+    format!("# trove:{adapter_id}:end")
+}
 
 /// Specification for one shell-function install: the function name(s)
 /// the user will invoke (`aider`, `copilot`, `gh-copilot`) and the
 /// bundled wrapper script's path on disk.
 #[derive(Clone, Debug)]
 pub struct WrapperSpec {
+    /// Harness id used to namespace the fence markers in the shell rc
+    /// (`# trove:{adapter_id}:start` / `# trove:{adapter_id}:end`).
+    /// Multiple wrapper adapters coexist by using distinct ids.
+    pub adapter_id: &'static str,
     /// Names of the shell functions to define. Most adapters install a
     /// single name (`["aider"]`, `["cursor-agent"]`); `copilot-cli`
     /// installs both `["copilot", "gh-copilot"]` to cover the new
@@ -137,7 +161,7 @@ pub fn apply_to_primary_shell_rc(
     })?;
     let current = std::fs::read_to_string(&path).unwrap_or_default();
     let block = build_managed_block(spec, opts);
-    let new_content = upsert_managed_block(&current, &block);
+    let new_content = upsert_managed_block(&current, &block, spec.adapter_id, spec.function_names);
 
     if new_content != current {
         backup_file(&path).map_err(|e| IpcError::Io {
@@ -176,17 +200,20 @@ pub fn preview_for_primary_shell_rc(
     })?;
     let current = std::fs::read_to_string(&path).unwrap_or_default();
     let proposed = build_managed_block(spec, opts);
-    let new_content = upsert_managed_block(&current, &proposed);
+    let new_content =
+        upsert_managed_block(&current, &proposed, spec.adapter_id, spec.function_names);
 
-    let status = if let Some(existing) = extract_managed_block(&current) {
-        if existing.trim() == proposed.trim() {
-            PreviewStatus::Idempotent
+    let status =
+        if let Some(existing) = extract_managed_block(&current, spec.adapter_id, spec.function_names)
+        {
+            if existing.trim() == proposed.trim() {
+                PreviewStatus::Idempotent
+            } else {
+                PreviewStatus::Conflict
+            }
         } else {
-            PreviewStatus::Conflict
-        }
-    } else {
-        PreviewStatus::Fresh
-    };
+            PreviewStatus::Fresh
+        };
 
     Ok(PatchPreview {
         config_path: path,
@@ -197,19 +224,29 @@ pub fn preview_for_primary_shell_rc(
     })
 }
 
-/// Strip Trove's managed block from the primary shell rc file.
-/// No-op when no block is present.
-pub fn revert_primary_shell_rc(home: &Path) -> Result<(), IpcError> {
+/// Strip Trove's managed block for one adapter from the primary shell
+/// rc file. No-op when no block is present for `adapter_id`. Per-adapter
+/// scoping means reverting (say) aider leaves an enabled copilot-cli's
+/// block intact. Also migrates a legacy un-namespaced block that
+/// belongs to this adapter (detected by `function_names` matching the
+/// shell-function definition inside the fenced body), so a user who
+/// last enabled the wrapper on a pre-v0.5.1 build can still cleanly
+/// disable it without leaving an orphan fence behind.
+pub fn revert_primary_shell_rc(
+    home: &Path,
+    adapter_id: &str,
+    function_names: &[&'static str],
+) -> Result<(), IpcError> {
     let Some(path) = primary_shell_rc(home) else {
         return Ok(());
     };
     let Ok(current) = std::fs::read_to_string(&path) else {
         return Ok(());
     };
-    if extract_managed_block(&current).is_none() {
+    if extract_managed_block(&current, adapter_id, function_names).is_none() {
         return Ok(());
     }
-    let stripped = strip_managed_block(&current);
+    let stripped = strip_managed_block(&current, adapter_id, function_names);
     if stripped != current {
         backup_file(&path).map_err(|e| IpcError::Io {
             path: path.display().to_string(),
@@ -228,13 +265,24 @@ pub fn revert_primary_shell_rc(home: &Path) -> Result<(), IpcError> {
 // Plain-text fence helpers (no parser; shell rc is not a parseable format).
 // ---------------------------------------------------------------------------
 
-/// Insert or replace Trove's managed block in `content`. Idempotent.
+/// Insert or replace this adapter's managed block in `content`. The
+/// fence is namespaced (`# trove:{adapter_id}:start`) so multiple
+/// wrapper adapters coexist. When `function_names` is provided AND no
+/// namespaced fence is present but a legacy un-namespaced block exists
+/// whose body defines a function from `function_names`, the legacy
+/// block is migrated in place (replaced with the namespaced form).
+/// Idempotent.
 #[must_use]
-pub fn upsert_managed_block(content: &str, block: &str) -> String {
-    if let Some((start, end)) = locate_block(content) {
+pub fn upsert_managed_block(
+    content: &str,
+    block: &str,
+    adapter_id: &str,
+    function_names: &[&'static str],
+) -> String {
+    if let Some((start, end)) = locate_block(content, adapter_id, function_names) {
         let mut out = String::with_capacity(content.len() + block.len());
         out.push_str(&content[..start]);
-        out.push_str(&render_fenced(block));
+        out.push_str(&render_fenced(block, adapter_id));
         out.push_str(&content[end..]);
         out
     } else {
@@ -246,18 +294,23 @@ pub fn upsert_managed_block(content: &str, block: &str) -> String {
         if !content.is_empty() && !content.ends_with("\n\n") {
             out.push('\n');
         }
-        out.push_str(&render_fenced(block));
+        out.push_str(&render_fenced(block, adapter_id));
         out
     }
 }
 
-/// Strip Trove's managed block from `content`. No-op when absent.
-/// Removes the visual-separator blank line `upsert_managed_block`
-/// inserts above the fence so an apply-then-revert sequence is
-/// byte-identical to the original.
+/// Strip this adapter's managed block from `content`. No-op when
+/// absent. Removes the visual-separator blank line
+/// `upsert_managed_block` inserts above the fence so an
+/// apply-then-revert sequence is byte-identical to the original. Other
+/// adapters' blocks are untouched.
 #[must_use]
-pub fn strip_managed_block(content: &str) -> String {
-    let Some((start, end)) = locate_block(content) else {
+pub fn strip_managed_block(
+    content: &str,
+    adapter_id: &str,
+    function_names: &[&'static str],
+) -> String {
+    let Some((start, end)) = locate_block(content, adapter_id, function_names) else {
         return content.to_string();
     };
     let prefix = &content[..start];
@@ -281,15 +334,28 @@ pub fn strip_managed_block(content: &str) -> String {
 }
 
 /// Return the inner managed-block text (between the fence markers,
-/// excluding the markers themselves) if present.
+/// excluding the markers themselves) for `adapter_id` if present. Also
+/// matches a legacy un-namespaced block whose body defines a function
+/// from `function_names`, so a pre-v0.5.1 enable is still detected as
+/// "already applied" for status-classification purposes.
 #[must_use]
-pub fn extract_managed_block(content: &str) -> Option<String> {
-    let (start, end) = locate_block(content)?;
+pub fn extract_managed_block(
+    content: &str,
+    adapter_id: &str,
+    function_names: &[&'static str],
+) -> Option<String> {
+    let (start, end) = locate_block(content, adapter_id, function_names)?;
     let block = &content[start..end];
     let mut lines: Vec<&str> = block.lines().collect();
-    if lines.first().is_some_and(|l| l.trim_start().starts_with(FENCE_START))
-        && lines.last().is_some_and(|l| l.trim_start().starts_with(FENCE_END))
-    {
+    let opens_with_fence = lines.first().is_some_and(|l| {
+        let t = l.trim_start();
+        t.starts_with(&fence_start(adapter_id)) || t.starts_with(LEGACY_FENCE_START)
+    });
+    let closes_with_fence = lines.last().is_some_and(|l| {
+        let t = l.trim_start();
+        t.starts_with(&fence_end(adapter_id)) || t.starts_with(LEGACY_FENCE_END)
+    });
+    if opens_with_fence && closes_with_fence {
         // Drop fence start + fence end lines.
         lines.remove(0);
         lines.pop();
@@ -297,23 +363,56 @@ pub fn extract_managed_block(content: &str) -> Option<String> {
     Some(lines.join("\n"))
 }
 
-/// Wrap `block` in fence markers, ensuring a single trailing newline.
-fn render_fenced(block: &str) -> String {
+/// Wrap `block` in this adapter's namespaced fence markers, ensuring a
+/// single trailing newline.
+fn render_fenced(block: &str, adapter_id: &str) -> String {
     let body = block.trim_end_matches('\n');
-    format!("{FENCE_START}\n{body}\n{FENCE_END}\n")
+    format!(
+        "{start}\n{body}\n{end}\n",
+        start = fence_start(adapter_id),
+        end = fence_end(adapter_id),
+    )
 }
 
-/// Locate the byte range covering Trove's managed block, including
-/// the fence start/end lines themselves. Returns `None` when no
-/// fence is present. When multiple fences exist (shouldn't happen in
-/// practice but defensive) returns the first.
-fn locate_block(content: &str) -> Option<(usize, usize)> {
-    let start_idx = find_line_start(content, FENCE_START)?;
+/// Locate the byte range covering this adapter's managed block,
+/// including the fence start/end lines themselves. Tries the
+/// namespaced fence first; falls back to a legacy un-namespaced block
+/// whose body defines a function from `function_names` (so a
+/// pre-v0.5.1 block can be migrated in place by [`upsert_managed_block`]).
+/// Returns `None` when no matching block is found.
+fn locate_block(
+    content: &str,
+    adapter_id: &str,
+    function_names: &[&'static str],
+) -> Option<(usize, usize)> {
+    if let Some(span) = locate_fence_pair(content, &fence_start(adapter_id), &fence_end(adapter_id))
+    {
+        return Some(span);
+    }
+    // Legacy un-namespaced fence — only adopt it if its body looks like
+    // a shell-function definition for one of our names. Otherwise it's
+    // a different adapter's legacy block and we mustn't touch it.
+    let legacy = locate_fence_pair(content, LEGACY_FENCE_START, LEGACY_FENCE_END)?;
+    if function_names.is_empty() {
+        return None;
+    }
+    let body = &content[legacy.0..legacy.1];
+    let owns_block = function_names
+        .iter()
+        .any(|name| body.contains(&format!("{name}() {{")));
+    if owns_block { Some(legacy) } else { None }
+}
+
+/// Locate the byte range covering a fence pair (start_line..=end_line
+/// inclusive of trailing newline). Returns `None` when either fence is
+/// absent or the end appears before the start.
+fn locate_fence_pair(content: &str, start_marker: &str, end_marker: &str) -> Option<(usize, usize)> {
+    let start_idx = find_line_start(content, start_marker)?;
     let after_start_line_end = match content[start_idx..].find('\n') {
         Some(n) => start_idx + n + 1,
         None => return None,
     };
-    let end_off = find_line_start(&content[after_start_line_end..], FENCE_END)?;
+    let end_off = find_line_start(&content[after_start_line_end..], end_marker)?;
     let end_idx = after_start_line_end + end_off;
     let end_line_end = match content[end_idx..].find('\n') {
         Some(n) => end_idx + n + 1,
@@ -347,9 +446,13 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    const AIDER_NAMES: &[&str] = &["aider"];
+    const COPILOT_NAMES: &[&str] = &["copilot", "gh-copilot"];
+
     fn fixture_spec() -> WrapperSpec {
         WrapperSpec {
-            function_names: &["aider"],
+            adapter_id: "aider",
+            function_names: AIDER_NAMES,
             wrapper_path: PathBuf::from("/opt/trove/wrappers/trove-aider"),
             label: "trove::aider",
         }
@@ -357,34 +460,41 @@ mod tests {
 
     fn fixture_spec_two_names() -> WrapperSpec {
         WrapperSpec {
-            function_names: &["copilot", "gh-copilot"],
+            adapter_id: "copilot-cli",
+            function_names: COPILOT_NAMES,
             wrapper_path: PathBuf::from("/opt/trove/wrappers/trove-copilot"),
             label: "trove::copilot-cli",
         }
     }
 
     #[test]
-    fn fence_markers_match_yaml_toml_convention() {
-        assert_eq!(FENCE_START, "# trove:start");
-        assert_eq!(FENCE_END, "# trove:end");
+    fn fence_markers_namespace_per_adapter() {
+        assert_eq!(fence_start("aider"), "# trove:aider:start");
+        assert_eq!(fence_end("aider"), "# trove:aider:end");
+        assert_eq!(fence_start("copilot-cli"), "# trove:copilot-cli:start");
+        assert_eq!(fence_end("copilot-cli"), "# trove:copilot-cli:end");
+        // Legacy markers preserved for migration detection.
+        assert_eq!(LEGACY_FENCE_START, "# trove:start");
+        assert_eq!(LEGACY_FENCE_END, "# trove:end");
     }
 
     #[test]
     fn upsert_block_appends_when_absent() {
         let original = "export FOO=bar\n";
         let block = "aider() { echo aider; }\n";
-        let out = upsert_managed_block(original, block);
-        assert!(out.contains("# trove:start\n"));
-        assert!(out.contains("# trove:end\n"));
+        let out = upsert_managed_block(original, block, "aider", AIDER_NAMES);
+        assert!(out.contains("# trove:aider:start\n"));
+        assert!(out.contains("# trove:aider:end\n"));
         assert!(out.contains("aider() { echo aider; }"));
         assert!(out.starts_with("export FOO=bar"));
     }
 
     #[test]
     fn upsert_block_replaces_existing_block_in_place() {
-        let original = "before\n# trove:start\nold\n# trove:end\nafter\n";
+        let original =
+            "before\n# trove:aider:start\nold\n# trove:aider:end\nafter\n";
         let block = "new\n";
-        let out = upsert_managed_block(original, block);
+        let out = upsert_managed_block(original, block, "aider", AIDER_NAMES);
         assert!(out.contains("new"));
         assert!(!out.contains("old"));
         assert!(out.starts_with("before\n"));
@@ -393,27 +503,131 @@ mod tests {
 
     #[test]
     fn strip_block_removes_fence_and_body() {
-        let original = "before\n# trove:start\nbody\n# trove:end\nafter\n";
-        let stripped = strip_managed_block(original);
+        let original =
+            "before\n# trove:aider:start\nbody\n# trove:aider:end\nafter\n";
+        let stripped = strip_managed_block(original, "aider", AIDER_NAMES);
         assert_eq!(stripped, "before\nafter\n");
     }
 
     #[test]
     fn strip_block_is_noop_when_absent() {
         let original = "user-only-content\n";
-        assert_eq!(strip_managed_block(original), original);
+        assert_eq!(
+            strip_managed_block(original, "aider", AIDER_NAMES),
+            original
+        );
     }
 
     #[test]
     fn extract_returns_inner_block_text() {
-        let original = "before\n# trove:start\nline-1\nline-2\n# trove:end\nafter\n";
-        let inner = extract_managed_block(original).unwrap();
+        let original =
+            "before\n# trove:aider:start\nline-1\nline-2\n# trove:aider:end\nafter\n";
+        let inner = extract_managed_block(original, "aider", AIDER_NAMES).unwrap();
         assert_eq!(inner, "line-1\nline-2");
     }
 
     #[test]
     fn extract_returns_none_when_no_fence() {
-        assert!(extract_managed_block("noop").is_none());
+        assert!(extract_managed_block("noop", "aider", AIDER_NAMES).is_none());
+    }
+
+    // --- Bug B: per-adapter fences + legacy migration ----------------------
+
+    #[test]
+    fn two_adapters_coexist_in_same_rc() {
+        // Apply aider, then apply copilot-cli on top: both blocks
+        // should be present and intact. Bug B: pre-fix, the second
+        // apply overwrote the first.
+        let dir = tempdir().unwrap();
+        let zshrc = dir.path().join(".zshrc");
+        fs::write(&zshrc, "user content\n").unwrap();
+
+        apply_to_primary_shell_rc(
+            dir.path(),
+            &fixture_spec(),
+            &ApplyOptions::default(),
+        )
+        .unwrap();
+        apply_to_primary_shell_rc(
+            dir.path(),
+            &fixture_spec_two_names(),
+            &ApplyOptions::default(),
+        )
+        .unwrap();
+
+        let after = fs::read_to_string(&zshrc).unwrap();
+        assert!(after.contains("# trove:aider:start"), "aider block missing: {after}");
+        assert!(after.contains("# trove:aider:end"));
+        assert!(after.contains("aider() { "));
+        assert!(after.contains("# trove:copilot-cli:start"));
+        assert!(after.contains("# trove:copilot-cli:end"));
+        assert!(after.contains("copilot() { "));
+        assert!(after.contains("gh-copilot() { "));
+    }
+
+    #[test]
+    fn strip_block_is_scoped_to_adapter() {
+        // After both adapters are applied, reverting aider must leave
+        // copilot-cli's block untouched.
+        let dir = tempdir().unwrap();
+        let zshrc = dir.path().join(".zshrc");
+        fs::write(&zshrc, "user content\n").unwrap();
+        apply_to_primary_shell_rc(
+            dir.path(),
+            &fixture_spec(),
+            &ApplyOptions::default(),
+        )
+        .unwrap();
+        apply_to_primary_shell_rc(
+            dir.path(),
+            &fixture_spec_two_names(),
+            &ApplyOptions::default(),
+        )
+        .unwrap();
+
+        revert_primary_shell_rc(dir.path(), "aider", AIDER_NAMES).unwrap();
+
+        let after = fs::read_to_string(&zshrc).unwrap();
+        assert!(!after.contains("# trove:aider:start"));
+        assert!(!after.contains("aider() { "));
+        assert!(after.contains("# trove:copilot-cli:start"), "copilot block removed: {after}");
+        assert!(after.contains("copilot() { "));
+    }
+
+    #[test]
+    fn legacy_fence_is_migrated_on_next_upsert() {
+        // A user on pre-v0.5.1 has an un-namespaced block that defines
+        // their `aider` function. On the next apply, upsert must
+        // recognize it as ours (function-name match), replace it with
+        // the namespaced form, and leave the surrounding content alone.
+        let original = "before\n# trove:start\naider() { echo OLD; }\n# trove:end\nafter\n";
+        let block = "aider() { echo NEW; }\n";
+        let out = upsert_managed_block(original, block, "aider", AIDER_NAMES);
+        assert!(out.contains("# trove:aider:start"), "namespaced fence missing: {out}");
+        assert!(out.contains("# trove:aider:end"));
+        assert!(out.contains("aider() { echo NEW; }"));
+        assert!(!out.contains("aider() { echo OLD; }"));
+        // No orphan legacy fence should remain.
+        assert!(!out.contains("# trove:start\n"));
+        assert!(!out.contains("# trove:end\n"));
+        assert!(out.starts_with("before\n"));
+        assert!(out.ends_with("after\n"));
+    }
+
+    #[test]
+    fn legacy_fence_with_other_adapters_function_is_not_adopted() {
+        // A legacy block defining a different adapter's function must
+        // NOT be claimed by ours — leave it where it is and append a
+        // fresh namespaced block.
+        let original =
+            "before\n# trove:start\ncopilot() { echo C; }\n# trove:end\nafter\n";
+        let block = "aider() { echo A; }\n";
+        let out = upsert_managed_block(original, block, "aider", AIDER_NAMES);
+        // Legacy block stays.
+        assert!(out.contains("# trove:start\ncopilot() { echo C; }\n# trove:end"));
+        // New namespaced aider block appended.
+        assert!(out.contains("# trove:aider:start"));
+        assert!(out.contains("aider() { echo A; }"));
     }
 
     #[test]
@@ -467,9 +681,9 @@ mod tests {
         apply_to_primary_shell_rc(home, &spec, &ApplyOptions::default()).unwrap();
         let after_apply = fs::read_to_string(&zshrc).unwrap();
         assert_ne!(after_apply, original, "apply must change the file");
-        assert!(after_apply.contains("# trove:start"));
+        assert!(after_apply.contains("# trove:aider:start"));
 
-        revert_primary_shell_rc(home).unwrap();
+        revert_primary_shell_rc(home, spec.adapter_id, spec.function_names).unwrap();
         let after_revert = fs::read_to_string(&zshrc).unwrap();
         assert_eq!(after_revert, original);
     }
@@ -514,17 +728,25 @@ mod tests {
 
     #[test]
     fn preview_status_is_conflict_when_user_edits_inside_block() {
+        // A namespaced aider block whose body has been hand-edited
+        // (e.g. user redirected the wrapper somewhere weird) — the
+        // canonical apply would produce something different, so the
+        // preview must surface a Conflict.
         let dir = tempdir().unwrap();
         let home = dir.path();
         let zshrc = home.join(".zshrc");
         fs::write(
             &zshrc,
-            "before\n# trove:start\nuser hand-edit\n# trove:end\nafter\n",
+            "before\n# trove:aider:start\naider() { echo HAND_EDIT; }\n# trove:aider:end\nafter\n",
         )
         .unwrap();
         let spec = fixture_spec();
         let preview = preview_for_primary_shell_rc(home, &spec, &ApplyOptions::default()).unwrap();
-        assert!(matches!(preview.status, PreviewStatus::Conflict));
+        assert!(
+            matches!(preview.status, PreviewStatus::Conflict),
+            "expected Conflict, got {:?}",
+            preview.status
+        );
     }
 
     #[test]
@@ -539,10 +761,12 @@ mod tests {
     #[test]
     fn revert_when_no_rc_or_no_block_is_a_noop() {
         let dir = tempdir().unwrap();
-        revert_primary_shell_rc(dir.path()).unwrap(); // no rc file at all
+        // no rc file at all
+        revert_primary_shell_rc(dir.path(), "aider", AIDER_NAMES).unwrap();
         let zshrc = dir.path().join(".zshrc");
         std::fs::write(&zshrc, "user-only\n").unwrap();
-        revert_primary_shell_rc(dir.path()).unwrap(); // rc exists but no block
+        // rc exists but no block
+        revert_primary_shell_rc(dir.path(), "aider", AIDER_NAMES).unwrap();
         assert_eq!(fs::read_to_string(&zshrc).unwrap(), "user-only\n");
     }
 }
