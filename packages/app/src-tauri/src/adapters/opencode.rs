@@ -46,6 +46,7 @@ pub(crate) const OTEL_PLUGIN_PACKAGE: &str = "@devtheops/opencode-plugin-otel";
 const OPENCODE_SCHEMA_URL: &str = "https://opencode.ai/config.json";
 
 const SPEC: HarnessSpec = HarnessSpec {
+    adapter_id: "opencode",
     config_dir: ".config/opencode",
     config_file: "opencode.json",
     format: Format::Json,

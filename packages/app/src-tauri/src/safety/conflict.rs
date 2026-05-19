@@ -122,7 +122,7 @@ mod tests {
         content: &str,
         region: &ManagedRegion,
     ) -> (String, StoredPatchMetadata) {
-        let after = upsert_region(format, content, region).unwrap();
+        let after = upsert_region(format, content, region, "test-adapter").unwrap();
         let meta = StoredPatchMetadata::capture(region, &after);
         (after, meta)
     }
@@ -139,7 +139,8 @@ mod tests {
         let region = build_region();
         let (file, meta) = apply_and_capture(Format::Json, "{}", &region);
         // Simulate the user deleting our region.
-        let stripped = crate::safety::sentinels::remove_region(Format::Json, &file).unwrap();
+        let stripped =
+            crate::safety::sentinels::remove_region(Format::Json, &file, "test-adapter").unwrap();
         assert_eq!(
             detect(&meta, &stripped, Format::Json).unwrap(),
             ConflictState::RegionRemoved

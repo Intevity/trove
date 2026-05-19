@@ -125,9 +125,9 @@ proptest! {
             }
         }
 
-        let after_apply = upsert_region(Format::Json, &initial, &region).unwrap();
-        let after_revert = remove_region(Format::Json, &after_apply).unwrap();
-        let baseline = remove_region(Format::Json, &initial).unwrap();
+        let after_apply = upsert_region(Format::Json, &initial, &region, "test-adapter").unwrap();
+        let after_revert = remove_region(Format::Json, &after_apply, "test-adapter").unwrap();
+        let baseline = remove_region(Format::Json, &initial, "test-adapter").unwrap();
 
         prop_assert_eq!(after_revert, baseline);
     }
@@ -138,8 +138,8 @@ proptest! {
         patches in json_payload_strategy(),
     ) {
         let region = ManagedRegion::for_json_patches(&patches).unwrap();
-        let first = upsert_region(Format::Json, &initial, &region).unwrap();
-        let second = upsert_region(Format::Json, &first, &region).unwrap();
+        let first = upsert_region(Format::Json, &initial, &region, "test-adapter").unwrap();
+        let second = upsert_region(Format::Json, &first, &region, "test-adapter").unwrap();
         prop_assert_eq!(first, second);
     }
 
@@ -148,7 +148,7 @@ proptest! {
         patches in json_payload_strategy(),
     ) {
         let region = ManagedRegion::for_json_patches(&patches).unwrap();
-        let after = upsert_region(Format::Json, "{}", &region).unwrap();
+        let after = upsert_region(Format::Json, "{}", &region, "test-adapter").unwrap();
         let extracted = extract_region(Format::Json, &after).unwrap().unwrap();
         prop_assert_eq!(extracted.hash, region.hash);
     }
@@ -169,8 +169,8 @@ proptest! {
         let payload = format!("[trove_{table}]\n{key} = \"{val}\"\n");
         let region = ManagedRegion::for_text_block(payload, vec![format!("trove_{table}.{key}")]);
 
-        let after_apply = upsert_region(Format::Toml, &initial, &region).unwrap();
-        let after_revert = remove_region(Format::Toml, &after_apply).unwrap();
+        let after_apply = upsert_region(Format::Toml, &initial, &region, "test-adapter").unwrap();
+        let after_revert = remove_region(Format::Toml, &after_apply, "test-adapter").unwrap();
         prop_assert_eq!(after_revert, initial);
     }
 
@@ -182,8 +182,8 @@ proptest! {
         let payload = format!("[trove_{table}]\n{key} = \"{val}\"\n");
         let region = ManagedRegion::for_text_block(payload, vec![format!("trove_{table}.{key}")]);
 
-        let first = upsert_region(Format::Toml, &initial, &region).unwrap();
-        let second = upsert_region(Format::Toml, &first, &region).unwrap();
+        let first = upsert_region(Format::Toml, &initial, &region, "test-adapter").unwrap();
+        let second = upsert_region(Format::Toml, &first, &region, "test-adapter").unwrap();
         prop_assert_eq!(first, second);
     }
 
@@ -193,7 +193,7 @@ proptest! {
     ) {
         let payload = format!("[trove_{table}]\n{key} = \"{val}\"\n");
         let region = ManagedRegion::for_text_block(payload, vec![]);
-        let after = upsert_region(Format::Toml, "", &region).unwrap();
+        let after = upsert_region(Format::Toml, "", &region, "test-adapter").unwrap();
         let extracted = extract_region(Format::Toml, &after).unwrap().unwrap();
         prop_assert_eq!(extracted.hash, region.hash);
     }
@@ -214,8 +214,8 @@ proptest! {
         let payload = format!("trove_{key}: {val}\n");
         let region = ManagedRegion::for_text_block(payload, vec![format!("trove_{key}")]);
 
-        let after_apply = upsert_region(Format::Yaml, &initial, &region).unwrap();
-        let after_revert = remove_region(Format::Yaml, &after_apply).unwrap();
+        let after_apply = upsert_region(Format::Yaml, &initial, &region, "test-adapter").unwrap();
+        let after_revert = remove_region(Format::Yaml, &after_apply, "test-adapter").unwrap();
         prop_assert_eq!(after_revert, initial);
     }
 
@@ -227,8 +227,8 @@ proptest! {
         let payload = format!("trove_{key}: {val}\n");
         let region = ManagedRegion::for_text_block(payload, vec![]);
 
-        let first = upsert_region(Format::Yaml, &initial, &region).unwrap();
-        let second = upsert_region(Format::Yaml, &first, &region).unwrap();
+        let first = upsert_region(Format::Yaml, &initial, &region, "test-adapter").unwrap();
+        let second = upsert_region(Format::Yaml, &first, &region, "test-adapter").unwrap();
         prop_assert_eq!(first, second);
     }
 }
@@ -247,9 +247,9 @@ proptest! {
     ) {
         let region = ManagedRegion::for_json_patches(&patches).unwrap();
         let initial = "{}";
-        let after_apply = upsert_region(Format::Jsonc, initial, &region).unwrap();
-        let after_revert = remove_region(Format::Jsonc, &after_apply).unwrap();
-        let baseline = remove_region(Format::Jsonc, initial).unwrap();
+        let after_apply = upsert_region(Format::Jsonc, initial, &region, "test-adapter").unwrap();
+        let after_revert = remove_region(Format::Jsonc, &after_apply, "test-adapter").unwrap();
+        let baseline = remove_region(Format::Jsonc, initial, "test-adapter").unwrap();
         prop_assert_eq!(after_revert, baseline);
     }
 }

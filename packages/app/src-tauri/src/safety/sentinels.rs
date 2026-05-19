@@ -98,6 +98,17 @@ pub struct ManagedRegion {
     /// adapter's `build_region`.
     #[serde(default = "default_persist_marker", skip)]
     pub persist_marker_in_file: bool,
+    /// Adapter IDs that depend on this managed region. Only meaningful
+    /// for the `comment_fence` path (TOML / YAML / Shell) — `extract`
+    /// populates this from the fence header's `deps=` token, and
+    /// `upsert` writes it back. Multiple Tier 1 adapters can share one
+    /// fence in a single host file (e.g. `codex-cli` + `codex-desktop`
+    /// both writing to `~/.codex/config.toml`); the block stays as long
+    /// as at least one dependent remains. The JSON `_trove` path
+    /// ignores this field — each JSON host has a single owner today.
+    /// Not serialized into state.json.
+    #[serde(default, skip)]
+    pub dependents: Vec<String>,
 }
 
 fn default_persist_marker() -> bool {
@@ -139,6 +150,7 @@ impl ManagedRegion {
             payload,
             hash: hash_hex(&canonical),
             persist_marker_in_file: persist_marker,
+            dependents: Vec::new(),
         })
     }
 
@@ -153,6 +165,7 @@ impl ManagedRegion {
             hash: hash_hex(payload.as_bytes()),
             payload,
             persist_marker_in_file: true,
+            dependents: Vec::new(),
         }
     }
 }
@@ -170,30 +183,47 @@ pub enum SentinelError {
     EmitFailed(String),
 }
 
-/// Insert or replace the managed region in `content`. Idempotent under
-/// the same `region` input.
+/// Insert or replace the managed region in `content` on behalf of
+/// `adapter_id`. Idempotent under the same `(region, adapter_id)`
+/// input.
+///
+/// `adapter_id` is meaningful for the comment-fence formats
+/// (TOML / YAML / Shell): the fence header carries a `deps=` list, and
+/// `upsert` adds `adapter_id` to it so multiple adapters can share one
+/// managed block in a single host file. The JSON / JSONC paths ignore
+/// `adapter_id` — their `_trove` marker has a single owner today.
 pub fn upsert_region(
     format: Format,
     content: &str,
     region: &ManagedRegion,
+    adapter_id: &str,
 ) -> Result<String, SentinelError> {
     match format {
         Format::Json => json_like::upsert(content, region, /*is_jsonc=*/ false),
         Format::Jsonc => json_like::upsert(content, region, /*is_jsonc=*/ true),
-        Format::Toml => comment_fence::upsert_toml(content, region),
-        Format::Yaml => comment_fence::upsert_yaml(content, region),
-        Format::Shell => comment_fence::upsert_shell(content, region),
+        Format::Toml => comment_fence::upsert_toml(content, region, adapter_id),
+        Format::Yaml => comment_fence::upsert_yaml(content, region, adapter_id),
+        Format::Shell => comment_fence::upsert_shell(content, region, adapter_id),
     }
 }
 
-/// Remove the managed region. No-op if it isn't present.
-pub fn remove_region(format: Format, content: &str) -> Result<String, SentinelError> {
+/// Remove `adapter_id` from the managed region's dependents list. The
+/// block is stripped only when its dependents list becomes empty.
+/// No-op if the block is absent.
+///
+/// `adapter_id` is meaningful for the comment-fence formats; JSON /
+/// JSONC strip the `_trove` marker unconditionally as before.
+pub fn remove_region(
+    format: Format,
+    content: &str,
+    adapter_id: &str,
+) -> Result<String, SentinelError> {
     match format {
         Format::Json => json_like::remove(content, /*is_jsonc=*/ false),
         Format::Jsonc => json_like::remove(content, /*is_jsonc=*/ true),
-        Format::Toml => comment_fence::remove_toml(content),
-        Format::Yaml => comment_fence::remove_yaml(content),
-        Format::Shell => comment_fence::remove_shell(content),
+        Format::Toml => comment_fence::remove_toml(content, adapter_id),
+        Format::Yaml => comment_fence::remove_yaml(content, adapter_id),
+        Format::Shell => comment_fence::remove_shell(content, adapter_id),
     }
 }
 
@@ -351,6 +381,7 @@ mod json_like {
             payload,
             hash,
             persist_marker_in_file: true,
+            dependents: Vec::new(),
         }))
     }
 
@@ -479,9 +510,10 @@ mod comment_fence {
     pub(super) fn upsert_toml(
         content: &str,
         region: &ManagedRegion,
+        adapter_id: &str,
     ) -> Result<String, SentinelError> {
         validate_toml(content)?;
-        let new = replace_or_append(content, region)?;
+        let new = upsert_with_dep(content, region, adapter_id)?;
         validate_toml(&new)?;
         Ok(new)
     }
@@ -489,23 +521,30 @@ mod comment_fence {
     pub(super) fn upsert_yaml(
         content: &str,
         region: &ManagedRegion,
+        adapter_id: &str,
     ) -> Result<String, SentinelError> {
         validate_yaml(content)?;
-        let new = replace_or_append(content, region)?;
+        let new = upsert_with_dep(content, region, adapter_id)?;
         validate_yaml(&new)?;
         Ok(new)
     }
 
-    pub(super) fn remove_toml(content: &str) -> Result<String, SentinelError> {
+    pub(super) fn remove_toml(
+        content: &str,
+        adapter_id: &str,
+    ) -> Result<String, SentinelError> {
         validate_toml(content)?;
-        let new = strip_block(content)?;
+        let new = remove_with_dep(content, adapter_id)?;
         validate_toml(&new)?;
         Ok(new)
     }
 
-    pub(super) fn remove_yaml(content: &str) -> Result<String, SentinelError> {
+    pub(super) fn remove_yaml(
+        content: &str,
+        adapter_id: &str,
+    ) -> Result<String, SentinelError> {
         validate_yaml(content)?;
-        let new = strip_block(content)?;
+        let new = remove_with_dep(content, adapter_id)?;
         validate_yaml(&new)?;
         Ok(new)
     }
@@ -532,12 +571,16 @@ mod comment_fence {
     pub(super) fn upsert_shell(
         content: &str,
         region: &ManagedRegion,
+        adapter_id: &str,
     ) -> Result<String, SentinelError> {
-        replace_or_append(content, region)
+        upsert_with_dep(content, region, adapter_id)
     }
 
-    pub(super) fn remove_shell(content: &str) -> Result<String, SentinelError> {
-        strip_block(content)
+    pub(super) fn remove_shell(
+        content: &str,
+        adapter_id: &str,
+    ) -> Result<String, SentinelError> {
+        remove_with_dep(content, adapter_id)
     }
 
     pub(super) fn extract_shell(
@@ -546,11 +589,34 @@ mod comment_fence {
         extract_block(content)
     }
 
-    fn replace_or_append(
+    /// Insert or update the managed block on behalf of `adapter_id`. If
+    /// a block already exists with the same payload but a different
+    /// dependents set, merge `adapter_id` into the deps list and
+    /// re-render (payload bytes unchanged but the header line moves).
+    /// If a legacy block (no `deps=` token) is found, adopt it under
+    /// `adapter_id` so an upgrade-in-place migrates cleanly.
+    fn upsert_with_dep(
         content: &str,
         region: &ManagedRegion,
+        adapter_id: &str,
     ) -> Result<String, SentinelError> {
-        let block = render_block(region);
+        let mut deps: Vec<String> = match locate_block(content)? {
+            Some((start_idx, end_idx)) => {
+                let header = content[start_idx..end_idx].lines().next().ok_or_else(
+                    || SentinelError::RegionMalformed("empty managed region header".into()),
+                )?;
+                let parsed = parse_header(header)?;
+                parsed.deps
+            }
+            None => Vec::new(),
+        };
+        if !deps.iter().any(|d| d == adapter_id) {
+            deps.push(adapter_id.to_string());
+        }
+        deps.sort();
+        deps.dedup();
+
+        let block = render_block(region, &deps);
         if let Some((start_idx, end_idx)) = locate_block(content)? {
             // Replace inclusive of the `# trove:end` line. Keep the
             // surrounding bytes untouched.
@@ -570,15 +636,48 @@ mod comment_fence {
         }
     }
 
-    fn strip_block(content: &str) -> Result<String, SentinelError> {
-        if let Some((start_idx, end_idx)) = locate_block(content)? {
+    /// Remove `adapter_id` from the managed block's dependents list.
+    /// If deps remain, re-render the block (payload unchanged). If
+    /// `adapter_id` was the last dep — or a legacy block had no deps
+    /// list at all — strip the block entirely.
+    fn remove_with_dep(content: &str, adapter_id: &str) -> Result<String, SentinelError> {
+        let Some((start_idx, end_idx)) = locate_block(content)? else {
+            return Ok(content.into());
+        };
+        let block_text = &content[start_idx..end_idx];
+        let header = block_text.lines().next().ok_or_else(|| {
+            SentinelError::RegionMalformed("empty managed region header".into())
+        })?;
+        let parsed = parse_header(header)?;
+        let mut remaining: Vec<String> = parsed.deps.into_iter()
+            .filter(|d| d != adapter_id)
+            .collect();
+        remaining.sort();
+        remaining.dedup();
+
+        if remaining.is_empty() {
+            // Either the caller owned the last dep, or this was a
+            // legacy single-owner block — strip in both cases.
             let mut out = String::with_capacity(content.len());
             out.push_str(&content[..start_idx]);
             out.push_str(&content[end_idx..]);
-            Ok(out)
-        } else {
-            Ok(content.into())
+            return Ok(out);
         }
+
+        // Re-render the block with the smaller deps list.
+        let region = ManagedRegion {
+            managed_keys: parsed.managed_keys,
+            payload: extract_payload(block_text),
+            hash: parsed.header_hash,
+            persist_marker_in_file: true,
+            dependents: remaining.clone(),
+        };
+        let block = render_block(&region, &remaining);
+        let mut out = String::with_capacity(content.len() + block.len());
+        out.push_str(&content[..start_idx]);
+        out.push_str(&block);
+        out.push_str(&content[end_idx..]);
+        Ok(out)
     }
 
     fn extract_block(content: &str) -> Result<Option<ManagedRegion>, SentinelError> {
@@ -587,7 +686,7 @@ mod comment_fence {
         };
         let block = &content[start_idx..end_idx];
         // The block we render is:
-        //   # trove:start hash=<hex> keys=<comma-list>\n
+        //   # trove:start hash=<hex> keys=<comma-list> deps=<comma-list>\n
         //   <payload>\n
         //   # trove:end\n
         // Parse it back. We deliberately *re-hash* the payload here
@@ -598,7 +697,7 @@ mod comment_fence {
         let header = lines
             .next()
             .ok_or_else(|| SentinelError::RegionMalformed("empty managed region".into()))?;
-        let (_header_hash, managed_keys) = parse_header(header)?;
+        let parsed = parse_header(header)?;
         let mut payload_lines = Vec::new();
         for line in lines {
             if line.trim_start().starts_with(FENCE_END) {
@@ -613,19 +712,45 @@ mod comment_fence {
 
         let hash = super::hash_hex(payload.as_bytes());
         Ok(Some(ManagedRegion {
-            managed_keys,
+            managed_keys: parsed.managed_keys,
             payload,
             hash,
             persist_marker_in_file: true,
+            dependents: parsed.deps,
         }))
     }
 
-    fn render_block(region: &ManagedRegion) -> String {
+    /// Pull the payload text out of a full block (everything between
+    /// the fence start and end lines). Used by `remove_with_dep` to
+    /// re-render the block with a smaller deps list.
+    fn extract_payload(block: &str) -> String {
+        let mut lines = block.lines();
+        let _header = lines.next();
+        let mut payload_lines = Vec::new();
+        for line in lines {
+            if line.trim_start().starts_with(FENCE_END) {
+                break;
+            }
+            payload_lines.push(line);
+        }
+        let mut payload = payload_lines.join("\n");
+        if !payload.is_empty() && !payload.ends_with('\n') {
+            payload.push('\n');
+        }
+        payload
+    }
+
+    fn render_block(region: &ManagedRegion, deps: &[String]) -> String {
         use std::fmt::Write as _;
 
         let keys = region.managed_keys.join(",");
+        let deps_str = deps.join(",");
         let mut out = String::new();
-        let _ = writeln!(out, "{FENCE_START} hash={hash} keys={keys}", hash = region.hash);
+        let _ = writeln!(
+            out,
+            "{FENCE_START} hash={hash} keys={keys} deps={deps_str}",
+            hash = region.hash,
+        );
         if !region.payload.is_empty() {
             out.push_str(&region.payload);
             if !region.payload.ends_with('\n') {
@@ -687,29 +812,48 @@ mod comment_fence {
         }
     }
 
-    fn parse_header(line: &str) -> Result<(String, Vec<String>), SentinelError> {
-        // line looks like `# trove:start hash=<hex> keys=a,b,c`
+    pub(super) struct ParsedHeader {
+        pub header_hash: String,
+        pub managed_keys: Vec<String>,
+        pub deps: Vec<String>,
+    }
+
+    fn parse_header(line: &str) -> Result<ParsedHeader, SentinelError> {
+        // line looks like:
+        //   `# trove:start hash=<hex> keys=a,b,c`
+        //   `# trove:start hash=<hex> keys=a,b,c deps=adapter1,adapter2`
+        // The `deps=` token is post-v9; pre-v9 fences had only hash + keys.
+        // When `deps=` is missing, return an empty Vec — `upsert_with_dep`
+        // adopts the legacy block under the caller's adapter id, and
+        // `remove_with_dep` strips it (legacy single-owner semantics).
         let rest = line
             .strip_prefix(FENCE_START)
             .ok_or_else(|| SentinelError::RegionMalformed("missing trove:start prefix".into()))?
             .trim_start();
         let mut hash: Option<String> = None;
         let mut keys: Vec<String> = Vec::new();
+        let mut deps: Vec<String> = Vec::new();
         for token in rest.split_ascii_whitespace() {
             if let Some(value) = token.strip_prefix("hash=") {
                 hash = Some(value.into());
             } else if let Some(value) = token.strip_prefix("keys=") {
-                if value.is_empty() {
-                    keys = Vec::new();
-                } else {
+                if !value.is_empty() {
                     keys = value.split(',').map(str::to_string).collect();
+                }
+            } else if let Some(value) = token.strip_prefix("deps=") {
+                if !value.is_empty() {
+                    deps = value.split(',').map(str::to_string).collect();
                 }
             }
         }
-        let hash = hash.ok_or_else(|| {
+        let header_hash = hash.ok_or_else(|| {
             SentinelError::RegionMalformed("trove:start header missing hash=".into())
         })?;
-        Ok((hash, keys))
+        Ok(ParsedHeader {
+            header_hash,
+            managed_keys: keys,
+            deps,
+        })
     }
 
     fn validate_toml(content: &str) -> Result<(), SentinelError> {
@@ -893,7 +1037,7 @@ mod tests {
                 "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318"
             }
         }));
-        let after = upsert_region(Format::Json, original, &region).unwrap();
+        let after = upsert_region(Format::Json, original, &region, "test-adapter").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
         assert_eq!(
             parsed["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"],
@@ -902,7 +1046,7 @@ mod tests {
         assert!(parsed.get("_trove").is_some());
 
         // Idempotent: re-applying the same region produces byte-identical output.
-        let again = upsert_region(Format::Json, &after, &region).unwrap();
+        let again = upsert_region(Format::Json, &after, &region, "test-adapter").unwrap();
         assert_eq!(after, again);
     }
 
@@ -913,7 +1057,7 @@ mod tests {
         let region = json_region(serde_json::json!({
             "env": { "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318" }
         }));
-        let after = upsert_region(Format::Json, original, &region).unwrap();
+        let after = upsert_region(Format::Json, original, &region, "test-adapter").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
         assert_eq!(parsed["env"]["USER_KEY"], "keep-me");
         assert_eq!(
@@ -921,7 +1065,7 @@ mod tests {
             "http://127.0.0.1:4318"
         );
 
-        let reverted = remove_region(Format::Json, &after).unwrap();
+        let reverted = remove_region(Format::Json, &after, "test-adapter").unwrap();
         let reverted_parsed: serde_json::Value = serde_json::from_str(&reverted).unwrap();
         assert_eq!(reverted_parsed["env"]["USER_KEY"], "keep-me");
         assert!(reverted_parsed["env"].get("OTEL_EXPORTER_OTLP_ENDPOINT").is_none());
@@ -933,7 +1077,7 @@ mod tests {
         let region = json_region(serde_json::json!({
             "env": { "OTEL_FOO": "bar" }
         }));
-        let after = upsert_region(Format::Json, "{}", &region).unwrap();
+        let after = upsert_region(Format::Json, "{}", &region, "test-adapter").unwrap();
         let extracted = extract_region(Format::Json, &after).unwrap().unwrap();
         assert_eq!(extracted.managed_keys, vec!["env.OTEL_FOO"]);
         assert_eq!(extracted.hash, region.hash);
@@ -942,7 +1086,7 @@ mod tests {
     #[test]
     fn json_remove_when_absent_is_noop() {
         let original = r#"{"foo":1}"#;
-        let after = remove_region(Format::Json, original).unwrap();
+        let after = remove_region(Format::Json, original, "test-adapter").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
         assert_eq!(parsed["foo"], 1);
     }
@@ -953,6 +1097,7 @@ mod tests {
             Format::Json,
             "{not json",
             &json_region(serde_json::json!({"x":1})),
+            "test-adapter",
         )
         .unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
@@ -961,7 +1106,7 @@ mod tests {
     #[test]
     fn json_empty_input_treated_as_empty_object() {
         let region = json_region(serde_json::json!({"x":1}));
-        let after = upsert_region(Format::Json, "", &region).unwrap();
+        let after = upsert_region(Format::Json, "", &region, "test-adapter").unwrap();
         assert!(after.contains("\"x\": 1"));
     }
 
@@ -976,7 +1121,7 @@ mod tests {
         let region = json_region(serde_json::json!({
             "env": { "OTEL_FOO": "bar" }
         }));
-        let after = upsert_region(Format::Jsonc, original, &region).unwrap();
+        let after = upsert_region(Format::Jsonc, original, &region, "test-adapter").unwrap();
         // Note: serde-only path drops comments — documented in the
         // module header. The data is preserved.
         let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
@@ -993,13 +1138,13 @@ mod tests {
             "[otel]\nendpoint = \"http://127.0.0.1:4318\"\n",
             &["otel.endpoint"],
         );
-        let after = upsert_region(Format::Toml, original, &region).unwrap();
+        let after = upsert_region(Format::Toml, original, &region, "test-adapter").unwrap();
         assert!(after.contains(FENCE_START));
         assert!(after.contains(FENCE_END));
         assert!(after.contains("name = \"jeff\""));
         assert!(after.contains("endpoint = \"http://127.0.0.1:4318\""));
 
-        let again = upsert_region(Format::Toml, &after, &region).unwrap();
+        let again = upsert_region(Format::Toml, &after, &region, "test-adapter").unwrap();
         assert_eq!(after, again);
     }
 
@@ -1010,8 +1155,8 @@ mod tests {
             "[otel]\nendpoint = \"http://127.0.0.1:4318\"\n",
             &["otel.endpoint"],
         );
-        let after = upsert_region(Format::Toml, original, &region).unwrap();
-        let reverted = remove_region(Format::Toml, &after).unwrap();
+        let after = upsert_region(Format::Toml, original, &region, "test-adapter").unwrap();
+        let reverted = remove_region(Format::Toml, &after, "test-adapter").unwrap();
         assert_eq!(reverted, original);
     }
 
@@ -1022,7 +1167,7 @@ mod tests {
             "[otel]\nendpoint = \"x\"\n",
             &["otel.endpoint"],
         );
-        let after = upsert_region(Format::Toml, original, &region).unwrap();
+        let after = upsert_region(Format::Toml, original, &region, "test-adapter").unwrap();
         let got = extract_region(Format::Toml, &after).unwrap().unwrap();
         assert_eq!(got.managed_keys, vec!["otel.endpoint".to_string()]);
         assert_eq!(got.hash, region.hash);
@@ -1032,7 +1177,7 @@ mod tests {
     #[test]
     fn toml_malformed_input_errors() {
         let region = text_region("payload\n", &[]);
-        let err = upsert_region(Format::Toml, "[unterminated", &region).unwrap_err();
+        let err = upsert_region(Format::Toml, "[unterminated", &region, "test-adapter").unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
     }
 
@@ -1045,7 +1190,7 @@ mod tests {
             "{FENCE_START} hash=a keys=foo\nfoo = 1\n{FENCE_END}\n\
              {FENCE_START} hash=b keys=bar\nbar = 2\n{FENCE_END}\n",
         );
-        let err = remove_region(Format::Toml, &doc).unwrap_err();
+        let err = remove_region(Format::Toml, &doc, "test-adapter").unwrap_err();
         assert!(
             matches!(err, SentinelError::MultipleRegions),
             "got {err:?}"
@@ -1061,11 +1206,11 @@ mod tests {
             "otel:\n  endpoint: http://127.0.0.1:4318\n",
             &["otel.endpoint"],
         );
-        let after = upsert_region(Format::Yaml, original, &region).unwrap();
+        let after = upsert_region(Format::Yaml, original, &region, "test-adapter").unwrap();
         assert!(after.contains(FENCE_START));
         assert!(after.contains("endpoint: http://127.0.0.1:4318"));
 
-        let again = upsert_region(Format::Yaml, &after, &region).unwrap();
+        let again = upsert_region(Format::Yaml, &after, &region, "test-adapter").unwrap();
         assert_eq!(after, again);
     }
 
@@ -1076,8 +1221,8 @@ mod tests {
             "otel:\n  endpoint: http://127.0.0.1:4318\n",
             &["otel.endpoint"],
         );
-        let after = upsert_region(Format::Yaml, original, &region).unwrap();
-        let reverted = remove_region(Format::Yaml, &after).unwrap();
+        let after = upsert_region(Format::Yaml, original, &region, "test-adapter").unwrap();
+        let reverted = remove_region(Format::Yaml, &after, "test-adapter").unwrap();
         assert_eq!(reverted, original);
     }
 
@@ -1085,7 +1230,7 @@ mod tests {
     fn yaml_extract_returns_payload_and_hash() {
         let original = "";
         let region = text_region("otel:\n  endpoint: x\n", &["otel.endpoint"]);
-        let after = upsert_region(Format::Yaml, original, &region).unwrap();
+        let after = upsert_region(Format::Yaml, original, &region, "test-adapter").unwrap();
         let got = extract_region(Format::Yaml, &after).unwrap().unwrap();
         assert_eq!(got.managed_keys, vec!["otel.endpoint".to_string()]);
         assert_eq!(got.hash, region.hash);
@@ -1096,7 +1241,7 @@ mod tests {
         // YAML with a tab inside indentation is invalid.
         let region = text_region("payload: x\n", &[]);
         let err =
-            upsert_region(Format::Yaml, "service:\n\tname: trove\n", &region).unwrap_err();
+            upsert_region(Format::Yaml, "service:\n\tname: trove\n", &region, "test-adapter").unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
     }
 
@@ -1117,7 +1262,7 @@ alias ll='ls -la'
 "#;
         // Sanity: confirm the same input does error on the YAML branch.
         let region = text_region("aider() { :; }\n", &["aider"]);
-        let yaml_err = upsert_region(Format::Yaml, rc, &region).unwrap_err();
+        let yaml_err = upsert_region(Format::Yaml, rc, &region, "test-adapter").unwrap_err();
         assert!(matches!(yaml_err, SentinelError::Malformed { format: Format::Yaml, .. }));
         // Shell branch: extract returns Ok(None) — no fence present.
         let got = extract_region(Format::Shell, rc).unwrap();
@@ -1128,7 +1273,7 @@ alias ll='ls -la'
     fn shell_upsert_writes_fence_around_block() {
         let rc = "export FOO=bar\n";
         let region = text_region("aider() { \"/opt/trove-aider\" \"$@\"; }\n", &["aider"]);
-        let after = upsert_region(Format::Shell, rc, &region).unwrap();
+        let after = upsert_region(Format::Shell, rc, &region, "test-adapter").unwrap();
         assert!(after.starts_with("export FOO=bar"));
         assert!(after.contains("# trove:start"));
         assert!(after.contains("aider() { \"/opt/trove-aider\" \"$@\"; }"));
@@ -1144,12 +1289,103 @@ aider() { :; }
 # trove:end
 alias ll='ls -la'
 "#;
-        let after = remove_region(Format::Shell, rc).unwrap();
+        let after = remove_region(Format::Shell, rc, "test-adapter").unwrap();
         assert!(!after.contains("# trove:start"));
         assert!(!after.contains("# trove:end"));
         assert!(!after.contains("aider() {"));
         assert!(after.contains("export FOO=bar"));
         assert!(after.contains("alias ll='ls -la'"));
+    }
+
+    // --- Bug B-like dep tracking for comment-fence formats ---
+
+    #[test]
+    fn fence_header_round_trips_deps() {
+        // A TOML fence header survives render → extract → re-render
+        // byte-identical when the deps list is non-trivial.
+        let region = text_region("payload = 1\n", &["payload"]);
+        let after = upsert_region(Format::Toml, "", &region, "codex-cli").unwrap();
+        assert!(after.contains("deps=codex-cli"));
+        // Add a second dep.
+        let after2 = upsert_region(Format::Toml, &after, &region, "codex-desktop").unwrap();
+        assert!(after2.contains("deps=codex-cli,codex-desktop"));
+        // Re-extract; deps list should be intact.
+        let got = extract_region(Format::Toml, &after2).unwrap().unwrap();
+        let mut deps = got.dependents.clone();
+        deps.sort();
+        assert_eq!(deps, vec!["codex-cli".to_string(), "codex-desktop".to_string()]);
+    }
+
+    #[test]
+    fn upsert_first_apply_creates_block_with_single_dep() {
+        let region = text_region("[otel.exporter]\nkind = \"otlp-http\"\n", &["otel.exporter"]);
+        let after = upsert_region(Format::Toml, "", &region, "codex-cli").unwrap();
+        assert!(after.contains("# trove:start"));
+        assert!(after.contains("deps=codex-cli"));
+        assert!(after.contains("[otel.exporter]"));
+        let got = extract_region(Format::Toml, &after).unwrap().unwrap();
+        assert_eq!(got.dependents, vec!["codex-cli".to_string()]);
+    }
+
+    #[test]
+    fn upsert_second_apply_by_new_adapter_adds_to_deps_payload_unchanged() {
+        let region = text_region("[otel.exporter]\nkind = \"otlp-http\"\n", &["otel.exporter"]);
+        let after1 = upsert_region(Format::Toml, "", &region, "codex-cli").unwrap();
+        let after2 = upsert_region(Format::Toml, &after1, &region, "codex-desktop").unwrap();
+        // Payload bytes survive — only the header line moves.
+        assert!(after2.contains("[otel.exporter]"));
+        assert!(after2.contains("kind = \"otlp-http\""));
+        assert!(after2.contains("deps=codex-cli,codex-desktop"));
+        // Only one fence pair (no duplicate sections).
+        assert_eq!(after2.matches("# trove:start").count(), 1);
+        assert_eq!(after2.matches("# trove:end").count(), 1);
+        assert_eq!(after2.matches("[otel.exporter]").count(), 1);
+    }
+
+    #[test]
+    fn upsert_is_idempotent_for_same_adapter() {
+        let region = text_region("[otel.exporter]\nkind = \"otlp-http\"\n", &["otel.exporter"]);
+        let after1 = upsert_region(Format::Toml, "", &region, "codex-cli").unwrap();
+        let after2 = upsert_region(Format::Toml, &after1, &region, "codex-cli").unwrap();
+        assert_eq!(after1, after2);
+    }
+
+    #[test]
+    fn remove_drops_dep_keeps_block_when_others_remain() {
+        let region = text_region("[otel.exporter]\nkind = \"otlp-http\"\n", &["otel.exporter"]);
+        let after1 = upsert_region(Format::Toml, "", &region, "codex-cli").unwrap();
+        let after2 = upsert_region(Format::Toml, &after1, &region, "codex-desktop").unwrap();
+        // Revert codex-cli → block stays with deps=codex-desktop.
+        let after3 = remove_region(Format::Toml, &after2, "codex-cli").unwrap();
+        assert!(after3.contains("# trove:start"));
+        assert!(after3.contains("deps=codex-desktop"));
+        assert!(!after3.contains("deps=codex-cli"));
+        assert!(after3.contains("[otel.exporter]"));
+    }
+
+    #[test]
+    fn remove_strips_block_when_last_dep_removed() {
+        let region = text_region("[otel.exporter]\nkind = \"otlp-http\"\n", &["otel.exporter"]);
+        let after1 = upsert_region(Format::Toml, "", &region, "codex-cli").unwrap();
+        let after2 = upsert_region(Format::Toml, &after1, &region, "codex-desktop").unwrap();
+        let after3 = remove_region(Format::Toml, &after2, "codex-cli").unwrap();
+        let after4 = remove_region(Format::Toml, &after3, "codex-desktop").unwrap();
+        assert!(!after4.contains("# trove:start"));
+        assert!(!after4.contains("# trove:end"));
+        assert!(!after4.contains("[otel.exporter]"));
+    }
+
+    #[test]
+    fn legacy_block_without_deps_is_adopted_then_stripped_on_revert() {
+        // A pre-v9-of-this-feature TOML file carrying a fence with no
+        // `deps=` token. Revert by any adapter must strip it (legacy
+        // single-owner semantics). On first upsert under the new code,
+        // upsert adopts the block under the caller's adapter id.
+        let legacy = "[user]\nname = \"alice\"\n# trove:start hash=abc keys=otel.exporter\n[otel.exporter]\nkind = \"otlp-http\"\n# trove:end\n";
+        let after_strip = remove_region(Format::Toml, legacy, "codex-cli").unwrap();
+        assert!(!after_strip.contains("# trove:start"));
+        assert!(!after_strip.contains("[otel.exporter]"));
+        assert!(after_strip.contains("[user]"));
     }
 
     // --- helpers ---

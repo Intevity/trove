@@ -17,6 +17,7 @@ use super::common::{self, HarnessSpec};
 use super::{ApplyOptions, PatchPreview, TrovePatch};
 
 const SPEC: HarnessSpec = HarnessSpec {
+    adapter_id: "qwen-code",
     config_dir: ".qwen",
     config_file: "settings.json",
     format: Format::Json,

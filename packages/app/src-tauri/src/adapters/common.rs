@@ -38,6 +38,14 @@ use super::{ApplyOptions, BACKUPS_TO_KEEP, PatchPreview, PreviewStatus, TrovePat
 /// Each adapter declares one as a `const SPEC` and delegates its
 /// public API to the free functions in this module.
 pub struct HarnessSpec {
+    /// Adapter id used for shared-block dependency tracking in the
+    /// comment-fence formats (TOML / YAML / Shell). The fence header
+    /// records the set of adapters that depend on the block; the block
+    /// is stripped only when the last dep is removed. JSON / JSONC
+    /// adapters ignore this field — their `_trove` marker has a single
+    /// owner today. Set to the [`crate::harness::HarnessId`]'s serde
+    /// rename (e.g. `"codex-cli"`).
+    pub adapter_id: &'static str,
     /// Directory under `$HOME` that holds the harness's config (e.g.
     /// `".claude"`, `".gemini"`).
     pub config_dir: &'static str,
@@ -85,10 +93,11 @@ pub fn preview_with_region(
     let (current, _existed) = read_or_empty(&path)?;
     let working = working_value(spec.format, &current);
 
-    let status = classify(spec.format, &working, region, &path)?;
+    let status = classify(spec.format, &working, region, spec.adapter_id, &path)?;
 
     let after =
-        upsert_region(spec.format, &working, region).map_err(|e| map_sentinel_err(e, &path))?;
+        upsert_region(spec.format, &working, region, spec.adapter_id)
+            .map_err(|e| map_sentinel_err(e, &path))?;
 
     Ok(PatchPreview {
         config_path: path,
@@ -126,7 +135,7 @@ pub fn apply_with_region(
     let (current, existed) = read_or_empty(&path)?;
     let working = working_value(spec.format, &current);
 
-    match classify(spec.format, &working, region, &path)? {
+    match classify(spec.format, &working, region, spec.adapter_id, &path)? {
         PreviewStatus::Idempotent => {
             return Ok(TrovePatch {
                 managed_block_hash: region.hash.clone(),
@@ -158,7 +167,8 @@ pub fn apply_with_region(
     }
 
     let after =
-        upsert_region(spec.format, &working, region).map_err(|e| map_sentinel_err(e, &path))?;
+        upsert_region(spec.format, &working, region, spec.adapter_id)
+            .map_err(|e| map_sentinel_err(e, &path))?;
 
     write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
         path: path.display().to_string(),
@@ -202,11 +212,12 @@ pub fn revert(spec: &HarnessSpec, home: &Path) -> Result<(), IpcError> {
         reason: format!("backup failed: {e}"),
     })?;
 
-    let after =
-        remove_region(spec.format, &current).map_err(|e| IpcError::ConfigUnparseable {
+    let after = remove_region(spec.format, &current, spec.adapter_id).map_err(|e| {
+        IpcError::ConfigUnparseable {
             path: path.display().to_string(),
             reason: e.to_string(),
-        })?;
+        }
+    })?;
 
     write_atomic(&path, after.as_bytes()).map_err(|e| IpcError::Io {
         path: path.display().to_string(),
@@ -234,14 +245,32 @@ pub(super) fn read_or_empty(path: &Path) -> Result<(String, bool), IpcError> {
 
 /// Decide whether `region` would be a fresh write, an idempotent
 /// no-op, or a refused conflict against `current`.
+///
+/// `adapter_id` is consulted for the comment-fence formats (TOML /
+/// YAML / Shell): if a managed block already exists with a matching
+/// hash but `adapter_id` is not yet in its dependents list, the
+/// classification is `Fresh` (apply will write to add the dep). For
+/// JSON / JSONC the dependents list is always empty and `adapter_id`
+/// is ignored.
 pub(super) fn classify(
     format: Format,
     current: &str,
     region: &ManagedRegion,
+    adapter_id: &str,
     path: &Path,
 ) -> Result<PreviewStatus, IpcError> {
     match extract_region(format, current) {
-        Ok(Some(existing)) if existing.hash == region.hash => Ok(PreviewStatus::Idempotent),
+        Ok(Some(existing)) if existing.hash == region.hash => {
+            let needs_dep_mutation = matches!(
+                format,
+                Format::Toml | Format::Yaml | Format::Shell
+            ) && !existing.dependents.iter().any(|d| d == adapter_id);
+            if needs_dep_mutation {
+                Ok(PreviewStatus::Fresh)
+            } else {
+                Ok(PreviewStatus::Idempotent)
+            }
+        }
         Ok(Some(_)) => Ok(PreviewStatus::Conflict),
         Ok(None) => Ok(PreviewStatus::Fresh),
         Err(e) => Err(IpcError::ConfigUnparseable {
