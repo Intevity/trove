@@ -12,6 +12,7 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   'claude-desktop': 'Claude Desktop',
   'gemini-cli': 'Gemini CLI',
   'codex-cli': 'OpenAI Codex CLI',
+  'codex-desktop': 'OpenAI Codex',
   'qwen-code': 'Qwen Code',
   opencode: 'OpenCode',
   'cursor-ide': 'Cursor IDE',
