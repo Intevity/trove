@@ -721,6 +721,21 @@ pub fn get_app_state(app: tauri::AppHandle) -> Result<AppState, IpcError> {
     Ok(app_state::load(&app)?)
 }
 
+/// Initial-render fetch for the per-destination health pill. The
+/// `backend-health` Tauri event pushes updates afterwards (debounced
+/// 250 ms); this command exists so the frontend hook has a value on
+/// mount before the first event arrives. Returns a vec sorted by
+/// `backendId`; entries with no observations yet have `status: "gray"`.
+#[tauri::command]
+pub fn get_backend_health(
+    app: tauri::AppHandle,
+) -> Vec<crate::collector::BackendHealth> {
+    use tauri::Manager;
+    app.state::<crate::collector::BackendHealthHandle>()
+        .inner()
+        .latest()
+}
+
 /// Append a new platform to [`AppState::backends`]. Stores each secret
 /// in the OS keychain (under id-scoped account names), writes the
 /// resulting [`BackendInstance`] to `state.json`, then regenerates

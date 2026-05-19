@@ -117,3 +117,155 @@ fn rotated_path(path: &Path) -> PathBuf {
     s.push(".1");
     PathBuf::from(s)
 }
+
+/// One exporter-error event extracted from a collector stderr line.
+/// Drives the tooltip text shown when a destination's health pill is
+/// red or amber.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExporterErrorLine {
+    /// OTel collector component id, e.g. `otlphttp/openobserve-93eb10f1`.
+    pub component_id: String,
+    /// The raw `error` field text from the structured log line.
+    pub error: String,
+}
+
+/// Best-effort parse of a single collector stderr line into an
+/// [`ExporterErrorLine`]. Returns `None` for lines that don't look like
+/// an exporter-failure record — the substring check makes this cheap
+/// on the hot path so it can run inline against every broadcast line.
+///
+/// Lines we recognise (captured live during the 2026-05-18 release
+/// pairing pass) look like:
+///
+/// ```text
+/// <ts> info  internal/retry_sender.go:133  Exporting failed. Will retry the request after interval.  {"resource":{...},"otelcol.component.id":"otlphttp/opensearch-a7f0880b","otelcol.component.kind":"exporter","otelcol.signal":"logs","error":"failed to make an HTTP request: ..."}
+/// ```
+///
+/// This parser is intentionally NOT a full JSON parser. It scans for
+/// the three fields it cares about by string match — the collector's
+/// log format is stable but the surrounding noise (timestamps, ANSI
+/// colour codes from `tracing`) isn't worth fighting through `serde_json`
+/// every line. Lines without an `error` field (happy-path exporter
+/// records) are dropped.
+#[must_use]
+pub fn try_parse_exporter_error_line(line: &str) -> Option<ExporterErrorLine> {
+    // The otelcol Go logger writes structured logs with a space after the
+    // JSON `:` separator (`"k": "v"`), but some downstream pretty-printers
+    // strip it. Accept both: do a substring check for the key (no value
+    // pinning), then verify the *value* through the same lookup as
+    // `extract_quoted_string_field` so the body is parsed once.
+    if !line.contains("\"otelcol.component.kind\"") {
+        return None;
+    }
+    let kind = extract_quoted_string_field(line, "\"otelcol.component.kind\"")?;
+    if kind != "exporter" {
+        return None;
+    }
+    let component_id = extract_quoted_string_field(line, "\"otelcol.component.id\"")?;
+    let error = extract_quoted_string_field(line, "\"error\"")?;
+    Some(ExporterErrorLine {
+        component_id: component_id.to_string(),
+        error: error.to_string(),
+    })
+}
+
+/// Pull the value of a `"key": "…"` JSON field out of `haystack`,
+/// given the quote-wrapped key (e.g. `"\"error\""`). Tolerates both
+/// `"key":"v"` and `"key": "v"` (the otelcol Go logger emits the
+/// latter). Handles backslash-escaped quotes inside the value.
+/// Returns `None` if the field is absent or malformed.
+fn extract_quoted_string_field<'a>(haystack: &'a str, quoted_key: &str) -> Option<&'a str> {
+    let start = haystack.find(quoted_key)?;
+    let after = start + quoted_key.len();
+    let rest = haystack.get(after..)?;
+    // Skip whitespace, the `:`, more whitespace, then the opening quote.
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix(':')?;
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    // Scan to the closing unescaped quote.
+    let bytes = rest.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            return rest.get(..i);
+        }
+        i += 1;
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verbatim line shape captured during the 2026-05-18 Fix 1
+    /// validation run — connection-refused on the opensearch exporter
+    /// while the rest of the fan-out was healthy. Confirms the parser
+    /// pulls both the component id and the error text out cleanly.
+    #[test]
+    fn parses_real_retry_sender_line() {
+        let line = "2026-05-18T20:41:13.946-0400\tinfo\tinternal/retry_sender.go:133\tExporting failed. Will retry the request after interval.\t{\"resource\":{\"service.instance.id\":\"82fa073f\"},\"otelcol.component.id\":\"otlphttp/opensearch-a7f0880b\",\"otelcol.component.kind\":\"exporter\",\"otelcol.signal\":\"logs\",\"error\":\"failed to make an HTTP request: Post \\\"http://localhost:14326/v1/logs\\\": dial tcp [::1]:14326: connect: connection refused\",\"interval\":\"42.654289956s\"}";
+        let parsed = try_parse_exporter_error_line(line).expect("should parse");
+        assert_eq!(parsed.component_id, "otlphttp/opensearch-a7f0880b");
+        assert!(
+            parsed.error.starts_with("failed to make an HTTP request: Post "),
+            "got error: {}",
+            parsed.error,
+        );
+        assert!(parsed.error.contains("connection refused"));
+    }
+
+    #[test]
+    fn ignores_lines_without_error_field() {
+        // Real "Starting exporter" line — component kind matches but
+        // there's no `error` field. Must return None.
+        let line = "2026-05-18T20:37:52.295273Z info  builders/builders.go:40  \"otlp\" alias is deprecated; use \"otlp_grpc\" instead\t{\"otelcol.component.id\":\"otlp/signoz-31fb8e0a\",\"otelcol.component.kind\":\"exporter\",\"otelcol.signal\":\"traces\"}";
+        assert_eq!(try_parse_exporter_error_line(line), None);
+    }
+
+    #[test]
+    fn ignores_non_exporter_component_lines() {
+        // A receiver line — different component.kind. Must return None.
+        let line = "{\"otelcol.component.id\":\"otlp\",\"otelcol.component.kind\":\"receiver\",\"error\":\"binding failed\"}";
+        assert_eq!(try_parse_exporter_error_line(line), None);
+    }
+
+    #[test]
+    fn ignores_completely_unrelated_lines() {
+        let line = "Hello from Trove dev console";
+        assert_eq!(try_parse_exporter_error_line(line), None);
+    }
+
+    #[test]
+    fn handles_minimal_well_formed_line() {
+        let line = "{\"otelcol.component.id\":\"otlphttp/openobserve-93eb10f1\",\"otelcol.component.kind\":\"exporter\",\"error\":\"401 Unauthorized\"}";
+        let parsed = try_parse_exporter_error_line(line).expect("should parse");
+        assert_eq!(parsed.component_id, "otlphttp/openobserve-93eb10f1");
+        assert_eq!(parsed.error, "401 Unauthorized");
+    }
+
+    #[test]
+    fn extract_quoted_string_handles_escaped_quotes() {
+        let s = r#"{"error":"got status \"500\" from upstream"}"#;
+        let v = extract_quoted_string_field(s, "\"error\"").unwrap();
+        assert_eq!(v, r#"got status \"500\" from upstream"#);
+    }
+
+    /// The Go otelcol logger writes `"key": "value"` with a space after
+    /// the colon. The earlier substring check pinning `"key":"value"`
+    /// silently rejected every real stderr line in dev validation,
+    /// leaving destinations stuck at Gray instead of Red. Verifying the
+    /// space-tolerant path stays intact going forward.
+    #[test]
+    fn parses_space_separated_json_otelcol_dev_format() {
+        let line = r#"2026-05-18T20:08:06.121-0400 info internal/retry_sender.go:133 Exporting failed. Will retry the request after interval. {"resource": {"service.instance.id": "abc"}, "otelcol.component.id": "otlphttp/opensearch-a7f0880b", "otelcol.component.kind": "exporter", "otelcol.signal": "logs", "error": "failed to make an HTTP request: Post \"http://localhost:14326/v1/logs\": dial tcp [::1]:14326: connect: connection refused", "interval": "42.65s"}"#;
+        let parsed = try_parse_exporter_error_line(line).expect("space-separated form must parse");
+        assert_eq!(parsed.component_id, "otlphttp/opensearch-a7f0880b");
+        assert!(parsed.error.contains("connection refused"));
+    }
+}

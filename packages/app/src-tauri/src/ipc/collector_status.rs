@@ -35,8 +35,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::time::Instant;
 
 use crate::collector::{
-    CollectorLogLine, CollectorState, MetricsSnapshot, MetricsTapHandle, OverallHealth,
-    SignalCounts, SupervisorChannels, derive_overall_health,
+    BackendHealth, BackendHealthHandle, CollectorLogLine, CollectorState, MetricsSnapshot,
+    MetricsTapHandle, OverallHealth, SignalCounts, SupervisorChannels, derive_overall_health,
 };
 
 use super::IpcError;
@@ -44,6 +44,7 @@ use super::IpcError;
 pub const EVENT_COLLECTOR_STATE: &str = "collector-state";
 pub const EVENT_METRICS_SNAPSHOT: &str = "metrics-snapshot";
 pub const EVENT_COLLECTOR_LOG: &str = "collector-log";
+pub const EVENT_BACKEND_HEALTH: &str = "backend-health";
 
 /// JSON-friendly mirror of [`CollectorState`]. Discriminator-tagged so
 /// the TS side can branch by `kind`.
@@ -320,6 +321,7 @@ pub fn spawn_event_pumps<R: Runtime>(app: &AppHandle<R>) {
     let app_state = app.clone();
     let app_metrics = app.clone();
     let app_logs = app.clone();
+    let app_backend_health = app.clone();
 
     // Collector state pump.
     tauri::async_runtime::spawn(async move {
@@ -403,6 +405,25 @@ pub fn spawn_event_pumps<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     });
+
+    // Per-backend health pump. The metrics tap ticks every 5 s and the
+    // stderr broadcast pushes errors as they arrive; debounce 250 ms so
+    // a tick + a flurry of error lines fan out into a single `Vec<BackendHealth>`
+    // emit rather than four-way thrashing the UI.
+    tauri::async_runtime::spawn(async move {
+        let handle = app_backend_health.state::<BackendHealthHandle>().inner().clone();
+        let mut rx = handle.subscribe();
+        let _ = app_backend_health.emit(EVENT_BACKEND_HEALTH, rx.borrow().clone());
+        loop {
+            if rx.changed().await.is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            rx.borrow_and_update();
+            let payload: Vec<BackendHealth> = rx.borrow().clone();
+            let _ = app_backend_health.emit(EVENT_BACKEND_HEALTH, payload);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -438,6 +459,7 @@ mod tests {
             },
             sent: SignalCounts::default(),
             diag_observations: std::collections::HashMap::new(),
+            per_exporter: std::collections::HashMap::new(),
             last_signal_at: Some(now - Duration::from_millis(2_500)),
             scraped_at: now - Duration::from_millis(500),
             unreachable: false,
@@ -456,6 +478,7 @@ mod tests {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
             diag_observations: std::collections::HashMap::new(),
+            per_exporter: std::collections::HashMap::new(),
             last_signal_at: None,
             scraped_at: now,
             unreachable: false,
@@ -473,6 +496,7 @@ mod tests {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
             diag_observations: std::collections::HashMap::new(),
+            per_exporter: std::collections::HashMap::new(),
             last_signal_at: None,
             scraped_at: now,
             unreachable: true,

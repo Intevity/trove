@@ -92,6 +92,11 @@ pub struct MetricsSnapshot {
     /// non-empty `native_service_name_candidates`).
     #[serde(default)]
     pub diag_observations: DiagObservations,
+    /// Per-exporter cumulative counters, keyed by OTel component id
+    /// (e.g. `otlphttp/openobserve-93eb10f1`). Drives the per-platform
+    /// health pill via `BackendHealthSamples::observe`.
+    #[serde(default, skip)]
+    pub per_exporter: HashMap<String, ExporterCounts>,
     /// Local monotonic timestamp of the most recent scrape that saw a
     /// strict increase in `received`. `None` means "no traffic seen
     /// since the tap started".
@@ -114,6 +119,7 @@ impl Default for MetricsSnapshot {
             received: SignalCounts::default(),
             sent: SignalCounts::default(),
             diag_observations: HashMap::new(),
+            per_exporter: HashMap::new(),
             last_signal_at: None,
             scraped_at: Instant::now(),
             unreachable: false,
@@ -245,6 +251,7 @@ async fn scrape_loop(
                 received,
                 sent,
                 diag_observations,
+                per_exporter,
             } => {
                 let total_now = received.total();
                 if total_now > prev_received_total {
@@ -255,6 +262,7 @@ async fn scrape_loop(
                     received,
                     sent,
                     diag_observations,
+                    per_exporter,
                     last_signal_at,
                     scraped_at: now,
                     unreachable: false,
@@ -262,13 +270,14 @@ async fn scrape_loop(
             }
             ScrapeOutcome::Unreachable => {
                 let prev = sender.borrow().clone();
-                let (received, sent, diag_observations) = prev
-                    .map(|s| (s.received, s.sent, s.diag_observations))
+                let (received, sent, diag_observations, per_exporter) = prev
+                    .map(|s| (s.received, s.sent, s.diag_observations, s.per_exporter))
                     .unwrap_or_default();
                 sender.send_replace(Some(MetricsSnapshot {
                     received,
                     sent,
                     diag_observations,
+                    per_exporter,
                     last_signal_at,
                     scraped_at: now,
                     unreachable: true,
@@ -288,6 +297,7 @@ enum ScrapeOutcome {
         received: SignalCounts,
         sent: SignalCounts,
         diag_observations: DiagObservations,
+        per_exporter: HashMap<String, ExporterCounts>,
     },
     Unreachable,
 }
@@ -313,10 +323,12 @@ async fn scrape_once(client: &reqwest::Client, url: &str) -> ScrapeOutcome {
     };
     let (received, sent) = parse_signal_counts(&body);
     let diag_observations = parse_diag_observations(&body);
+    let per_exporter = parse_per_exporter_counts(&body);
     ScrapeOutcome::Ok {
         received,
         sent,
         diag_observations,
+        per_exporter,
     }
 }
 
@@ -433,6 +445,126 @@ pub fn parse_signal_counts(body: &str) -> (SignalCounts, SignalCounts) {
         }
     }
     (received, sent)
+}
+
+/// Cumulative success / failure counters for a single OTel collector
+/// exporter, summed across the three signal types. Used as the input to
+/// the per-backend health pill: window deltas drive the color.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ExporterCounts {
+    pub sent_total: u64,
+    pub failed_total: u64,
+}
+
+/// Parse the collector's Prometheus dump and return cumulative
+/// `(sent, send_failed)` counters keyed by `exporter` label (the OTel
+/// collector component id, e.g. `otlphttp/openobserve-93eb10f1`).
+///
+/// Sums across `spans` / `metric_points` / `log_records` — callers
+/// downstream (the health-derive function) only care whether *anything*
+/// is flowing for a given destination, not which signal type. Skips
+/// lines that don't match the two metric families.
+///
+/// Tolerates both the bare counter names and the v0.151+ `_total`
+/// suffix variants, mirroring [`parse_signal_counts`].
+pub fn parse_per_exporter_counts(body: &str) -> HashMap<String, ExporterCounts> {
+    let mut out: HashMap<String, ExporterCounts> = HashMap::new();
+    for raw in body.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Quick reject: we only care about the exporter counter families.
+        // The full match happens below after label extraction.
+        if !line.starts_with("otelcol_exporter_sent_")
+            && !line.starts_with("otelcol_exporter_send_failed_")
+        {
+            continue;
+        }
+        let Some(brace) = line.find('{') else {
+            // Per-exporter counters always have an `exporter=` label; an
+            // unlabelled form would have nothing to attribute to.
+            continue;
+        };
+        let Some(close_rel) = line[brace..].find('}') else {
+            continue;
+        };
+        let close = brace + close_rel;
+        let name = line[..brace].trim();
+        let labels = &line[brace + 1..close];
+        let Some(exporter) = extract_exporter_label(labels) else {
+            continue;
+        };
+        // Parse the value after the `}`.
+        let after = close + 1;
+        let value_start = match line[after..].find(|c: char| !c.is_whitespace()) {
+            Some(off) => after + off,
+            None => continue,
+        };
+        let value_end = line[value_start..]
+            .find(char::is_whitespace)
+            .map_or(line.len(), |off| value_start + off);
+        let Ok(value) = line[value_start..value_end].parse::<f64>() else {
+            continue;
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let count = if value < 0.0 { 0u64 } else { value.floor() as u64 };
+
+        let bare_name = name.strip_suffix("_total").unwrap_or(name);
+        let entry = out.entry(exporter.to_string()).or_default();
+        match bare_name {
+            "otelcol_exporter_sent_spans"
+            | "otelcol_exporter_sent_metric_points"
+            | "otelcol_exporter_sent_log_records" => {
+                entry.sent_total = entry.sent_total.saturating_add(count);
+            }
+            "otelcol_exporter_send_failed_spans"
+            | "otelcol_exporter_send_failed_metric_points"
+            | "otelcol_exporter_send_failed_log_records" => {
+                entry.failed_total = entry.failed_total.saturating_add(count);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Pull the value of the `exporter="..."` label from a Prometheus label
+/// block. Returns `None` if the label is absent or unquoted. Tolerant of
+/// leading/trailing whitespace and other adjacent labels.
+fn extract_exporter_label(labels: &str) -> Option<&str> {
+    // Look for `exporter=` preceded by `{`, `,`, or start-of-string —
+    // avoids matching a hypothetical `myexporter=...` label.
+    let mut search_from = 0;
+    while let Some(idx) = labels[search_from..].find("exporter=") {
+        let abs = search_from + idx;
+        let preceded_ok = abs == 0
+            || matches!(labels.as_bytes().get(abs - 1), Some(b',' | b' ' | b'\t'));
+        if !preceded_ok {
+            search_from = abs + "exporter=".len();
+            continue;
+        }
+        let after_eq = abs + "exporter=".len();
+        let rest = labels.get(after_eq..)?;
+        // Must be a quoted string.
+        let rest = rest.strip_prefix('"')?;
+        let end = rest.find('"')?;
+        return Some(&rest[..end]);
+    }
+    None
+}
+
+/// Saturating subtraction used to compute per-tick deltas across a
+/// scrape window. The collector restarts drop counters to zero; a naive
+/// `current - prior` would underflow. Returns `current` whenever
+/// `prior > current` (treat as a fresh start).
+#[must_use]
+pub fn delta_clamped(current: u64, prior: u64) -> u64 {
+    if current >= prior {
+        current - prior
+    } else {
+        current
+    }
 }
 
 /// Split a Prometheus metric line into `(name, value)`. Handles both
@@ -602,6 +734,7 @@ otelcol_receiver_accepted_spans 1\n\
             },
             sent: SignalCounts::default(),
             diag_observations: HashMap::new(),
+            per_exporter: HashMap::new(),
             last_signal_at: None,
             scraped_at: Instant::now(),
             unreachable: false,
@@ -644,5 +777,117 @@ otelcol_processor_outgoing_items_total{otel_signal=\"logs\",processor=\"filter/d
     fn diag_observations_empty_when_no_filter_pipeline_configured() {
         let body = "otelcol_receiver_accepted_spans 5\n";
         assert!(parse_diag_observations(body).is_empty());
+    }
+
+    #[test]
+    fn per_exporter_counts_attribute_to_their_exporter_label() {
+        let body = "\
+otelcol_exporter_sent_log_records{exporter=\"otlphttp/openobserve-93eb10f1\"} 42\n\
+otelcol_exporter_sent_metric_points{exporter=\"otlphttp/openobserve-93eb10f1\"} 8\n\
+otelcol_exporter_sent_spans{exporter=\"otlp/signoz-31fb8e0a\"} 17\n\
+otelcol_exporter_send_failed_log_records{exporter=\"otlphttp/opensearch-a7f0880b\"} 5\n\
+otelcol_exporter_send_failed_log_records{exporter=\"otlphttp/clickstack-5c3fbe03\"} 2\n\
+";
+        let map = parse_per_exporter_counts(body);
+        let oo = map
+            .get("otlphttp/openobserve-93eb10f1")
+            .expect("openobserve counts");
+        assert_eq!(oo.sent_total, 50);
+        assert_eq!(oo.failed_total, 0);
+        let sn = map.get("otlp/signoz-31fb8e0a").expect("signoz counts");
+        assert_eq!(sn.sent_total, 17);
+        assert_eq!(sn.failed_total, 0);
+        let os = map.get("otlphttp/opensearch-a7f0880b").expect("opensearch");
+        assert_eq!(os.sent_total, 0);
+        assert_eq!(os.failed_total, 5);
+        let cs = map.get("otlphttp/clickstack-5c3fbe03").expect("clickstack");
+        assert_eq!(cs.failed_total, 2);
+    }
+
+    #[test]
+    fn per_exporter_counts_handle_total_suffix() {
+        // v0.151+ collector exposes the `_total` Prom-standard suffix.
+        let body = "\
+otelcol_exporter_sent_log_records_total{exporter=\"otlphttp/openobserve-93eb10f1\"} 4\n\
+otelcol_exporter_send_failed_metric_points_total{exporter=\"otlp/signoz-31fb8e0a\"} 3\n\
+";
+        let map = parse_per_exporter_counts(body);
+        assert_eq!(
+            map.get("otlphttp/openobserve-93eb10f1")
+                .copied()
+                .unwrap_or_default()
+                .sent_total,
+            4,
+        );
+        assert_eq!(
+            map.get("otlp/signoz-31fb8e0a")
+                .copied()
+                .unwrap_or_default()
+                .failed_total,
+            3,
+        );
+    }
+
+    #[test]
+    fn per_exporter_counts_ignore_unlabelled_lines() {
+        // Defensive: an unlabelled exporter counter has no attributable
+        // destination, so it must be dropped (the aggregate parser
+        // `parse_signal_counts` already counts it for the global view).
+        let body = "otelcol_exporter_sent_log_records 9\n";
+        assert!(parse_per_exporter_counts(body).is_empty());
+    }
+
+    #[test]
+    fn per_exporter_counts_ignore_non_exporter_families() {
+        let body = "\
+otelcol_receiver_accepted_log_records{receiver=\"otlp\"} 12\n\
+otelcol_processor_outgoing_items{processor=\"batch\"} 7\n\
+otelcol_exporter_sent_log_records{exporter=\"otlphttp/openobserve-93eb10f1\"} 3\n\
+";
+        let map = parse_per_exporter_counts(body);
+        assert_eq!(map.len(), 1);
+        assert_eq!(
+            map.get("otlphttp/openobserve-93eb10f1")
+                .copied()
+                .unwrap_or_default()
+                .sent_total,
+            3,
+        );
+    }
+
+    #[test]
+    fn delta_clamped_handles_collector_restart() {
+        // Normal forward progress.
+        assert_eq!(delta_clamped(10, 7), 3);
+        // No change.
+        assert_eq!(delta_clamped(7, 7), 0);
+        // Counter reset (collector restart) — must clamp to `current`,
+        // never underflow into a huge positive number.
+        assert_eq!(delta_clamped(2, 100), 2);
+        // Both zero.
+        assert_eq!(delta_clamped(0, 0), 0);
+    }
+
+    #[test]
+    fn extract_exporter_label_handles_position_variants() {
+        // First label.
+        assert_eq!(
+            extract_exporter_label("exporter=\"otlp/signoz-31fb8e0a\""),
+            Some("otlp/signoz-31fb8e0a"),
+        );
+        // Middle label.
+        assert_eq!(
+            extract_exporter_label("otel_signal=\"logs\",exporter=\"otlp/x\",extra=\"y\""),
+            Some("otlp/x"),
+        );
+        // Trailing label.
+        assert_eq!(
+            extract_exporter_label("otel_signal=\"logs\",exporter=\"otlp/x\""),
+            Some("otlp/x"),
+        );
+        // Adversarial prefix that should NOT match `exporter=`.
+        assert_eq!(extract_exporter_label("myexporter=\"foo\""), None);
+        // Absent.
+        assert_eq!(extract_exporter_label("receiver=\"otlp\""), None);
     }
 }

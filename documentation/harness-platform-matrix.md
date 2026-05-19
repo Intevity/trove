@@ -13,21 +13,29 @@ Values: `PASS`, `FAIL`, `SKIP`, or `—` (not yet attempted).
 
 ## Status grid
 
-|                    | grafana-local  | openobserve-local | hyperdx-local  | signoz-local   | opensearch-local | elastic-local | sentry-local | signoz-cloud | honeycomb | grafana-cloud | datadog | new-relic | splunk-obs | dynatrace | elastic-cloud | clickstack-cloud | chronosphere | sentry-saas |
-| ------------------ | -------------- | ----------------- | -------------- | -------------- | ---------------- | ------------- | ------------ | ------------ | --------- | ------------- | ------- | --------- | ---------- | --------- | ------------- | ---------------- | ------------ | ----------- |
-| **claude-code**    | R:PASS Q:PASS  | R:PASS Q:PASS     | R:PASS Q:PASS  | R:FAIL Q:FAIL‡ | R:PASS Q:PASS    | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **gemini-cli**     | R:PASS Q:PASS  | R:PASS Q:PASS     | R:PASS Q:PASS  | R:FAIL Q:FAIL‡ | R:PASS Q:PASS    | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **cursor-cli**     | R:FAIL Q:FAIL† | R:FAIL Q:FAIL†    | R:FAIL Q:FAIL† | R:FAIL Q:FAIL† | R:FAIL Q:FAIL†   | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **claude-desktop** | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **cursor-ide**     | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **cline**          | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **codex-cli**      | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **qwen-code**      | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **opencode**       | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **aider**          | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
-| **copilot-cli**    | —              | —                 | —              | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+|                    | grafana-local | openobserve-local | hyperdx-local | signoz-local   | opensearch-local | elastic-local | sentry-local | signoz-cloud | honeycomb | grafana-cloud | datadog | new-relic | splunk-obs | dynatrace | elastic-cloud | clickstack-cloud | chronosphere | sentry-saas |
+| ------------------ | ------------- | ----------------- | ------------- | -------------- | ---------------- | ------------- | ------------ | ------------ | --------- | ------------- | ------- | --------- | ---------- | --------- | ------------- | ---------------- | ------------ | ----------- |
+| **claude-code**    | R:PASS Q:PASS | R:PASS Q:PASS     | R:PASS Q:PASS | R:PASS Q:PASS§ | R:PASS Q:PASS    | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **gemini-cli**     | R:PASS Q:PASS | R:PASS Q:PASS     | R:PASS Q:PASS | R:PASS Q:PASS§ | R:PASS Q:PASS    | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **cursor-cli**     | —             | R:PASS Q:PASS¶    | —             | R:PASS Q:PASS¶ | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **claude-desktop** | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **cursor-ide**     | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **cline**          | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **codex-cli**      | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **qwen-code**      | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **opencode**       | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **aider**          | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
+| **copilot-cli**    | —             | —                 | —             | —              | —                | —             | —            | —            | —         | —             | —       | —         | —          | —         | —             | —                | —            | —           |
 
 Format in each cell once tested: `R:PASS Q:PASS` / `R:PASS Q:FAIL` / etc.
+
+Footnotes:
+
+- `†` Cursor-CLI IDE-hooks gap (historical, before Fix 2). The `cursor-cli` rows were re-evaluated after Fix 2 — only the (cursor-cli × {openobserve, signoz}) pairs have been re-run; the other three columns are blank pending a fresh test pass.
+- `‡` SigNoz TLS-mismatch (historical, before Fix 1).
+- `§` Post-fix re-run validating Fix 1 (SigNoz loopback auto-detect TLS insecure).
+- `¶` Post-fix re-run validating Fix 2 (cursor-cli shell-function wrapper, replaces the IDE-hooks path).
+
 Drill down to the dated runs below.
 
 ## Run log
@@ -204,3 +212,54 @@ entries.
   2. Auto-detect: if the user-entered endpoint host resolves to a loopback address (`localhost`, `127.0.0.1`, `::1`), render `tls: insecure: true`.
   3. Bundle a TLS-terminating sidecar in `signoz-local/` (works as a workaround for testing but doesn't fix the preset; mostly useful for verifying the rest of Trove behaves correctly downstream of the export).
 - **Workaround attempted in this session:** none — recorded as FAIL with the diagnostic above so the fix can land separately.
+
+### 2026-05-18 — three CLIs × signoz-local + openobserve-local (§ Fix 1 + ¶ Fix 2 — post-fix re-run)
+
+- **Trove preset config:** Identical to prior runs — SigNoz `localhost:14317` (gRPC), OpenObserve `localhost:5080` (HTTP), plus grafana/opensearch/clickstack in fan-out. Rebuilt Trove from branch `fix/release-pairing-findings` (Fix 1 + Fix 2 applied).
+- **Fix 1 — SigNoz TLS loopback auto-detect (`§`):** Replaced hardcoded `tls.insecure: false` in `packages/app/src-tauri/src/collector/codegen.rs` (Backend::Signoz branch) with a runtime check `endpoint_is_loopback(endpoint)` that strips scheme + path, handles bracketed IPv6, and returns true for `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`. Generated `collector.yaml` for this run shows `otlp/signoz-31fb8e0a: tls: insecure: true` exactly as expected for a loopback endpoint; Cloud endpoints (e.g. `ingest.us.signoz.cloud:443`) still resolve to `insecure: false`.
+- **Fix 2 — cursor-cli wrapper (`¶`):** Replaced the Cursor IDE hooks-only path with a `wrapper_common`-pattern shell function. New artifacts:
+  - `resources/wrappers/trove-cursor-agent` — bash wrapper that re-execs the real `cursor-agent`, then JSON-line-logs `{ts, tool=cursor-cli, argc, exit_code, duration_ms}` to `~/.local/state/trove/cursor-agent.log`.
+  - `packages/app/src-tauri/src/adapters/cursor_cli.rs` — full rewrite mirroring `copilot_cli.rs`: managed block in `~/.zshrc` adds a `cursor-agent()` shell function pointing at the wrapper; `parse_event_line` emits OTLP `LogRecord` with `service.name=cursor-cli`, `harness.id=cursor-cli`, `harness.name=Cursor CLI`.
+  - `packages/app/src-tauri/src/ipc/commands.rs` — separated `CursorIde | CursorCli` arms; `spawn_tier3_watcher` now spawns a `wrapper_log_watcher` for cursor-cli that tails the wrapper log.
+- **Smoke commands:** `claude -p 'say hi…'`, `gemini --skip-trust --prompt 'say hi…'`, `<wrapper> --yolo -p 'say hi…'`.
+- **Receipt (Trove collector):** No retry/handshake errors for `otlp/signoz-31fb8e0a` exporter at any point during the run (contrast prior run, where every batch failed with TLS handshake). Errors for `otlphttp/opensearch-…` and `otlphttp/clickstack-…` remain (those stacks are down — expected).
+- **Query — SigNoz (ClickHouse direct):**
+  ```sql
+  SELECT resources_string['service.name'] AS svc, count() AS n, max(timestamp) AS latest_ns
+  FROM signoz_logs.distributed_logs_v2
+  WHERE timestamp >= (toUnixTimestamp(now() - toIntervalMinute(10)) * 1000000000)
+  GROUP BY svc ORDER BY latest_ns DESC
+  ```
+  Returned: `cursor-cli: 6`, `gemini-cli: 32`, `claude-code: 10` — all three harnesses landed in SigNoz OSS via plaintext gRPC. **Fix 1 PASS.**
+- **Query — OpenObserve:** `SELECT _timestamp, service_name, body FROM default WHERE service_name = 'cursor-cli' ORDER BY _timestamp DESC LIMIT 5` returned 3 rows at the three wrapper-invocation timestamps. **Fix 2 PASS.**
+- **Notes / follow-up:**
+  - Fix 1 is a behavior change — Cloud SigNoz users see no diff (still TLS-on); self-hosters get a working out-of-the-box experience. Five unit tests in `collector/codegen.rs` cover the matrix.
+  - Fix 2's transform processor in `collector.yaml` does not yet include a `service.name == cursor-cli → harness.id = cursor-cli` rule (the adapter sets the resource attr directly when crafting the OTLP, so this is cosmetic; queries by `harness.id` will still find cursor-cli telemetry). Add the transform-rule entry to `packages/app/src-tauri/src/collector/codegen.rs` harness-tag block before release for parity with other Tier-1 adapters.
+  - A latent UI bug exists for cursor-cli: clicking "Disable" produces only a brief jitter and does not persist. Worked around in this session by hand-editing `state.json` to add a `cursor-cli` entry with `trovePatch.format: yaml`. Filed as a follow-up for the next pass.
+
+### 2026-05-18 — Fix 3 — per-platform health pill (validated live in Platforms tab)
+
+- **Branch state:** `fix/release-pairing-findings` on top of Fixes 1 + 2.
+- **Goal:** make silent data loss visible. Before this fix, when one destination's exporter started failing (stale creds, wrong endpoint, container down) the row still said "Enabled", the global tray icon stayed green (other destinations still received), and batches piled into the retry queue silently. Now each destination row in the Platforms tab carries a colored status dot (gray / green / amber / red), and a click expands an inline detail panel with the last error string and 60-second window counters.
+- **Architecture:**
+  - **Color signal (counters, push):** Extended the 5 s Prometheus scrape in `packages/app/src-tauri/src/collector/metrics_tap.rs` to parse `otelcol_exporter_sent_*` / `otelcol_exporter_send_failed_*` time series keyed by the `{exporter="..."}` label (`parse_per_exporter_counts` + `ExporterCounts`). Each scrape tick's deltas land in a per-backend rolling 60 s window (`BackendHealthSamples::observe` in `collector/derive.rs`).
+  - **Tooltip + Red-state signal (stderr, push):** A best-effort JSON-ish parser (`try_parse_exporter_error_line` in `collector/logs.rs`) reads every line on the existing supervisor log broadcast and pulls out `(otelcol.component.id, error)` from records where `otelcol.component.kind == "exporter"`. Real-world wrinkle caught in dev validation: the Go logger emits `"key": "value"` with a space after `:`, so the parser tolerates both `"k":"v"` and `"k": "v"` JSON spacing.
+  - **Why both signals:** the collector's `_send_failed_*` counter only increments when retries are permanently dropped. An exporter stuck in retry-limbo (the steady state for a wrong endpoint) has `sent=0, failed=0` counters and is invisible to the counter path alone. The derive function flips the row to **Red** if there's a recent stderr error and no recent successes — which is exactly the case we want to catch.
+  - **State holder:** `BackendHealthTracker` (`collector/health_tracker.rs`) fuses both inputs into a single `Vec<BackendHealth>` published on a `watch` channel. Wired into `lib.rs` between the metrics tap and the supervisor; held as Tauri-managed state.
+  - **Component-id ↔ backend-id mapping:** `backend_id_from_component_id` in `collector/codegen.rs` inverts `env_suffix_for` so a label like `otlphttp/opensearch-a7f0880b` resolves back to backend UUID `a7f0880b-…`.
+  - **IPC + UI:** `EVENT_BACKEND_HEALTH` Tauri event (debounced 250 ms in `ipc/collector_status.rs`) + `get_backend_health` command for initial fetch. Frontend: new `useBackendHealth()` hook + new `BackendInstanceRow` / `BackendHealthDetail` components in `PlatformsTab.tsx`; status mapped to existing `StatusDot` (gray/green/amber/red).
+- **Truth-table derive function (`collector/derive.rs`):**
+  - `(window_sent=0, has_failures=false)` ⇒ Gray
+  - `(window_sent>0, has_failures=false)` ⇒ Green (pulses)
+  - `(window_sent>0, has_failures=true)` ⇒ Amber
+  - `(window_sent=0, has_failures=true)` ⇒ Red
+  - `has_failures` is `window_failed > 0` **OR** `last_error_at` within the rolling window.
+- **Live validation:** 5 destinations configured — signoz/openobserve/grafana-local up, opensearch/clickstack down. After `claude -p "say hi"` triggered a fan-out:
+  - signoz / grafana / openobserve rows: **Green** (`window_sent=5, window_failed=0`, pulsing dot).
+  - opensearch / clickstack rows: **Red** (`window_sent=0, window_failed=0` because retries haven't been dropped yet; stderr fallback path fires `recorded stderr error` repeatedly from the retry-sender Go logger).
+  - Clicking a red row inline-expands: status pill (`red`), `Sent in last 60s: 0`, `Failed in last 60s: 0`, `Last error: Ns ago`, and the verbatim error string `failed to make an HTTP request: Post "http://localhost:14326/v1/logs": dial tcp [::1]:14326: connect: connection refused`.
+- **Tests:** 622 → **623 Rust lib tests pass** (4 codegen-resolver, 5 metrics_tap per-exporter + delta-clamp, 11 derive truth-table + edge cases incl. counter-reset and stale-error-out-of-window, 7 logs parser incl. real captured retry-sender line, 3 health_tracker integration). **365 frontend tests pass.**
+- **Pitfalls captured (so future-me doesn't relearn):**
+  - The `@trove/shared` package is consumed via its built `dist/` — schema edits don't take effect until `pnpm --filter @trove/shared build`. A stale dist silently rejects every event payload at `safeParse` and the UI permanently shows Gray.
+  - Zod's `z.string().datetime()` only accepts 0/3/6/9-digit fractional seconds; chrono's RFC3339 output can be any precision. Use plain `z.string()` for chrono-sourced timestamps unless the producer is pinned.
+  - The OTel Go logger writes `"key": "value"` (space after colon) in structured records — a parser pinned to `"key":"value"` will silently match zero real-world lines.
