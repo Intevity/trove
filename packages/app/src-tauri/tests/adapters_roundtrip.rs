@@ -307,7 +307,9 @@ fn opencode_apply_then_revert_is_byte_identical() {
     assert_eq!(after["mcp"]["someServer"], "keepme");
     assert_eq!(after["plugin"][0], "@devtheops/opencode-plugin-otel");
     assert_eq!(after["$schema"], "https://opencode.ai/config.json");
-    assert!(after.get("_trove").is_some());
+    // opencode opts out of the `_trove` marker (Bug C fix) — the
+    // opencode CLI's JSON schema rejects unknown top-level keys.
+    assert!(after.get("_trove").is_none());
 
     opencode::revert(home.path()).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), OPENCODE_ORIGINAL);

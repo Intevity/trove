@@ -42,6 +42,12 @@ use super::common::{self, HarnessSpec};
 use super::{ApplyOptions, PatchPreview, TrovePatch};
 
 const SPEC: HarnessSpec = HarnessSpec {
+    // The cursor adapters share `~/.cursor/hooks.json`. Only `cursor-ide`
+    // patches it today — `cursor-cli` moved to a shell-wrapper in Fix 2.
+    // The id below is what the fence header records; if cursor-cli ever
+    // re-joins this file, the shared-block deps tracking will let both
+    // coexist. JSON's _trove path ignores deps regardless.
+    adapter_id: "cursor-ide",
     config_dir: ".cursor",
     config_file: "hooks.json",
     format: Format::Json,

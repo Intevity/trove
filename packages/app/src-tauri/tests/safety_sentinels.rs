@@ -28,7 +28,7 @@ mod json_cases {
 
     #[test]
     fn fresh_install() {
-        let after = upsert_region(Format::Json, "{}", &region()).unwrap();
+        let after = upsert_region(Format::Json, "{}", &region(), "test-adapter").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
         assert_eq!(
             parsed["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"],
@@ -39,25 +39,25 @@ mod json_cases {
 
     #[test]
     fn idempotent_second_run() {
-        let after_first = upsert_region(Format::Json, "{}", &region()).unwrap();
-        let after_second = upsert_region(Format::Json, &after_first, &region()).unwrap();
+        let after_first = upsert_region(Format::Json, "{}", &region(), "test-adapter").unwrap();
+        let after_second = upsert_region(Format::Json, &after_first, &region(), "test-adapter").unwrap();
         assert_eq!(after_first, after_second);
     }
 
     #[test]
     fn user_edited_outside_block_survives() {
         let original = r#"{"env":{"USER_KEY":"x"}}"#;
-        let after = upsert_region(Format::Json, original, &region()).unwrap();
+        let after = upsert_region(Format::Json, original, &region(), "test-adapter").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
         assert_eq!(parsed["env"]["USER_KEY"], "x");
-        let reverted = remove_region(Format::Json, &after).unwrap();
+        let reverted = remove_region(Format::Json, &after, "test-adapter").unwrap();
         let reverted_parsed: serde_json::Value = serde_json::from_str(&reverted).unwrap();
         assert_eq!(reverted_parsed["env"]["USER_KEY"], "x");
     }
 
     #[test]
     fn extract_returns_recorded_metadata() {
-        let after = upsert_region(Format::Json, "{}", &region()).unwrap();
+        let after = upsert_region(Format::Json, "{}", &region(), "test-adapter").unwrap();
         let got = extract_region(Format::Json, &after).unwrap().unwrap();
         assert_eq!(got.managed_keys, vec!["env.OTEL_EXPORTER_OTLP_ENDPOINT"]);
         assert_eq!(got.hash, region().hash);
@@ -65,7 +65,7 @@ mod json_cases {
 
     #[test]
     fn malformed_input_errors() {
-        let err = upsert_region(Format::Json, "not json", &region()).unwrap_err();
+        let err = upsert_region(Format::Json, "not json", &region(), "test-adapter").unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
     }
 
@@ -76,11 +76,11 @@ mod json_cases {
         // emitted form. A canonical input (already pretty-printed) makes
         // this assertion clean.
         let original = "{\n  \"env\": {\n    \"USER_KEY\": \"x\"\n  }\n}\n";
-        let after = upsert_region(Format::Json, original, &region()).unwrap();
-        let reverted = remove_region(Format::Json, &after).unwrap();
+        let after = upsert_region(Format::Json, original, &region(), "test-adapter").unwrap();
+        let reverted = remove_region(Format::Json, &after, "test-adapter").unwrap();
         // Parse-and-re-emit the original through the same pipeline so the
         // comparison is fair.
-        let baseline = remove_region(Format::Json, original).unwrap();
+        let baseline = remove_region(Format::Json, original, "test-adapter").unwrap();
         assert_eq!(reverted, baseline);
     }
 }
@@ -105,7 +105,7 @@ mod jsonc_cases {
         // data round-trips correctly; comment preservation upgrades to
         // jsonc-parser CST in a later sprint.
         let original = "{\n  // user comment\n  \"existing\": true\n}";
-        let after = upsert_region(Format::Jsonc, original, &region()).unwrap();
+        let after = upsert_region(Format::Jsonc, original, &region(), "test-adapter").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
         assert_eq!(parsed["existing"], true);
         assert_eq!(parsed["telemetry"]["endpoint"], "http://127.0.0.1:4318");
@@ -113,14 +113,14 @@ mod jsonc_cases {
 
     #[test]
     fn idempotent_second_run() {
-        let after_first = upsert_region(Format::Jsonc, "{}", &region()).unwrap();
-        let after_second = upsert_region(Format::Jsonc, &after_first, &region()).unwrap();
+        let after_first = upsert_region(Format::Jsonc, "{}", &region(), "test-adapter").unwrap();
+        let after_second = upsert_region(Format::Jsonc, &after_first, &region(), "test-adapter").unwrap();
         assert_eq!(after_first, after_second);
     }
 
     #[test]
     fn extract_returns_recorded_metadata() {
-        let after = upsert_region(Format::Jsonc, "{}", &region()).unwrap();
+        let after = upsert_region(Format::Jsonc, "{}", &region(), "test-adapter").unwrap();
         let got = extract_region(Format::Jsonc, &after).unwrap().unwrap();
         assert_eq!(got.managed_keys, vec!["telemetry.endpoint"]);
         assert_eq!(got.hash, region().hash);
@@ -128,7 +128,7 @@ mod jsonc_cases {
 
     #[test]
     fn malformed_input_errors() {
-        let err = upsert_region(Format::Jsonc, "{ unbalanced", &region()).unwrap_err();
+        let err = upsert_region(Format::Jsonc, "{ unbalanced", &region(), "test-adapter").unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
     }
 }
@@ -151,7 +151,7 @@ mod toml_cases {
     #[test]
     fn fresh_install() {
         let original = "[user]\nname = \"jeff\"\n";
-        let after = upsert_region(Format::Toml, original, &region()).unwrap();
+        let after = upsert_region(Format::Toml, original, &region(), "test-adapter").unwrap();
         assert!(after.contains("# trove:start"));
         assert!(after.contains("# trove:end"));
         assert!(after.contains("name = \"jeff\""));
@@ -161,23 +161,23 @@ mod toml_cases {
     #[test]
     fn idempotent_second_run() {
         let original = "[user]\nname = \"jeff\"\n";
-        let after_first = upsert_region(Format::Toml, original, &region()).unwrap();
-        let after_second = upsert_region(Format::Toml, &after_first, &region()).unwrap();
+        let after_first = upsert_region(Format::Toml, original, &region(), "test-adapter").unwrap();
+        let after_second = upsert_region(Format::Toml, &after_first, &region(), "test-adapter").unwrap();
         assert_eq!(after_first, after_second);
     }
 
     #[test]
     fn user_content_outside_block_unchanged() {
         let original = "[user]\nname = \"jeff\"\nemail = \"jeff@example.com\"\n";
-        let after = upsert_region(Format::Toml, original, &region()).unwrap();
-        let reverted = remove_region(Format::Toml, &after).unwrap();
+        let after = upsert_region(Format::Toml, original, &region(), "test-adapter").unwrap();
+        let reverted = remove_region(Format::Toml, &after, "test-adapter").unwrap();
         // TOML uses fence-bracketed text; revert is byte-for-byte.
         assert_eq!(reverted, original);
     }
 
     #[test]
     fn extract_returns_payload_and_hash() {
-        let after = upsert_region(Format::Toml, "", &region()).unwrap();
+        let after = upsert_region(Format::Toml, "", &region(), "test-adapter").unwrap();
         let got = extract_region(Format::Toml, &after).unwrap().unwrap();
         assert_eq!(got.managed_keys, vec!["otel.endpoint".to_string()]);
         assert_eq!(got.hash, region().hash);
@@ -186,15 +186,15 @@ mod toml_cases {
 
     #[test]
     fn malformed_input_errors() {
-        let err = upsert_region(Format::Toml, "[unterminated", &region()).unwrap_err();
+        let err = upsert_region(Format::Toml, "[unterminated", &region(), "test-adapter").unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
     }
 
     #[test]
     fn roundtrip_byte_identical() {
         let original = "# user comment\n[user]\nname = \"jeff\"\n";
-        let after = upsert_region(Format::Toml, original, &region()).unwrap();
-        let reverted = remove_region(Format::Toml, &after).unwrap();
+        let after = upsert_region(Format::Toml, original, &region(), "test-adapter").unwrap();
+        let reverted = remove_region(Format::Toml, &after, "test-adapter").unwrap();
         assert_eq!(reverted, original);
     }
 }
@@ -217,7 +217,7 @@ mod yaml_cases {
     #[test]
     fn fresh_install() {
         let original = "service:\n  name: trove\n";
-        let after = upsert_region(Format::Yaml, original, &region()).unwrap();
+        let after = upsert_region(Format::Yaml, original, &region(), "test-adapter").unwrap();
         assert!(after.contains("# trove:start"));
         assert!(after.contains("# trove:end"));
         assert!(after.contains("name: trove"));
@@ -227,22 +227,22 @@ mod yaml_cases {
     #[test]
     fn idempotent_second_run() {
         let original = "service:\n  name: trove\n";
-        let after_first = upsert_region(Format::Yaml, original, &region()).unwrap();
-        let after_second = upsert_region(Format::Yaml, &after_first, &region()).unwrap();
+        let after_first = upsert_region(Format::Yaml, original, &region(), "test-adapter").unwrap();
+        let after_second = upsert_region(Format::Yaml, &after_first, &region(), "test-adapter").unwrap();
         assert_eq!(after_first, after_second);
     }
 
     #[test]
     fn user_content_outside_block_unchanged() {
         let original = "# user header comment\nservice:\n  name: trove\n";
-        let after = upsert_region(Format::Yaml, original, &region()).unwrap();
-        let reverted = remove_region(Format::Yaml, &after).unwrap();
+        let after = upsert_region(Format::Yaml, original, &region(), "test-adapter").unwrap();
+        let reverted = remove_region(Format::Yaml, &after, "test-adapter").unwrap();
         assert_eq!(reverted, original);
     }
 
     #[test]
     fn extract_returns_payload_and_hash() {
-        let after = upsert_region(Format::Yaml, "", &region()).unwrap();
+        let after = upsert_region(Format::Yaml, "", &region(), "test-adapter").unwrap();
         let got = extract_region(Format::Yaml, &after).unwrap().unwrap();
         assert_eq!(got.managed_keys, vec!["otel.endpoint".to_string()]);
         assert_eq!(got.hash, region().hash);
@@ -252,15 +252,15 @@ mod yaml_cases {
     fn malformed_input_errors() {
         // Tab-in-indent is invalid YAML.
         let err =
-            upsert_region(Format::Yaml, "service:\n\tname: trove\n", &region()).unwrap_err();
+            upsert_region(Format::Yaml, "service:\n\tname: trove\n", &region(), "test-adapter").unwrap_err();
         assert!(matches!(err, SentinelError::Malformed { .. }));
     }
 
     #[test]
     fn roundtrip_byte_identical() {
         let original = "# user header\nservice:\n  name: trove\n  port: 4317\n";
-        let after = upsert_region(Format::Yaml, original, &region()).unwrap();
-        let reverted = remove_region(Format::Yaml, &after).unwrap();
+        let after = upsert_region(Format::Yaml, original, &region(), "test-adapter").unwrap();
+        let reverted = remove_region(Format::Yaml, &after, "test-adapter").unwrap();
         assert_eq!(reverted, original);
     }
 }

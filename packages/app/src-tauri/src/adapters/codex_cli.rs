@@ -28,7 +28,14 @@ use super::{ApplyOptions, PatchPreview, TrovePatch};
 
 const COLLECTOR_BASE: &str = "http://127.0.0.1:4318";
 
+/// Adapter id used for shared-block dependency tracking in
+/// `~/.codex/config.toml`. `codex-desktop` shares the same TOML payload
+/// and uses its own id, so the fence header carries
+/// `deps=codex-cli,codex-desktop` when both are enabled.
+pub(crate) const ADAPTER_ID: &str = "codex-cli";
+
 const SPEC: HarnessSpec = HarnessSpec {
+    adapter_id: ADAPTER_ID,
     config_dir: ".codex",
     config_file: "config.toml",
     format: Format::Toml,

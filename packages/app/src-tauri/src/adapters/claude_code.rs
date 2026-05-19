@@ -32,6 +32,7 @@ const MANAGED_ENV_KEYS: &[(&str, &str)] = &[
 ];
 
 const SPEC: HarnessSpec = HarnessSpec {
+    adapter_id: "claude-code",
     config_dir: ".claude",
     config_file: "settings.json",
     format: Format::Json,
