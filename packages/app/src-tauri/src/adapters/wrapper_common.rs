@@ -35,13 +35,18 @@ use super::{ApplyOptions, BACKUPS_TO_KEEP, PatchPreview, PreviewStatus, TrovePat
 const FENCE_START: &str = "# trove:start";
 const FENCE_END: &str = "# trove:end";
 
-/// Specification for one shell-function install: the function name
-/// the user will invoke (`aider`, `gh-copilot`) and the bundled
-/// wrapper script's path on disk.
+/// Specification for one shell-function install: the function name(s)
+/// the user will invoke (`aider`, `copilot`, `gh-copilot`) and the
+/// bundled wrapper script's path on disk.
 #[derive(Clone, Debug)]
 pub struct WrapperSpec {
-    /// Name of the shell function to define (e.g. `aider`).
-    pub function_name: &'static str,
+    /// Names of the shell functions to define. Most adapters install a
+    /// single name (`["aider"]`, `["cursor-agent"]`); `copilot-cli`
+    /// installs both `["copilot", "gh-copilot"]` to cover the new
+    /// standalone CLI and the deprecated gh-extension simultaneously.
+    /// Empty slices are a programmer error and will panic at apply
+    /// time — adapters set this as a `const`.
+    pub function_names: &'static [&'static str],
     /// Absolute path of the bundled wrapper script on disk. Resolved
     /// at runtime via Tauri's `resource_dir()`.
     pub wrapper_path: PathBuf,
@@ -51,9 +56,15 @@ pub struct WrapperSpec {
 }
 
 /// Render the Trove-managed block for `spec` and `opts`. Same payload
-/// → same hash → idempotent re-apply.
+/// → same hash → idempotent re-apply. When `spec.function_names` has
+/// more than one entry, one shell-function definition is emitted per
+/// name, all pointing at the same wrapper.
 #[must_use]
 pub fn build_managed_block(spec: &WrapperSpec, opts: &ApplyOptions) -> String {
+    assert!(
+        !spec.function_names.is_empty(),
+        "WrapperSpec.function_names must contain at least one name",
+    );
     let path = spec.wrapper_path.display();
     let mut attrs = String::new();
     for (k, v) in &opts.custom_attributes {
@@ -67,14 +78,12 @@ pub fn build_managed_block(spec: &WrapperSpec, opts: &ApplyOptions) -> String {
         let _ = writeln!(attrs, "    # attr: {k}={safe}");
     }
 
-    format!(
-        "{label}() {{ \"{path}\" \"$@\"; }}\n\
-{attrs}\
-",
-        label = spec.function_name,
-        path = path,
-        attrs = attrs,
-    )
+    let mut out = String::new();
+    for name in spec.function_names {
+        let _ = writeln!(out, "{name}() {{ \"{path}\" \"$@\"; }}");
+    }
+    out.push_str(&attrs);
+    out
 }
 
 /// `~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish` — the shell
@@ -332,9 +341,17 @@ mod tests {
 
     fn fixture_spec() -> WrapperSpec {
         WrapperSpec {
-            function_name: "aider",
+            function_names: &["aider"],
             wrapper_path: PathBuf::from("/opt/trove/wrappers/trove-aider"),
             label: "trove::aider",
+        }
+    }
+
+    fn fixture_spec_two_names() -> WrapperSpec {
+        WrapperSpec {
+            function_names: &["copilot", "gh-copilot"],
+            wrapper_path: PathBuf::from("/opt/trove/wrappers/trove-copilot"),
+            label: "trove::copilot-cli",
         }
     }
 
@@ -410,6 +427,24 @@ mod tests {
         opts.custom_attributes.insert("team".into(), "platform".into());
         let block = build_managed_block(&spec, &opts);
         assert!(block.contains("# attr: team=platform"));
+    }
+
+    #[test]
+    fn build_managed_block_emits_one_function_def_per_name() {
+        // copilot-cli installs both `copilot` (new standalone CLI) and
+        // `gh-copilot` (deprecated gh-extension) so users on either
+        // path are observed. The block must contain both definitions,
+        // each pointing at the same wrapper.
+        let spec = fixture_spec_two_names();
+        let block = build_managed_block(&spec, &ApplyOptions::default());
+        assert!(
+            block.contains("copilot() { \"/opt/trove/wrappers/trove-copilot\" \"$@\"; }"),
+            "missing `copilot()` definition: {block}",
+        );
+        assert!(
+            block.contains("gh-copilot() { \"/opt/trove/wrappers/trove-copilot\" \"$@\"; }"),
+            "missing `gh-copilot()` definition: {block}",
+        );
     }
 
     #[test]
