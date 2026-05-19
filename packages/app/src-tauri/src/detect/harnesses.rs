@@ -107,10 +107,18 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
     }
 }
 
-/// Whether `path` contains a Trove-managed region. Returns false on
-/// missing or unparseable files (the dashboard surfaces the parse
-/// failure separately via the telemetry-status `Unknown` and the
-/// preview/apply error path).
+/// Whether `path` contains a Trove-managed region for this specific
+/// harness. Returns false on missing or unparseable files (the
+/// dashboard surfaces the parse failure separately via the
+/// telemetry-status `Unknown` and the preview/apply error path).
+///
+/// For shared-config harnesses (codex-cli + codex-desktop both read
+/// `~/.codex/config.toml`), this checks the block's `deps=` header so
+/// each row's `enabled` UI state is per-adapter rather than per-file.
+/// Legacy blocks (written before dep-tracking shipped) carry no
+/// `deps=` token; those are treated as belonging to the single-owner
+/// adapter that originally wrote them — codex-cli for the `otel.*`
+/// keypath.
 fn read_trove_region_present(id: HarnessId, path: &Path) -> bool {
     let format = match id {
         HarnessId::ClaudeCode
@@ -125,7 +133,26 @@ fn read_trove_region_present(id: HarnessId, path: &Path) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
     };
-    matches!(extract_region(format, &text), Ok(Some(_)))
+    let Ok(Some(region)) = extract_region(format, &text) else {
+        return false;
+    };
+
+    match id {
+        HarnessId::CodexCli => {
+            // Legacy single-owner blocks (no deps token parsed) belong
+            // to codex-cli — that's the only adapter that wrote into
+            // ~/.codex/config.toml before codex-desktop existed.
+            if region.dependents.is_empty() {
+                true
+            } else {
+                region.dependents.iter().any(|d| d == "codex-cli")
+            }
+        }
+        HarnessId::CodexDesktop => region.dependents.iter().any(|d| d == "codex-desktop"),
+        // Single-owner formats (JSON `_trove` marker) — a block's
+        // existence implies this row owns it.
+        _ => true,
+    }
 }
 
 fn read_telemetry(id: HarnessId, path: &Path) -> TelemetryStatus {
@@ -604,6 +631,71 @@ mod tests {
         );
         let result = detect(HarnessId::ClaudeCode, &detector_for(home.path()));
         assert!(result.trove_region_present);
+    }
+
+    // ---- Shared-config region presence (codex pair) ------------------------
+
+    fn codex_block(deps_token: Option<&str>) -> String {
+        let header = match deps_token {
+            Some(deps) => format!(
+                "# trove:start hash=abc keys=otel.exporter,otel.trace_exporter,otel.metrics_exporter deps={deps}"
+            ),
+            None => "# trove:start hash=abc keys=otel.exporter,otel.trace_exporter,otel.metrics_exporter".into(),
+        };
+        format!(
+            "{header}\n[otel.exporter]\nkind = \"otlp-http\"\nendpoint = \"http://127.0.0.1:4318/v1/logs\"\nprotocol = \"binary\"\n# trove:end\n"
+        )
+    }
+
+    #[test]
+    fn codex_cli_region_present_when_block_lists_it() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, &codex_block(Some("codex-cli")));
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert!(result.trove_region_present);
+    }
+
+    #[test]
+    fn codex_desktop_region_not_present_when_block_lists_only_cli() {
+        // The bug surfaced live: when codex-cli's apply has written
+        // the shared block but codex-desktop hasn't yet, the desktop
+        // row must NOT show as enabled.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, &codex_block(Some("codex-cli")));
+        let result = detect(HarnessId::CodexDesktop, &detector_for(home.path()));
+        assert!(!result.trove_region_present);
+    }
+
+    #[test]
+    fn codex_desktop_region_present_when_block_lists_both() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, &codex_block(Some("codex-cli,codex-desktop")));
+        let result = detect(HarnessId::CodexDesktop, &detector_for(home.path()));
+        assert!(result.trove_region_present);
+    }
+
+    #[test]
+    fn codex_cli_region_present_for_legacy_block_without_deps_token() {
+        // Pre-dep-tracking blocks have no `deps=` token. Treat them as
+        // codex-cli's so an upgrade-in-place doesn't flip the CLI row
+        // to disabled the moment the user restarts Trove.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, &codex_block(None));
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert!(result.trove_region_present);
+    }
+
+    #[test]
+    fn codex_desktop_region_not_present_for_legacy_block_without_deps_token() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, &codex_block(None));
+        let result = detect(HarnessId::CodexDesktop, &detector_for(home.path()));
+        assert!(!result.trove_region_present);
     }
 
     #[test]
