@@ -25,7 +25,7 @@ use super::{ApplyOptions, PatchPreview, TrovePatch};
 /// `aider` shell function name. The user invokes `aider <args>`
 /// after `source`-ing the rc file; the function execs `trove-aider`
 /// which delegates to the real `aider` binary.
-pub const FUNCTION_NAME: &str = "aider";
+pub const FUNCTION_NAMES: &[&str] = &["aider"];
 
 /// Subdirectory under the user's state dir where the wrapper writes
 /// its JSON-line log.
@@ -54,7 +54,7 @@ pub fn config_path(home: &Path) -> PathBuf {
 #[must_use]
 pub fn spec(wrapper_path: PathBuf) -> WrapperSpec {
     WrapperSpec {
-        function_name: FUNCTION_NAME,
+        function_names: FUNCTION_NAMES,
         wrapper_path,
         label: "trove::aider",
     }
@@ -175,8 +175,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn function_name_is_aider() {
-        assert_eq!(FUNCTION_NAME, "aider");
+    fn function_names_is_just_aider() {
+        assert_eq!(FUNCTION_NAMES, &["aider"]);
     }
 
     #[test]

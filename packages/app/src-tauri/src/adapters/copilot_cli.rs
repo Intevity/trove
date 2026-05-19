@@ -1,21 +1,28 @@
 //! GitHub Copilot CLI adapter — Tier 3 best-effort. Sprint 9 PR 3.
 //!
-//! `gh copilot` has no native OTLP. Trove installs a Trove-managed
-//! block in the user's primary shell rc that defines a shell function
-//! named `gh-copilot` (with a hyphen, not a space) which execs the
-//! bundled `trove-copilot` wrapper. The wrapper runs `gh copilot` and
-//! appends one JSON-line per invocation to
-//! `~/.local/state/trove/copilot.log`. A [`crate::log_watcher`] tail
-//! emits one OTLP `LogRecord` per line.
+//! GitHub Copilot CLI has no native OTLP. Trove installs a Trove-managed
+//! block in the user's primary shell rc that defines two shell functions
+//! — `copilot` (the new standalone CLI; binary name `copilot`) and
+//! `gh-copilot` (the deprecated `gh copilot` gh-extension, sunset
+//! 2025-09-25 but still in widespread use through ~2026). Both
+//! functions exec the bundled `trove-copilot` wrapper, which prefers
+//! the new standalone binary and falls back to `gh copilot` only when
+//! the new one isn't on PATH. The wrapper appends one JSON-line per
+//! invocation to `~/.local/state/trove/copilot.log`; a
+//! [`crate::log_watcher`] tail emits one OTLP `LogRecord` per line.
 //!
-//! ## Why a `gh-copilot` rename and not a `gh` shadow
+//! ## Why both function names
 //!
-//! Shadowing `gh` itself routes every gh subcommand through Trove's
-//! wrapper — fine for observability of `gh copilot` but invasive for
-//! `gh pr`, `gh repo`, etc. (and a UX hazard if our wrapper has a
-//! bug). Renaming Copilot's invocation to `gh-copilot` keeps the
-//! blast radius scoped to the one subcommand we're observing. The UI
-//! surfaces this rename in the row's coverage-note tooltip.
+//! Users on a clean install of the new standalone CLI invoke
+//! `copilot suggest "..."` and never `gh copilot`. Users still on the
+//! deprecated gh-extension invoke `gh-copilot suggest "..."`. The
+//! adapter covers both by defining a shell function for each name;
+//! once a user migrates to the standalone CLI they keep observability
+//! seamlessly. Shadowing `gh` itself would route every gh subcommand
+//! through Trove's wrapper — invasive for `gh pr`, `gh repo`, etc. and
+//! a UX hazard if our wrapper has a bug. Renaming the deprecated path
+//! to `gh-copilot` keeps the blast radius scoped to the one subcommand
+//! we're observing.
 
 use std::path::{Path, PathBuf};
 
@@ -26,10 +33,12 @@ use crate::ipc::IpcError;
 use super::wrapper_common::{self, WrapperSpec};
 use super::{ApplyOptions, PatchPreview, TrovePatch};
 
-/// `gh-copilot` shell function name (with a hyphen). Users invoke
-/// `gh-copilot suggest "..."` instead of `gh copilot suggest "..."`
-/// while Trove is observing.
-pub const FUNCTION_NAME: &str = "gh-copilot";
+/// Shell function names the adapter installs. `copilot` covers the new
+/// standalone CLI (`github/copilot-cli`); `gh-copilot` covers the
+/// deprecated `gh copilot` gh-extension (sunset 2025-09-25 but still
+/// widespread). Both functions exec the same wrapper script, which
+/// forwards to whichever real binary is on PATH (prefers the new one).
+pub const FUNCTION_NAMES: &[&str] = &["copilot", "gh-copilot"];
 
 /// Subdirectory under the user's state dir where the wrapper writes
 /// its JSON-line log.
@@ -52,7 +61,7 @@ pub fn config_path(home: &Path) -> PathBuf {
 #[must_use]
 pub fn spec(wrapper_path: PathBuf) -> WrapperSpec {
     WrapperSpec {
-        function_name: FUNCTION_NAME,
+        function_names: FUNCTION_NAMES,
         wrapper_path,
         label: "trove::copilot-cli",
     }
@@ -165,8 +174,20 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn function_name_is_gh_copilot_with_hyphen() {
-        assert_eq!(FUNCTION_NAME, "gh-copilot");
+    fn function_names_covers_both_copilot_and_gh_copilot() {
+        // `copilot` (new standalone CLI) is listed first so the block
+        // emits its definition before the deprecated `gh-copilot` alias.
+        // Both must be present so neither path drops out of observability.
+        assert_eq!(FUNCTION_NAMES, &["copilot", "gh-copilot"]);
+    }
+
+    #[test]
+    fn wrapper_block_contains_both_function_names() {
+        use crate::adapters::wrapper_common::build_managed_block;
+        let s = spec(PathBuf::from("/tmp/trove-copilot"));
+        let block = build_managed_block(&s, &ApplyOptions::default());
+        assert!(block.contains("copilot() { \"/tmp/trove-copilot\" \"$@\"; }"));
+        assert!(block.contains("gh-copilot() { \"/tmp/trove-copilot\" \"$@\"; }"));
     }
 
     #[test]

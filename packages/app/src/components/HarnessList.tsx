@@ -64,7 +64,7 @@ const HARNESS_BADGES: Partial<Record<HarnessId, HarnessBadge>> = {
     tone: 'amber',
     icon: Info,
     description:
-      "GitHub Copilot CLI doesn't emit OpenTelemetry natively. Trove installs a shell-rc wrapper exposed as `gh-copilot` that runs `gh copilot` and logs invocation counts + durations. While Trove is enabled, invoke as `gh-copilot` (with a hyphen) so the wrapper observes the call.",
+      "GitHub Copilot CLI doesn't emit OpenTelemetry natively. Trove installs shell-rc wrappers exposed as `copilot` and `gh-copilot` that run the real Copilot CLI and log invocation counts + durations. The wrapper prefers the new standalone `copilot` binary; if it isn't installed it falls back to the deprecated `gh copilot` gh-extension.",
     docsUrl: 'https://docs.github.com/en/copilot/github-copilot-in-the-cli',
   },
   'claude-desktop': {

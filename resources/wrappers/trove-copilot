@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# trove-copilot — Sprint 9 Tier 3 wrapper around `gh copilot`.
+# trove-copilot — Sprint 9 Tier 3 wrapper around GitHub Copilot CLI.
 #
-# Invoked from the user's shell rc (Trove appends a function named
-# `gh-copilot` that execs this script with the user's args). Runs
-# `gh copilot <args>` and writes a single JSON-line per invocation to
-# ~/.local/state/trove/copilot.log. Never blocks the user — write
-# failures fall through to stderr and `gh copilot` runs unchanged.
+# Invoked from the user's shell rc (Trove appends two shell functions —
+# `copilot` and `gh-copilot` — that exec this script with the user's
+# args). The script forwards the invocation to whichever real binary is
+# on PATH:
 #
-# Why a separate `gh-copilot` function and not a `gh` shadow: shadowing
-# `gh` itself would route every gh subcommand through Trove's wrapper,
-# which is invasive (and a UX/permissions hazard). The `gh-copilot`
-# rename is the trade-off — users invoke `gh-copilot suggest "..."`
-# instead of `gh copilot suggest "..."` while observing.
+#   1. `copilot` — the new standalone GitHub Copilot CLI
+#      (`github/copilot-cli`). Sunsets the gh-extension path.
+#   2. `gh copilot` — the deprecated gh-extension (sunset 2025-09-25 but
+#      still in widespread use).
+#
+# We prefer (1) when both are present; (2) is the fallback only.
+#
+# Each invocation appends one JSON-line to
+# `~/.local/state/trove/copilot.log`. Never blocks the user — write
+# failures fall through to stderr and the real CLI runs unchanged.
 #
 # Each emitted log line:
 #   {"ts":"<ISO-8601>","tool":"copilot-cli","argc":N,"exit_code":<int>,"duration_ms":<int>}
@@ -22,22 +26,34 @@ LOG_DIR="${TROVE_STATE_DIR:-$HOME/.local/state/trove}"
 LOG_FILE="$LOG_DIR/copilot.log"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 
-# Resolve `gh` on PATH — `gh` itself is never shadowed by us, so we
-# don't need the self-skip dance the aider wrapper does.
-GH=""
-if command -v gh >/dev/null 2>&1; then
-  GH="$(command -v gh)"
+# Resolve the real binary. Skip Trove's own shell-function definitions
+# (which alias `copilot`/`gh-copilot` to this script) by using
+# `command -v` against PATH only, not via the function table.
+REAL_COPILOT=""
+USE_GH_FALLBACK=0
+if command -v copilot >/dev/null 2>&1; then
+  REAL_COPILOT="$(command -v copilot)"
+elif command -v gh >/dev/null 2>&1; then
+  # The deprecated path: invoke `gh copilot <args>`. We only take this
+  # branch when the standalone `copilot` binary is absent.
+  REAL_COPILOT="$(command -v gh)"
+  USE_GH_FALLBACK=1
 fi
 
-if [ -z "$GH" ]; then
-  echo "trove-copilot: \`gh\` not found on PATH" >&2
+if [ -z "$REAL_COPILOT" ]; then
+  echo "trove-copilot: neither \`copilot\` nor \`gh\` found on PATH" >&2
+  echo "trove-copilot: install GitHub Copilot CLI from https://github.com/github/copilot-cli" >&2
   exit 127
 fi
 
 START_NS="$(date +%s%N 2>/dev/null || echo 0)"
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
 
-"$GH" copilot "$@"
+if [ "$USE_GH_FALLBACK" -eq 1 ]; then
+  "$REAL_COPILOT" copilot "$@"
+else
+  "$REAL_COPILOT" "$@"
+fi
 EXIT=$?
 
 END_NS="$(date +%s%N 2>/dev/null || echo 0)"

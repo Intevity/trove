@@ -36,7 +36,7 @@ use super::{ApplyOptions, PatchPreview, TrovePatch};
 /// `cursor-agent` shell function name. The user invokes
 /// `cursor-agent <args>` exactly as before; the function defined in
 /// the user's shell rc transparently routes through the wrapper.
-pub const FUNCTION_NAME: &str = "cursor-agent";
+pub const FUNCTION_NAMES: &[&str] = &["cursor-agent"];
 
 /// Subdirectory under the user's state dir where the wrapper writes
 /// its JSON-line log.
@@ -65,7 +65,7 @@ pub fn config_path(home: &Path) -> PathBuf {
 #[must_use]
 pub fn spec(wrapper_path: PathBuf) -> WrapperSpec {
     WrapperSpec {
-        function_name: FUNCTION_NAME,
+        function_names: FUNCTION_NAMES,
         wrapper_path,
         label: "trove::cursor-cli",
     }
@@ -178,8 +178,8 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn function_name_is_cursor_agent() {
-        assert_eq!(FUNCTION_NAME, "cursor-agent");
+    fn function_names_is_just_cursor_agent() {
+        assert_eq!(FUNCTION_NAMES, &["cursor-agent"]);
     }
 
     #[test]
