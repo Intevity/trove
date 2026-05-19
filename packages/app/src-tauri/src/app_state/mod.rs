@@ -1713,8 +1713,8 @@ mod tests {
         // mappings table.
         assert_eq!(
             state.mappings.harnesses.len(),
-            16,
-            "v5→v6 migration should populate per-harness defaults (11 mapped + 5 detection-only)",
+            17,
+            "v5→v6 migration should populate per-harness defaults (12 mapped + 5 detection-only)",
         );
     }
 

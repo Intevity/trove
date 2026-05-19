@@ -696,6 +696,11 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         | HarnessId::Cline
         | HarnessId::Aider
         | HarnessId::CopilotCli
+        // codex-desktop shares ~/.codex/config.toml with codex-cli and
+        // drives the same Rust backend, so it has no distinct native
+        // service.name to claim — the existing codex-cli arm above
+        // catches both `codex-cli` and `codex` resource tags.
+        | HarnessId::CodexDesktop
         | HarnessId::JunieCli
         | HarnessId::Droid
         | HarnessId::KimiCodeCli
@@ -714,6 +719,7 @@ pub fn harness_id_suffix(id: HarnessId) -> &'static str {
         HarnessId::ClaudeCode => "claude-code",
         HarnessId::GeminiCli => "gemini-cli",
         HarnessId::CodexCli => "codex-cli",
+        HarnessId::CodexDesktop => "codex-desktop",
         HarnessId::QwenCode => "qwen-code",
         HarnessId::Opencode => "opencode",
         HarnessId::ClaudeDesktop => "claude-desktop",

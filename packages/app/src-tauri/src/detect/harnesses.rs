@@ -107,7 +107,7 @@ fn read_trove_region_present(id: HarnessId, path: &Path) -> bool {
         | HarnessId::CursorIde
         | HarnessId::CursorCli
         | HarnessId::Opencode => Format::Json,
-        HarnessId::CodexCli => Format::Toml,
+        HarnessId::CodexCli | HarnessId::CodexDesktop => Format::Toml,
         _ => return false,
     };
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -123,7 +123,7 @@ fn read_telemetry(id: HarnessId, path: &Path) -> TelemetryStatus {
     match id {
         HarnessId::ClaudeCode => check_claude_telemetry(&text),
         HarnessId::GeminiCli | HarnessId::QwenCode => check_gemini_like_telemetry(&text),
-        HarnessId::CodexCli => check_codex_telemetry(&text),
+        HarnessId::CodexCli | HarnessId::CodexDesktop => check_codex_telemetry(&text),
         HarnessId::CursorIde | HarnessId::CursorCli => check_cursor_telemetry(&text),
         HarnessId::Opencode => check_opencode_telemetry(&text),
         _ => TelemetryStatus::Unknown,

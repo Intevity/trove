@@ -19,6 +19,7 @@ pub mod claude_desktop_watcher;
 pub mod cline;
 pub mod cline_watcher;
 pub mod codex_cli;
+pub mod codex_desktop;
 pub mod copilot_cli;
 pub mod cursor_cli;
 pub mod cursor_common;

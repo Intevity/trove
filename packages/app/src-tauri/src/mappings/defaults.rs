@@ -39,6 +39,7 @@ pub fn default_state() -> MappingState {
             defaults_for(HarnessId::ClaudeDesktop),
             defaults_for(HarnessId::GeminiCli),
             defaults_for(HarnessId::CodexCli),
+            defaults_for(HarnessId::CodexDesktop),
             defaults_for(HarnessId::QwenCode),
             defaults_for(HarnessId::Opencode),
             defaults_for(HarnessId::CursorIde),
@@ -80,6 +81,7 @@ pub fn defaults_for(id: HarnessId) -> HarnessMapping {
         HarnessId::ClaudeDesktop => claude_desktop_defaults(),
         HarnessId::GeminiCli => gemini_cli_defaults(),
         HarnessId::CodexCli => codex_cli_defaults(),
+        HarnessId::CodexDesktop => codex_desktop_defaults(),
         HarnessId::QwenCode => qwen_code_defaults(),
         HarnessId::Opencode => opencode_defaults(),
         HarnessId::CursorIde => cursor_ide_defaults(),
@@ -463,6 +465,23 @@ fn codex_cli_defaults() -> HarnessMapping {
     }
 }
 
+/// Codex desktop app shares `~/.codex/config.toml` with codex-cli and
+/// drives the same Rust `codex app-server` backend. The backend tags
+/// emitted signals with `service.name = codex`, which the existing
+/// codex-cli mappings already consume — so codex-desktop ships empty
+/// sources here and lets codex-cli's rules handle the actual signal
+/// routing. This row tracks enablement state in state.json; the
+/// dashboard's telemetry pill keys off the shared backend observation
+/// via `telemetry_observed`.
+fn codex_desktop_defaults() -> HarnessMapping {
+    HarnessMapping {
+        harness_id: HarnessId::CodexDesktop,
+        enabled: true,
+        sources: Vec::new(),
+        cost_overrides: BTreeMap::new(),
+    }
+}
+
 /// Qwen Code is a Gemini CLI fork and inherits its metric namespace.
 /// But emitting `metricstransform` rules that match `gemini_cli.*`
 /// would shadow-fire whenever Gemini itself emits, producing duplicate
@@ -739,6 +758,7 @@ mod tests {
                 HarnessId::ClaudeDesktop,
                 HarnessId::GeminiCli,
                 HarnessId::CodexCli,
+                HarnessId::CodexDesktop,
                 HarnessId::QwenCode,
                 HarnessId::Opencode,
                 HarnessId::CursorIde,

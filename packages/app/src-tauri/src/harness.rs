@@ -16,6 +16,13 @@ pub enum HarnessId {
     ClaudeDesktop,
     GeminiCli,
     CodexCli,
+    /// OpenAI Codex desktop app (`/Applications/Codex.app`). Shares
+    /// `~/.codex/config.toml` with the CLI — both invoke the same Rust
+    /// `codex app-server` backend — so the codex-desktop adapter writes
+    /// the same `[otel.*]` payload as codex-cli. The two adapters
+    /// coexist in the shared TOML block via dep-tracking (see
+    /// `safety::sentinels::comment_fence`).
+    CodexDesktop,
     QwenCode,
     Opencode,
     CursorIde,
@@ -46,6 +53,7 @@ impl HarnessId {
             Self::ClaudeDesktop => "Claude Desktop",
             Self::GeminiCli => "Gemini CLI",
             Self::CodexCli => "OpenAI Codex CLI",
+            Self::CodexDesktop => "OpenAI Codex",
             Self::QwenCode => "Qwen Code",
             Self::Opencode => "OpenCode",
             Self::CursorIde => "Cursor IDE",
@@ -73,6 +81,7 @@ impl HarnessId {
             Self::ClaudeDesktop,
             Self::GeminiCli,
             Self::CodexCli,
+            Self::CodexDesktop,
             Self::QwenCode,
             Self::Opencode,
             Self::CursorIde,
@@ -102,6 +111,7 @@ impl HarnessId {
             Self::ClaudeDesktop,
             Self::GeminiCli,
             Self::CodexCli,
+            Self::CodexDesktop,
             Self::QwenCode,
         ]
     }
@@ -188,6 +198,7 @@ mod tests {
                 HarnessId::ClaudeDesktop,
                 HarnessId::GeminiCli,
                 HarnessId::CodexCli,
+                HarnessId::CodexDesktop,
                 HarnessId::QwenCode,
             ]
         );
@@ -268,6 +279,7 @@ mod tests {
             HarnessId::ClaudeDesktop,
             HarnessId::GeminiCli,
             HarnessId::CodexCli,
+            HarnessId::CodexDesktop,
             HarnessId::QwenCode,
             HarnessId::Opencode,
             HarnessId::CursorIde,

@@ -28,7 +28,12 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
         // hook for a per-user preferences file in case Anthropic
         // ships one later (verified empty for now).
         HarnessId::GeminiCli => paths.push(home.join(".gemini").join("settings.json")),
-        HarnessId::CodexCli => {
+        HarnessId::CodexCli | HarnessId::CodexDesktop => {
+            // Codex CLI and Codex desktop both read ~/.codex/config.toml
+            // — the desktop app's Electron shell still delegates to the
+            // bundled Rust `codex app-server`, which reads the same TOML.
+            // Trove instruments both with one shared, dep-tracked
+            // managed region (see safety::sentinels::comment_fence).
             paths.push(home.join(".codex").join("config.toml"));
             // Linux codex-cli also reads $XDG_CONFIG_HOME/codex/config.toml
             // when the user has set it. Plan agent flagged this quirk.
@@ -143,6 +148,9 @@ pub fn app_bundle_path(harness: HarnessId, app_root: &Path) -> Option<PathBuf> {
         // (`cursor-agent`) doesn't get its own bundle — it's detected via
         // the binary on PATH instead.
         HarnessId::CursorIde => Some(app_root.join("Cursor.app")),
+        // OpenAI Codex desktop app ships as /Applications/Codex.app.
+        // Codex CLI is detected via the `codex` binary on PATH instead.
+        HarnessId::CodexDesktop => Some(app_root.join("Codex.app")),
         _ => None,
     }
 }
@@ -319,6 +327,25 @@ mod tests {
             app_bundle_path(HarnessId::CursorIde, &root),
             Some(PathBuf::from("/tmp/Applications/Cursor.app"))
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_desktop_app_bundle_under_apps_root() {
+        let root = PathBuf::from("/tmp/Applications");
+        assert_eq!(
+            app_bundle_path(HarnessId::CodexDesktop, &root),
+            Some(PathBuf::from("/tmp/Applications/Codex.app"))
+        );
+    }
+
+    #[test]
+    fn codex_desktop_resolves_to_same_config_toml_as_codex_cli() {
+        let home = PathBuf::from("/home/dev");
+        let cli = config_search_paths(HarnessId::CodexCli, &home);
+        let desk = config_search_paths(HarnessId::CodexDesktop, &home);
+        assert_eq!(cli, desk);
+        assert_eq!(desk[0], PathBuf::from("/home/dev/.codex/config.toml"));
     }
 
     #[cfg(target_os = "macos")]
