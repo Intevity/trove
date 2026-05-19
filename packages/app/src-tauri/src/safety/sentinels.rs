@@ -83,14 +83,45 @@ pub struct ManagedRegion {
     pub managed_keys: Vec<String>,
     pub payload: String,
     pub hash: String,
+    /// When `false`, the JSON upsert path skips writing the top-level
+    /// `_trove` marker into the host file. Used for hosts whose JSON
+    /// schema rejects unknown top-level keys (e.g. opencode). Default
+    /// `true` to keep existing adapters' behaviour. Not serialized into
+    /// state.json — this is a build-time choice that lives in the
+    /// adapter's `build_region`.
+    #[serde(default = "default_persist_marker", skip)]
+    pub persist_marker_in_file: bool,
+}
+
+fn default_persist_marker() -> bool {
+    true
 }
 
 impl ManagedRegion {
     /// Build a `ManagedRegion` for JSON / JSONC by recording a set of
     /// dotted-path → JSON value patches. `managed_keys` is derived from
-    /// the leaf paths of `patches`.
+    /// the leaf paths of `patches`. The resulting region writes a
+    /// top-level `_trove` marker into the host file.
     pub fn for_json_patches(
         patches: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self, SentinelError> {
+        Self::for_json_patches_inner(patches, /*persist_marker=*/ true)
+    }
+
+    /// Like [`for_json_patches`] but the resulting region skips the
+    /// `_trove` marker write. Use for hosts whose JSON schema rejects
+    /// unknown top-level keys. Revert for such hosts must compute the
+    /// leaves to remove from this `managed_keys` directly (see
+    /// `adapters/opencode.rs::revert`).
+    pub fn for_json_patches_no_marker(
+        patches: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self, SentinelError> {
+        Self::for_json_patches_inner(patches, /*persist_marker=*/ false)
+    }
+
+    fn for_json_patches_inner(
+        patches: &serde_json::Map<String, serde_json::Value>,
+        persist_marker: bool,
     ) -> Result<Self, SentinelError> {
         let leaves = leaf_paths(patches, "");
         let canonical = canonical_json(&serde_json::Value::Object(patches.clone()))?;
@@ -100,6 +131,7 @@ impl ManagedRegion {
             managed_keys: leaves,
             payload,
             hash: hash_hex(&canonical),
+            persist_marker_in_file: persist_marker,
         })
     }
 
@@ -113,6 +145,7 @@ impl ManagedRegion {
             managed_keys,
             hash: hash_hex(payload.as_bytes()),
             payload,
+            persist_marker_in_file: true,
         }
     }
 }
@@ -213,11 +246,18 @@ mod json_like {
             set_leaf(host, &path, leaf_value);
         }
 
-        // Write _trove. Using sorted keys inside the payload's canonical
-        // form makes the hash stable regardless of input map order.
-        let canonical = canonical_json(&Value::Object(patches_map))?;
-        let trove_meta = trove_metadata(&leaves, &hash_hex(&canonical));
-        host.insert(TROVE_KEY.into(), trove_meta);
+        // Write _trove unless the adapter opted out (strict-schema hosts
+        // like opencode). Using sorted keys inside the payload's
+        // canonical form makes the hash stable regardless of input map
+        // order. Opt-out adapters must implement revert by deriving
+        // keys to remove from `region.managed_keys` directly.
+        if region.persist_marker_in_file {
+            let canonical = canonical_json(&Value::Object(patches_map))?;
+            let trove_meta = trove_metadata(&leaves, &hash_hex(&canonical));
+            host.insert(TROVE_KEY.into(), trove_meta);
+        } else {
+            let _ = leaves; // suppress unused-binding warning on the opt-out path
+        }
 
         emit(&value, is_jsonc)
     }
@@ -300,6 +340,7 @@ mod json_like {
             managed_keys,
             payload,
             hash,
+            persist_marker_in_file: true,
         }))
     }
 
@@ -543,6 +584,7 @@ mod comment_fence {
             managed_keys,
             payload,
             hash,
+            persist_marker_in_file: true,
         }))
     }
 
