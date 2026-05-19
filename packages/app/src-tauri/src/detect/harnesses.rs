@@ -20,7 +20,19 @@ pub fn detect(id: HarnessId, detector: &Detector) -> DetectedHarness {
         .into_iter()
         .find(|p| p.exists());
 
-    let mut detection_method = config_path.as_ref().map(|_| DetectionMethod::ConfigDir);
+    // codex-cli and codex-desktop share `~/.codex/config.toml`, so its
+    // mere presence cannot distinguish which one is installed — it
+    // appears whenever either harness has run. For those two, require a
+    // harness-specific signal (PATH binary for the CLI; app-bundle for
+    // the desktop) to claim detection. The shared file is still read
+    // below for telemetry status + trove-region presence.
+    let config_is_unique_signal = !matches!(id, HarnessId::CodexCli | HarnessId::CodexDesktop);
+
+    let mut detection_method = if config_is_unique_signal {
+        config_path.as_ref().map(|_| DetectionMethod::ConfigDir)
+    } else {
+        None
+    };
 
     let binary_name = path_binary_name(id);
     let path_hit = match (binary_name, detector.path_dirs.as_deref()) {
@@ -481,6 +493,88 @@ mod tests {
 
         let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
         assert_eq!(result.telemetry, TelemetryStatus::Unknown);
+    }
+
+    #[test]
+    fn codex_cli_not_detected_when_only_shared_config_present_without_binary() {
+        // ~/.codex/config.toml exists but `codex` is not on PATH and
+        // /Applications/Codex.app is absent. The config file alone is
+        // ambiguous (it could belong to either harness), so detection
+        // must NOT fire.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, "[user]\nname = \"a\"\n");
+
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert!(!result.detected, "codex-cli should require `codex` on PATH");
+        assert_eq!(result.detection_method, None);
+        // The shared config file is still surfaced (so the dashboard
+        // and the adapter can read telemetry status from it).
+        assert_eq!(result.config_path.as_deref(), Some(cfg.as_path()));
+    }
+
+    #[test]
+    fn codex_desktop_not_detected_when_only_shared_config_present_without_bundle() {
+        // Same ambiguity from the other side: config.toml exists, but
+        // /Applications/Codex.app is absent in the tempdir app_root.
+        // codex-desktop must not falsely fire on the CLI's config file.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, "[user]\nname = \"a\"\n");
+
+        let result = detect(HarnessId::CodexDesktop, &detector_for(home.path()));
+        assert!(!result.detected, "codex-desktop should require Codex.app");
+        assert_eq!(result.detection_method, None);
+        assert_eq!(result.config_path.as_deref(), Some(cfg.as_path()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_desktop_detected_via_app_bundle_even_when_config_also_present() {
+        // When both signals are present, app-bundle is the authoritative
+        // signal for codex-desktop (config.toml is shared).
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, "[user]\nname = \"a\"\n");
+        let app_root = tempdir().unwrap();
+        fs::create_dir_all(app_root.path().join("Codex.app")).unwrap();
+
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(Vec::new()),
+            app_root: app_root.path().to_path_buf(),
+        };
+
+        let result = detect(HarnessId::CodexDesktop, &detector);
+        assert!(result.detected);
+        assert_eq!(result.detection_method, Some(DetectionMethod::AppBundle));
+    }
+
+    #[test]
+    fn codex_cli_detected_via_path_binary_even_when_config_also_present() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(&cfg, "[user]\nname = \"a\"\n");
+
+        let bin_dir = tempdir().unwrap();
+        let exe_name = if cfg!(windows) { "codex.exe" } else { "codex" };
+        let exe = bin_dir.path().join(exe_name);
+        fs::write(&exe, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let detector = Detector {
+            home: home.path().to_path_buf(),
+            path_dirs: Some(vec![bin_dir.path().to_path_buf()]),
+            app_root: home.path().to_path_buf(),
+        };
+
+        let result = detect(HarnessId::CodexCli, &detector);
+        assert!(result.detected);
+        assert_eq!(result.detection_method, Some(DetectionMethod::PathBinary));
     }
 
     #[test]
