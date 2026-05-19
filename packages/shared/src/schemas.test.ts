@@ -321,7 +321,7 @@ describe('AppState', () => {
 
   it('parses a minimal v8 state with default identity off and empty mappings', () => {
     const parsed = AppState.parse({
-      schemaVersion: 8,
+      schemaVersion: 9,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
@@ -329,7 +329,7 @@ describe('AppState', () => {
       identity: defaultIdentity,
       mappings: emptyMappings,
     });
-    expect(parsed.schemaVersion).toBe(8);
+    expect(parsed.schemaVersion).toBe(9);
     expect(parsed.backends).toEqual([]);
     expect(parsed.harnesses).toEqual([]);
     expect(parsed.autoUpdateEnabled).toBe(false);
@@ -341,7 +341,7 @@ describe('AppState', () => {
 
   it('parses a v8 state with autoUpdateEnabled true and identity tagging on', () => {
     const parsed = AppState.parse({
-      schemaVersion: 8,
+      schemaVersion: 9,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: true,
@@ -364,7 +364,7 @@ describe('AppState', () => {
 
   it('parses a v8 state with populated mapping rows', () => {
     const parsed = AppState.parse({
-      schemaVersion: 8,
+      schemaVersion: 9,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
@@ -398,7 +398,7 @@ describe('AppState', () => {
   it('rejects when launchAtStartupEnabled is missing', () => {
     expect(() =>
       AppState.parse({
-        schemaVersion: 8,
+        schemaVersion: 9,
         backends: [],
         harnesses: [],
         autoUpdateEnabled: false,

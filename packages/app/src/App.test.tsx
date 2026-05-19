@@ -36,7 +36,7 @@ const EMPTY_MAPPINGS = {
  *  override `backends` to a one-element list so the dashboard view
  *  renders. */
 const FRESH_APP_STATE = {
-  schemaVersion: 8,
+  schemaVersion: 9,
   backends: [],
   harnesses: [],
   autoUpdateEnabled: false,
@@ -46,7 +46,7 @@ const FRESH_APP_STATE = {
 };
 
 const SIGNOZ_STATE = {
-  schemaVersion: 8,
+  schemaVersion: 9,
   backends: [
     {
       id: '11111111-1111-1111-1111-111111111111',
