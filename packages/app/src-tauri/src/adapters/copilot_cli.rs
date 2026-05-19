@@ -61,6 +61,7 @@ pub fn config_path(home: &Path) -> PathBuf {
 #[must_use]
 pub fn spec(wrapper_path: PathBuf) -> WrapperSpec {
     WrapperSpec {
+        adapter_id: "copilot-cli",
         function_names: FUNCTION_NAMES,
         wrapper_path,
         label: "trove::copilot-cli",
@@ -84,7 +85,7 @@ pub fn apply(
 }
 
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    wrapper_common::revert_primary_shell_rc(home)
+    wrapper_common::revert_primary_shell_rc(home, "copilot-cli", FUNCTION_NAMES)
 }
 
 /// Parse one JSON-line emitted by the bundled `trove-copilot` wrapper
