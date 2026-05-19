@@ -172,3 +172,4 @@ playwright-report/
 
 # Misc
 *.tmp
+.aider*

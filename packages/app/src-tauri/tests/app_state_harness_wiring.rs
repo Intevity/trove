@@ -210,7 +210,10 @@ fn separate_harnesses_get_separate_entries() {
         // this test didn't apply it (it only applies the four
         // explicitly named above). It's auto-enabled by a separate
         // path on first app boot, not by `apply_then_persist`.
-        if *id == HarnessId::ClaudeDesktop {
+        // CodexDesktop shares ~/.codex/config.toml with CodexCli via
+        // dep-tracking; coexistence is covered in
+        // `adapters::codex_desktop` tests.
+        if matches!(id, HarnessId::ClaudeDesktop | HarnessId::CodexDesktop) {
             continue;
         }
         assert!(ids.contains(id), "missing entry for {id:?}");

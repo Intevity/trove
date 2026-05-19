@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::adapters::{
     ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, claude_desktop,
-    claude_desktop_watcher, cline, cline_watcher, codex_cli, copilot_cli, cursor_cli,
+    claude_desktop_watcher, cline, cline_watcher, codex_cli, codex_desktop, copilot_cli, cursor_cli,
     cursor_ide, gemini_cli, gemini_watcher, opencode,
     qwen_code,
 };
@@ -228,6 +228,7 @@ where
     match harness_id {
         HarnessId::ClaudeCode => claude_code::preview(home, options),
         HarnessId::CodexCli => codex_cli::preview(home, options),
+        HarnessId::CodexDesktop => codex_desktop::preview(home, options),
         HarnessId::GeminiCli => gemini_cli::preview(home, options),
         HarnessId::QwenCode => qwen_code::preview(home, options),
         HarnessId::CursorIde => {
@@ -302,6 +303,7 @@ pub async fn apply_patch(
     let patch = match harness_id {
         HarnessId::ClaudeCode => claude_code::apply(&home, &options),
         HarnessId::CodexCli => codex_cli::apply(&home, &options),
+        HarnessId::CodexDesktop => codex_desktop::apply(&home, &options),
         HarnessId::GeminiCli => gemini_cli::apply(&home, &options),
         HarnessId::QwenCode => qwen_code::apply(&home, &options),
         HarnessId::CursorIde => {
@@ -671,6 +673,7 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
     match harness_id {
         HarnessId::ClaudeCode => claude_code::revert(&home),
         HarnessId::CodexCli => codex_cli::revert(&home),
+        HarnessId::CodexDesktop => codex_desktop::revert(&home),
         HarnessId::GeminiCli => gemini_cli::revert(&home),
         HarnessId::QwenCode => qwen_code::revert(&home),
         // Both Cursor harnesses share `~/.cursor/hooks.json`; either
@@ -1604,6 +1607,7 @@ pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
     match id {
         HarnessId::ClaudeCode => claude_code::config_path(home),
         HarnessId::CodexCli => codex_cli::config_path(home),
+        HarnessId::CodexDesktop => codex_desktop::config_path(home),
         HarnessId::GeminiCli => gemini_cli::config_path(home),
         HarnessId::QwenCode => qwen_code::config_path(home),
         // Both Cursor harnesses share `~/.cursor/hooks.json`. The
@@ -1811,6 +1815,7 @@ fn spawn_tier3_watcher(
         )),
         HarnessId::ClaudeCode
         | HarnessId::CodexCli
+        | HarnessId::CodexDesktop
         | HarnessId::CursorIde
         | HarnessId::QwenCode
         | HarnessId::Opencode

@@ -6,6 +6,7 @@ export const HarnessId = z.enum([
   'claude-desktop',
   'gemini-cli',
   'codex-cli',
+  'codex-desktop',
   'qwen-code',
   'opencode',
   'cursor-ide',
