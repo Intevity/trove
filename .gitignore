@@ -165,5 +165,10 @@ playwright-report/
 # Local agent / harness settings (per-developer, contains absolute paths)
 .claude/
 
+# aider per-repo history (auto-generated when aider runs in the repo dir)
+.aider.chat.history.md
+.aider.input.history
+.aider.tags.cache.v*/
+
 # Misc
 *.tmp
