@@ -2,8 +2,15 @@ import { Plus, Search, X } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
 import { PRESETS, type PresetMetadata } from '@trove/collector-presets';
-import type { AppState, Backend, BackendInstance } from '@trove/shared';
+import type {
+  AppState,
+  Backend,
+  BackendHealth,
+  BackendHealthStatus,
+  BackendInstance,
+} from '@trove/shared';
 
+import { useBackendHealth } from '../../hooks/useBackendHealth.js';
 import { TroveIpcError, removeBackend } from '../../lib/ipc.js';
 import { BackendLogo } from '../../lib/logos.js';
 import { Button, Card, CardHeader, CardTitle, Pill, StatusDot } from '../ui/index.js';
@@ -29,6 +36,7 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const healthByBackendId = useBackendHealth();
 
   const openAddForKind = useCallback((presetKind: PresetKind) => {
     setError(null);
@@ -150,6 +158,7 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
                 key={preset.kind}
                 preset={preset}
                 instances={instancesByKind[preset.kind] ?? []}
+                healthByBackendId={healthByBackendId}
                 busyId={busyId}
                 onAdd={() => openAddForKind(preset.kind)}
                 onEdit={openEdit}
@@ -166,6 +175,7 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
 interface PlatformRowProps {
   preset: PresetMetadata;
   instances: BackendInstance[];
+  healthByBackendId: Map<string, BackendHealth>;
   busyId: string | null;
   onAdd: () => void;
   onEdit: (instance: BackendInstance) => void;
@@ -175,6 +185,7 @@ interface PlatformRowProps {
 function PlatformRow({
   preset,
   instances,
+  healthByBackendId,
   busyId,
   onAdd,
   onEdit,
@@ -225,39 +236,176 @@ function PlatformRow({
           data-testid={`platform-instances-${preset.kind}`}
         >
           {instances.map((instance) => (
-            <li
+            <BackendInstanceRow
               key={instance.id}
-              data-testid={`platform-instance-${instance.id}`}
-              className="flex items-center gap-2 px-3 py-1.5 pl-12"
-            >
-              <span className="min-w-0 flex-1 truncate text-[12px] text-fg-primary dark:text-fg-primary-dark">
-                {instance.label ?? preset.label}
-                <BackendDetail backend={instance.backend} />
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                testid={`platform-instance-edit-${instance.id}`}
-                onClick={() => onEdit(instance)}
-                disabled={busyId === instance.id}
-              >
-                Edit
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                testid={`platform-instance-remove-${instance.id}`}
-                onClick={() => onRemove(instance.id)}
-                disabled={busyId === instance.id}
-              >
-                {busyId === instance.id ? 'Removing…' : 'Remove'}
-              </Button>
-            </li>
+              instance={instance}
+              preset={preset}
+              health={healthByBackendId.get(instance.id) ?? null}
+              busy={busyId === instance.id}
+              onEdit={() => onEdit(instance)}
+              onRemove={() => onRemove(instance.id)}
+            />
           ))}
         </ul>
       ) : null}
     </li>
   );
+}
+
+interface BackendInstanceRowProps {
+  instance: BackendInstance;
+  preset: PresetMetadata;
+  health: BackendHealth | null;
+  busy: boolean;
+  onEdit: () => void;
+  onRemove: () => void;
+}
+
+/** One configured destination, rendered under its preset's row.
+ *  Shows a 4-color status pill driven by the latest `backend-health`
+ *  event; click the pill (or anywhere on the label area) to inline-
+ *  expand the latest error / last-success detail. Edit + Remove
+ *  buttons stop click propagation so they don't toggle the panel. */
+function BackendInstanceRow({
+  instance,
+  preset,
+  health,
+  busy,
+  onEdit,
+  onRemove,
+}: BackendInstanceRowProps): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const status: BackendHealthStatus = health?.status ?? 'gray';
+  const dotColor: 'green' | 'amber' | 'red' | 'gray' = status;
+  return (
+    <li
+      data-testid={`platform-instance-${instance.id}`}
+      data-health-status={status}
+      className="border-b border-hairline last:border-b-0 dark:border-hairline-dark"
+    >
+      <div className="flex items-center gap-2 px-3 py-1.5 pl-12">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={`Toggle health detail for ${instance.label ?? preset.label}`}
+          data-testid={`platform-instance-toggle-${instance.id}`}
+          onClick={() => setExpanded((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 truncate rounded text-left text-[12px] text-fg-primary hover:bg-surface-elevated/60 focus:outline-none focus:ring-1 focus:ring-brand dark:text-fg-primary-dark dark:hover:bg-surface-elevated-dark/60"
+        >
+          <StatusDot
+            status={dotColor}
+            size="sm"
+            pulse={status === 'green'}
+            label={`${preset.label} health: ${status}`}
+          />
+          <span className="min-w-0 flex-1 truncate">
+            {instance.label ?? preset.label}
+            <BackendDetail backend={instance.backend} />
+          </span>
+        </button>
+        <Button
+          variant="ghost"
+          size="sm"
+          testid={`platform-instance-edit-${instance.id}`}
+          onClick={onEdit}
+          disabled={busy}
+        >
+          Edit
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          testid={`platform-instance-remove-${instance.id}`}
+          onClick={onRemove}
+          disabled={busy}
+        >
+          {busy ? 'Removing…' : 'Remove'}
+        </Button>
+      </div>
+      {expanded ? <BackendHealthDetail health={health} /> : null}
+    </li>
+  );
+}
+
+/** Inline-expand panel below a destination row. Renders the most-recent
+ *  exporter error text, the count of failed batches in the rolling
+ *  window, and the relative time since the last successful send.
+ *  No data ⇒ shows a placeholder rather than an empty panel. */
+function BackendHealthDetail({ health }: { health: BackendHealth | null }): JSX.Element {
+  if (!health) {
+    return (
+      <div
+        data-testid="platform-instance-health-empty"
+        className="px-3 pb-2 pl-12 text-[11px] text-fg-tertiary dark:text-fg-tertiary-dark"
+      >
+        No scrape data yet — health pill will update within ~5 s once the bundled collector finishes
+        a scrape tick.
+      </div>
+    );
+  }
+  const lastSuccess = relativeTime(health.lastSuccessAt);
+  const lastError = relativeTime(health.lastErrorAt);
+  return (
+    <div
+      data-testid="platform-instance-health-detail"
+      className="space-y-1 px-3 pb-2 pl-12 text-[11px] text-fg-secondary dark:text-fg-secondary-dark"
+    >
+      <div className="flex gap-3">
+        <span>
+          <Pill tone={statusToTone(health.status)} size="xs">
+            {health.status}
+          </Pill>
+        </span>
+        <span data-testid="platform-instance-health-window-sent">
+          Sent in last 60 s: <strong>{health.windowSent}</strong>
+        </span>
+        <span data-testid="platform-instance-health-window-failed">
+          Failed in last 60 s: <strong>{health.windowFailed}</strong>
+        </span>
+      </div>
+      <div className="flex gap-3">
+        <span>Last successful send: {lastSuccess ?? '—'}</span>
+        <span>Last error: {lastError ?? '—'}</span>
+      </div>
+      {health.lastErrorMsg ? (
+        <div
+          data-testid="platform-instance-health-error-msg"
+          className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-fg-primary dark:text-fg-primary-dark"
+          title={health.lastErrorMsg}
+        >
+          {health.lastErrorMsg}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function statusToTone(status: BackendHealthStatus): 'neutral' | 'green' | 'amber' | 'red' {
+  switch (status) {
+    case 'green':
+      return 'green';
+    case 'amber':
+      return 'amber';
+    case 'red':
+      return 'red';
+    case 'gray':
+    default:
+      return 'neutral';
+  }
+}
+
+function relativeTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const ms = Date.now() - t;
+  if (ms < 0) return 'just now';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return `${h}h ago`;
 }
 
 function BackendDetail({ backend }: { backend: Backend }): JSX.Element | null {

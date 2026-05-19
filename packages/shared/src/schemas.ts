@@ -593,6 +593,46 @@ export const CollectorLogLineWire = z.object({
 });
 export type CollectorLogLineWire = z.infer<typeof CollectorLogLineWire>;
 
+/** Status surfaced on each destination row's pill in the Platforms tab.
+ *  Mirrors `collector::derive::BackendHealthStatus` 1:1.
+ *
+ *  - `gray`  — no scrape samples yet; freshly added destination or no
+ *    traffic since startup. Should match the StatusDot `gray` palette.
+ *  - `green` — at least one batch sent and zero failures in the rolling
+ *    window (currently 60 s).
+ *  - `amber` — both sent and failed counters advanced in the window;
+ *    retries are recovering or connectivity is intermittent.
+ *  - `red`   — failures only in the window; every batch is being
+ *    dropped (typical signature: stale creds, wrong endpoint, the
+ *    destination's container is down). */
+export const BackendHealthStatus = z.enum(['gray', 'green', 'amber', 'red']);
+export type BackendHealthStatus = z.infer<typeof BackendHealthStatus>;
+
+/** Wire-format per-destination health, emitted as a `Vec<BackendHealth>`
+ *  on the `backend-health` Tauri event and returned by the
+ *  `get_backend_health` IPC command. Mirrors `collector::derive::BackendHealth`.
+ *
+ *  Timestamps are RFC 3339 strings (chrono `DateTime<Utc>`); the Date
+ *  parse happens lazily on the frontend. `lastErrorMsg` carries the
+ *  most-recent stderr extraction (`failed to make an HTTP request: ...`
+ *  /  `401 Unauthorized` / etc.) — exact substring; do not over-format. */
+export const BackendHealth = z.object({
+  backendId: z.string(),
+  status: BackendHealthStatus,
+  // Use plain `z.string()` not `.datetime()` — chrono's RFC3339 output
+  // trims trailing zeros on the fractional-seconds field (so it may end
+  // with `.123Z` one tick, `.1234567Z` the next), and Zod's `.datetime()`
+  // strict validator only accepts 0/3/6/9-digit fractions. A failed
+  // safeParse means the hook drops the entire event and the pill silently
+  // reverts to Gray — exactly the bug we hit in dev validation.
+  lastSuccessAt: z.string().nullable().optional(),
+  lastErrorAt: z.string().nullable().optional(),
+  lastErrorMsg: z.string().nullable().optional(),
+  windowSent: z.number().int().nonnegative(),
+  windowFailed: z.number().int().nonnegative(),
+});
+export type BackendHealth = z.infer<typeof BackendHealth>;
+
 /** Initial tail returned by `get_collector_log_tail`. `byteOffset` is
  *  the file position at the moment the read finished; the dashboard's
  *  live-event hook discards `collector-log` events whose implicit

@@ -232,6 +232,7 @@ export const IpcCommandName = {
   RevertPatch: 'revert_patch',
   ResolveConflict: 'resolve_conflict',
   GetAppState: 'get_app_state',
+  GetBackendHealth: 'get_backend_health',
   AddBackend: 'add_backend',
   UpdateBackend: 'update_backend',
   RemoveBackend: 'remove_backend',
@@ -261,5 +262,6 @@ export const TauriEventName = {
   CollectorState: 'collector-state',
   MetricsSnapshot: 'metrics-snapshot',
   CollectorLog: 'collector-log',
+  BackendHealth: 'backend-health',
 } as const;
 export type TauriEventName = (typeof TauriEventName)[keyof typeof TauriEventName];

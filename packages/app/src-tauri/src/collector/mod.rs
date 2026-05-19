@@ -10,6 +10,7 @@
 pub mod codegen;
 pub mod derive;
 pub mod health;
+pub mod health_tracker;
 pub mod lifecycle;
 pub mod logs;
 pub mod metrics_tap;
@@ -21,10 +22,15 @@ pub use lifecycle::{
     SupervisorHandle, SupervisorOptions,
 };
 #[allow(unused_imports)]
-pub use derive::{OverallHealth, derive_overall_health};
+pub use derive::{
+    BackendHealth, BackendHealthSamples, BackendHealthStatus, OverallHealth,
+    derive_backend_health, derive_overall_health,
+};
+#[allow(unused_imports)]
+pub use health_tracker::{BackendHealthHandle, BackendHealthTracker, BackendsFetcher};
 #[allow(unused_imports)]
 pub use metrics_tap::{
-    MetricsSnapshot, MetricsTap, MetricsTapHandle, MetricsTapOptions, SignalCounts,
+    ExporterCounts, MetricsSnapshot, MetricsTap, MetricsTapHandle, MetricsTapOptions, SignalCounts,
 };
 pub use codegen::harness_id_suffix;
 

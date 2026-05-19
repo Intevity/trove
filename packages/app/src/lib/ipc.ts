@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
   AddBackendResponse,
+  BackendHealth,
   ApplyMappingsResponse,
   ApplyPatchResponse,
   CheckForUpdatesResponse,
@@ -208,6 +209,14 @@ export async function getCollectorStatus(): Promise<CollectorStatus> {
  *  refused (e.g. user-customised YAML drops the telemetry block). */
 export async function getMetricsSnapshot(): Promise<MetricsSnapshotWire | null> {
   return invokeIpc(IpcCommandName.GetMetricsSnapshot, undefined, GetMetricsSnapshotResponse);
+}
+
+/** Initial-render snapshot of the per-destination health pill. Live
+ *  updates arrive via the `backend-health` Tauri event afterwards;
+ *  returns an empty array on cold start before the first scrape
+ *  tick. Sorted by `backendId` for stable rendering. */
+export async function getBackendHealth(): Promise<BackendHealth[]> {
+  return invokeIpc(IpcCommandName.GetBackendHealth, undefined, BackendHealth.array());
 }
 
 /** Read the most recent N lines from `collector.log` plus the byte

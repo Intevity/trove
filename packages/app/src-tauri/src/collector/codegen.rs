@@ -203,6 +203,31 @@ fn env_suffix_for(id: &str) -> String {
     }
 }
 
+/// Resolve an OTel collector component id (e.g. `otlphttp/openobserve-93eb10f1`)
+/// back to the [`BackendInstance::id`] it was derived from. Returns `None`
+/// for component ids that don't follow Trove's exporter naming scheme or
+/// that name an exporter not currently in `backends`.
+///
+/// Used by the per-backend health pipeline to attribute metrics-tap counters
+/// and stderr error lines back to a specific destination row.
+pub fn backend_id_from_component_id<'a>(
+    component_id: &str,
+    backends: &'a [BackendInstance],
+) -> Option<&'a str> {
+    // Trove exporter component ids are always `<kind>/<short>-<suffix>`.
+    // Reject anything missing the slash so a bare suffix string from a
+    // caller bug doesn't silently match.
+    let (_, after_slash) = component_id.split_once('/')?;
+    let suffix = after_slash.rsplit('-').next()?;
+    if suffix.is_empty() || suffix.len() > 8 {
+        return None;
+    }
+    backends
+        .iter()
+        .find(|b| env_suffix_for(&b.id) == suffix.to_ascii_lowercase())
+        .map(|b| b.id.as_str())
+}
+
 /// `(exporter_name, yaml_block, env_map)` — the tuple
 /// [`render_exporter_block`] returns. Pulled into a `type` to keep
 /// clippy's `type_complexity` quiet.
@@ -1911,5 +1936,64 @@ mod tests {
         };
         let yaml = rendered_yaml(&[instance]);
         assert!(yaml.contains("tls:\n      insecure: true"), "got:\n{yaml}");
+    }
+
+    /// Round-trip: a component id derived from a backend UUID resolves
+    /// back to that backend via `backend_id_from_component_id`. Uses real
+    /// component-id shapes captured during the 2026-05-18 release pairing
+    /// pass.
+    #[test]
+    fn backend_id_resolves_from_real_component_ids() {
+        let signoz = signoz_instance("31fb8e0a-0d50-4636-ab1a-868a4428a092");
+        let dd = datadog_instance("42520ad9-2033-4b79-bb96-43dd6e469225");
+        let backends = vec![signoz.clone(), dd.clone()];
+
+        assert_eq!(
+            backend_id_from_component_id("otlp/signoz-31fb8e0a", &backends),
+            Some(signoz.id.as_str()),
+        );
+        assert_eq!(
+            backend_id_from_component_id("otlphttp/openobserve-42520ad9", &backends),
+            Some(dd.id.as_str()),
+            "kind prefix is irrelevant — only the suffix matters",
+        );
+    }
+
+    #[test]
+    fn backend_id_returns_none_for_unknown_suffix() {
+        let signoz = signoz_instance("31fb8e0a-0d50-4636-ab1a-868a4428a092");
+        assert_eq!(
+            backend_id_from_component_id("otlp/signoz-deadbeef", &[signoz]),
+            None,
+        );
+    }
+
+    #[test]
+    fn backend_id_returns_none_for_malformed_component_id() {
+        let signoz = signoz_instance("31fb8e0a-0d50-4636-ab1a-868a4428a092");
+        let backends = vec![signoz];
+        // No slash: not an otelcol component id.
+        assert_eq!(backend_id_from_component_id("31fb8e0a", &backends), None);
+        // Just "otlp" — no suffix after the slash.
+        assert_eq!(backend_id_from_component_id("otlp/", &backends), None);
+        // Empty string.
+        assert_eq!(backend_id_from_component_id("", &backends), None);
+    }
+
+    /// Receivers and processors don't have backend suffixes, so they
+    /// must not accidentally resolve to a backend. Defends against a
+    /// future refactor that points the resolver at every component id
+    /// in the collector config rather than only exporters.
+    #[test]
+    fn backend_id_does_not_match_processor_component_ids() {
+        let signoz = signoz_instance("31fb8e0a-0d50-4636-ab1a-868a4428a092");
+        assert_eq!(
+            backend_id_from_component_id("transform/harness-tag", &[signoz.clone()]),
+            None,
+        );
+        assert_eq!(
+            backend_id_from_component_id("batch", &[signoz]),
+            None,
+        );
     }
 }

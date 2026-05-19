@@ -29,8 +29,9 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use std::sync::Mutex;
 
 use crate::collector::{
-    CollectorState, MetricsTap, MetricsTapHandle, MetricsTapOptions, Supervisor,
-    SupervisorChannels, SupervisorHandle, SupervisorOptions, SupervisorState,
+    BackendHealthHandle, BackendHealthTracker, CollectorState, MetricsTap, MetricsTapHandle,
+    MetricsTapOptions, Supervisor, SupervisorChannels, SupervisorHandle, SupervisorOptions,
+    SupervisorState,
 };
 use crate::tier3_watchers::TierThreeWatchers;
 
@@ -69,6 +70,7 @@ pub fn run() {
             ipc::commands::revert_patch,
             ipc::commands::resolve_conflict,
             ipc::commands::get_app_state,
+            ipc::commands::get_backend_health,
             ipc::commands::add_backend,
             ipc::commands::update_backend,
             ipc::commands::remove_backend,
@@ -113,6 +115,24 @@ pub fn run() {
             app.manage::<SupervisorChannels>(channels.clone());
 
             let metrics = MetricsTap::start(MetricsTapOptions::default());
+            // Wire the per-backend health tracker before stashing the
+            // metrics handle so the tracker holds receivers on both the
+            // metrics watch channel and the collector log broadcast.
+            let app_handle_for_health = app.handle().clone();
+            let backends_fn = std::sync::Arc::new(move || {
+                crate::app_state::load(&app_handle_for_health)
+                    .map(|s| s.backends)
+                    .unwrap_or_default()
+            });
+            let health_tracker = BackendHealthTracker::start(
+                metrics.subscribe(),
+                channels.logs.subscribe(),
+                backends_fn,
+            );
+            app.manage::<BackendHealthHandle>(health_tracker.handle());
+            // Keep the tracker itself alive so its background task isn't
+            // dropped — stash it in app state too.
+            app.manage::<BackendHealthTracker>(health_tracker);
             app.manage::<MetricsTapHandle>(metrics);
 
             // Sprint 9 PR 1: registry slot for Tier 3 watchers. Empty
