@@ -201,8 +201,12 @@ export const BackendDraft = z.discriminatedUnion('kind', [
 ]);
 export type BackendDraft = z.infer<typeof BackendDraft>;
 
-/** Config-file format Trove patches. Mirrors the Rust `Format` enum. */
-export const PatchFormat = z.enum(['json', 'jsonc', 'toml', 'yaml']);
+/** Config-file format Trove patches. Mirrors the Rust `Format` enum.
+ *  `shell` shares the `# trove:start … # trove:end` comment-fence
+ *  syntax with `yaml`/`toml` but skips document-level validation so
+ *  wrapper adapters can patch a real shell rc (`~/.zshrc` etc.)
+ *  without YAML rejecting `export FOO="..."` lines. */
+export const PatchFormat = z.enum(['json', 'jsonc', 'toml', 'yaml', 'shell']);
 export type PatchFormat = z.infer<typeof PatchFormat>;
 
 /** Metadata persisted after every successful upsert; consumed by the

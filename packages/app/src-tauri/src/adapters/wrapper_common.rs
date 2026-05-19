@@ -9,12 +9,17 @@
 //!
 //! YAML's validator parses the host file with `serde_yml`. A real shell
 //! rc has lines like `export PATH="..."` and unbalanced quotes that
-//! YAML rejects. So the sentinels engine isn't a good fit here. We
-//! use a small purpose-built patcher that:
-//! - Reads the rc file as plain text (or treats missing as empty).
-//! - Looks for a `# trove:start ... # trove:end` block.
-//! - Replaces or appends the block atomically.
-//! - On revert, strips the block and any single trailing blank line.
+//! YAML rejects. So the YAML branch of the sentinels engine isn't a
+//! good fit here, and using `Format::Yaml` for the [`TrovePatch`] we
+//! report would break the conflict-payload IPC path (it dispatches to
+//! `extract_region(Format::Yaml, ...)`, which validates the whole rc
+//! as YAML and errors with `malformed yaml document`). We report
+//! [`Format::Shell`] in the `TrovePatch` so that path uses the
+//! `comment_fence::*_shell` trio, which shares the same fence syntax
+//! but skips validation.
+//!
+//! The bespoke patcher in this module remains for the apply / preview /
+//! revert flow (no parser, plain-text fence scan).
 //!
 //! The fence format matches the rest of Trove's adapters so the
 //! convention stays consistent across formats.
@@ -149,7 +154,10 @@ pub fn apply_to_primary_shell_rc(
     Ok(TrovePatch {
         managed_block_hash: sha256_hex(block.as_bytes()),
         file_hash_at_last_write: sha256_hex(new_content.as_bytes()),
-        format: Format::Yaml, // shell rc shares the # comment fence with YAML/TOML
+        // Shell rc shares the # comment fence with YAML/TOML but isn't
+        // a parseable document, so the conflict-payload path must use
+        // the Shell branch of the sentinels engine (no YAML validate).
+        format: Format::Shell,
         last_written_region_payload: block,
     })
 }
@@ -182,7 +190,7 @@ pub fn preview_for_primary_shell_rc(
 
     Ok(PatchPreview {
         config_path: path,
-        format: Format::Yaml,
+        format: Format::Shell,
         before: current,
         after: new_content,
         status,

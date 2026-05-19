@@ -188,7 +188,7 @@ describe('BackendDraft', () => {
 
 describe('PatchFormat', () => {
   it('matches the Rust Format enum variants', () => {
-    for (const f of ['json', 'jsonc', 'toml', 'yaml']) {
+    for (const f of ['json', 'jsonc', 'toml', 'yaml', 'shell']) {
       expect(PatchFormat.parse(f)).toBe(f);
     }
   });

@@ -271,7 +271,7 @@ fn working_value(format: Format, current: &str) -> String {
     }
     match format {
         Format::Json | Format::Jsonc => "{}".to_string(),
-        Format::Toml | Format::Yaml => String::new(),
+        Format::Toml | Format::Yaml | Format::Shell => String::new(),
     }
 }
 
@@ -304,14 +304,21 @@ mod tests {
     }
 
     #[test]
-    fn working_value_substitutes_empty_string_for_toml_yaml_when_current_is_empty() {
+    fn working_value_substitutes_empty_string_for_toml_yaml_shell_when_current_is_empty() {
         assert_eq!(working_value(Format::Toml, ""), "");
         assert_eq!(working_value(Format::Yaml, ""), "");
+        assert_eq!(working_value(Format::Shell, ""), "");
     }
 
     #[test]
     fn working_value_preserves_nonempty_input_regardless_of_format() {
-        for f in [Format::Json, Format::Jsonc, Format::Toml, Format::Yaml] {
+        for f in [
+            Format::Json,
+            Format::Jsonc,
+            Format::Toml,
+            Format::Yaml,
+            Format::Shell,
+        ] {
             assert_eq!(working_value(f, r#"{"a":1}"#), r#"{"a":1}"#);
         }
     }
