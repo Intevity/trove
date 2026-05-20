@@ -1,12 +1,14 @@
-import { Maximize2, Minimize2, Share2 } from 'lucide-react';
+import { Share2 } from 'lucide-react';
 import { AnimatePresence, motion, useAnimationFrame } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 
 import { presetMetadataFor } from '@trove/collector-presets';
 import type {
+  Backend,
   BackendInstance,
   CollectorRunState,
   HarnessConfig,
+  HarnessId,
   MetricsSnapshotWire,
 } from '@trove/shared';
 
@@ -19,30 +21,6 @@ interface FlowChartProps {
   backends: BackendInstance[];
   metrics: MetricsSnapshotWire | null;
   state: CollectorRunState | null;
-}
-
-type Mode = 'standard' | 'expanded';
-
-/** Persist the user's view-mode choice across launches. WebKit
- *  localStorage survives Tauri restarts for the same app identifier. */
-const MODE_STORAGE_KEY = 'trove.flow-chart.mode';
-
-function readStoredMode(): Mode {
-  try {
-    const v = localStorage.getItem(MODE_STORAGE_KEY);
-    if (v === 'expanded' || v === 'standard') return v;
-  } catch {
-    /* localStorage may throw in private mode or under sandbox; ignore. */
-  }
-  return 'standard';
-}
-
-function persistMode(mode: Mode): void {
-  try {
-    localStorage.setItem(MODE_STORAGE_KEY, mode);
-  } catch {
-    /* ignore */
-  }
 }
 
 const LANE_COLORS = {
@@ -73,6 +51,22 @@ const NODE_HH_MAX = 24;
 const COL_PADDING = 22;
 const LANE_Y_OFFSETS = { spans: -13, metrics: 0, logs: 13 } as const;
 const PARTICLES_PER_LANE = 5;
+
+/** Cluster (Orbital Hub) geometry — used when a side has more than
+ *  CLUSTER_THRESHOLD nodes. The container is intentionally wider than
+ *  NODE_HW_MAX so logos have room to orbit without crowding the title;
+ *  it still leaves ample horizontal space to the Collector column. */
+const CLUSTER_HW = 70;
+const CLUSTER_HH = 60;
+const CLUSTER_THRESHOLD = 3;
+/** Minimum viewBox height when any side renders a cluster, so the 120 px
+ *  tall container has visual breathing room regardless of how many rows
+ *  the opposite side would otherwise demand. */
+const CLUSTER_MIN_VIEW_H = 170;
+/** Cluster header (title + count) sits in the top strip. The orbit's
+ *  geometric center is offset downward by this amount so the orbit
+ *  doesn't collide with the header text. */
+const CLUSTER_ORBIT_DY = 12;
 
 /** Inner-node geometry — kept aligned with FlowNode below. Logo +
  *  text padding + inter-glyph estimate combine to give a quick width
@@ -210,10 +204,6 @@ function deltaPerSec(curr: number, prev: number, dtSec: number): number {
 }
 
 export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProps): JSX.Element {
-  const [mode, setMode] = useState<Mode>(readStoredMode);
-  useEffect(() => {
-    persistMode(mode);
-  }, [mode]);
   const rates = useReceivedRates(metrics);
   const perHarnessRates = usePerHarnessRates(metrics);
 
@@ -225,44 +215,50 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
   const allIdle = periods.spans === 0 && periods.metrics === 0 && periods.logs === 0;
   const running = state?.kind === 'running';
 
-  /** Pick the period for a harness's lane. In standard mode (one node
-   *  represents all harnesses) we use the aggregate. In expanded mode,
-   *  we look up the per-harness rate from `diagObservations`; native
-   *  emitters get an accurate per-signal period, watcher-emitters
-   *  (absent from diag) fall back to the aggregate so their lane still
-   *  reflects "something is flowing" rather than going silent. */
-  function laneRateForHarness(harnessId: import('@trove/shared').HarnessId | null): LaneRates {
-    if (!harnessId || mode === 'standard') return rates;
-    const direct = perHarnessRates[harnessId];
-    if (direct) return direct;
-    // Watcher-emitters (no diag pipeline) — fall back to aggregate.
-    return rates;
-  }
+  /** Each side renders individually up to CLUSTER_THRESHOLD; beyond that
+   *  the side collapses into an Orbital Hub cluster that shows every
+   *  logo at once. The two sides decide independently. */
+  const harnessCluster = harnesses.length > CLUSTER_THRESHOLD;
+  const backendCluster = backends.length > CLUSTER_THRESHOLD;
+  const anyCluster = harnessCluster || backendCluster;
 
-  const harnessRows = mode === 'expanded' ? Math.max(harnesses.length, 1) : 1;
-  const backendRows = Math.max(backends.length, 1);
+  /** When a side is in cluster mode all of its lanes converge onto a
+   *  single row (the cluster). In individual mode we keep the per-row
+   *  lane treatment so each harness has its own animated trail. */
+  const harnessRows = harnessCluster ? 1 : Math.max(harnesses.length, 1);
+  const backendRows = backendCluster ? 1 : Math.max(backends.length, 1);
   const rows = Math.max(harnessRows, backendRows);
-  const viewH = computeViewHeight(rows);
+  const baseViewH = computeViewHeight(rows);
+  const viewH = anyCluster ? Math.max(CLUSTER_MIN_VIEW_H, baseViewH) : baseViewH;
   const collectorCy = viewH / 2;
 
   const harnessCenters = computeColumnCenters(harnessRows, viewH);
   const backendCenters = computeColumnCenters(backendRows, viewH);
   const nodeHH = Math.min(NODE_HH_MAX, Math.floor((viewH - 50) / Math.max(rows, 1) / 2));
 
-  // Per-column uniform width. Computed from the longest title in the
-  // column so every node in the column visually matches, regardless of
-  // which row holds the long string. Standard mode uses the collapsed
-  // "Harnesses" title (always short) plus the backend titles.
+  /** Pick the period for a harness's lane. In cluster mode (one row
+   *  represents every harness) we use the aggregate. Otherwise we look
+   *  up the per-harness rate from `diagObservations`; native emitters
+   *  get an accurate per-signal period, watcher-emitters (absent from
+   *  diag) fall back to the aggregate so their lane still reflects
+   *  "something is flowing" rather than going silent. */
+  function laneRateForHarness(harnessId: HarnessId | null): LaneRates {
+    if (!harnessId || harnessCluster) return rates;
+    const direct = perHarnessRates[harnessId];
+    if (direct) return direct;
+    return rates;
+  }
+
+  // Column widths. A clustered side uses CLUSTER_HW; an individual side
+  // uses the widest label in the column so all nodes match.
   const harnessTitles =
-    mode === 'expanded' && harnesses.length > 0
-      ? harnesses.map((h) => HARNESS_LABELS[h.id] ?? h.id)
-      : ['Harnesses']; // standard / empty case
+    harnesses.length > 0 ? harnesses.map((h) => HARNESS_LABELS[h.id] ?? h.id) : ['No harnesses'];
   const backendTitles =
     backends.length > 0
       ? backends.map((b) => b.label ?? presetMetadataFor(b.backend.kind).label)
       : ['No platforms'];
-  const harnessHW = columnHalfWidth(harnessTitles, true);
-  const platformHW = columnHalfWidth(backendTitles, true);
+  const harnessHW = harnessCluster ? CLUSTER_HW : columnHalfWidth(harnessTitles, true);
+  const platformHW = backendCluster ? CLUSTER_HW : columnHalfWidth(backendTitles, true);
 
   // SVG render height scales with viewBox so aspect stays sensible.
   const renderH = Math.round((viewH / 240) * 200);
@@ -275,7 +271,6 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
           Data flow
         </CardTitle>
         <div className="flex items-center gap-2">
-          <ModeToggle mode={mode} onChange={setMode} />
           <span className="flex items-center gap-1.5">
             <span className="relative flex h-2 w-2 items-center justify-center">
               <span
@@ -312,13 +307,13 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
           </filter>
         </defs>
 
-        {/* Incoming lanes (Harnesses → Collector). One set per harness row.
-            In standard mode the single row uses the aggregate rate. In
-            expanded mode each row uses its harness's per-signal rate
-            from `diagObservations` so an idle harness's lane stays still
-            while the active one streams particles. */}
+        {/* Incoming lanes (Harnesses → Collector). One set per harness
+            row, or a single converged set when the harness side renders
+            as a cluster. Individual rows use per-harness diag rates so
+            an idle harness's lane stays still while the active one
+            streams particles; the cluster row uses the aggregate. */}
         {harnessCenters.map((hcy, hi) => {
-          const harnessId = mode === 'expanded' ? (harnesses[hi]?.id ?? null) : null;
+          const harnessId = harnessCluster ? null : (harnesses[hi]?.id ?? null);
           const laneRates = laneRateForHarness(harnessId);
           return LANES.map((lane) => (
             <FlowLane
@@ -341,7 +336,9 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
           ));
         })}
 
-        {/* Outgoing lanes (Collector → Platforms). One set per backend row. */}
+        {/* Outgoing lanes (Collector → Platforms). One set per backend
+            row, or a single converged set when the platform side is a
+            cluster. Aggregate rate either way. */}
         {backendCenters.map((bcy, bi) =>
           LANES.map((lane) => (
             <FlowLane
@@ -358,8 +355,8 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
           )),
         )}
 
-        {/* Per-lane rate labels (expanded mode only, when non-idle). */}
-        {mode === 'expanded' && !allIdle ? (
+        {/* Per-lane rate labels on the outgoing side when non-idle. */}
+        {!allIdle ? (
           <g>
             {LANES.map((lane) => {
               const r = rates[lane.kind as 'spans' | 'metrics' | 'logs'];
@@ -414,25 +411,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
 
         {/* Harness column */}
         <AnimatePresence mode="popLayout" initial={false}>
-          {mode === 'standard' ? (
-            <motion.g
-              key="harness-collapsed"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-            >
-              <FlowNode
-                cx={HARNESS_COL_X}
-                cy={harnessCenters[0]!}
-                hw={harnessHW}
-                hh={NODE_HH_MAX}
-                title="Harnesses"
-                subtitle={`${harnesses.length} active`}
-                muted={harnesses.length === 0}
-              />
-            </motion.g>
-          ) : harnesses.length === 0 ? (
+          {harnesses.length === 0 ? (
             <motion.g
               key="harness-empty"
               initial={{ opacity: 0 }}
@@ -448,6 +427,27 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
                 title="No harnesses"
                 subtitle="enable one"
                 muted
+              />
+            </motion.g>
+          ) : harnessCluster ? (
+            <motion.g
+              key="harness-cluster"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22 }}
+              data-testid="flow-chart-cluster-harness"
+            >
+              <OrbitalCluster
+                cx={HARNESS_COL_X}
+                cy={collectorCy}
+                side="harness"
+                label="Harnesses"
+                items={harnesses.map((h) => ({
+                  key: h.id,
+                  title: HARNESS_LABELS[h.id] ?? h.id,
+                  harnessId: h.id,
+                }))}
               />
             </motion.g>
           ) : (
@@ -487,39 +487,74 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
         />
 
         {/* Platform column */}
-        {backends.length === 0 ? (
-          <FlowNode
-            cx={PLATFORM_COL_X}
-            cy={viewH / 2}
-            hw={platformHW}
-            hh={NODE_HH_MAX}
-            title="No platforms"
-            subtitle="not forwarding"
-            muted
-          />
-        ) : (
-          backendCenters.map((bcy, i) => {
-            const instance = backends[i]!;
-            const meta = presetMetadataFor(instance.backend.kind);
-            return (
-              <motion.g
-                key={instance.id}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.18 }}
-              >
-                <FlowNode
-                  cx={PLATFORM_COL_X}
-                  cy={bcy}
-                  hw={platformHW}
-                  hh={nodeHH}
-                  title={instance.label ?? meta.label}
-                  backendKind={instance.backend.kind}
-                />
-              </motion.g>
-            );
-          })
-        )}
+        <AnimatePresence mode="popLayout" initial={false}>
+          {backends.length === 0 ? (
+            <motion.g
+              key="backend-empty"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+            >
+              <FlowNode
+                cx={PLATFORM_COL_X}
+                cy={viewH / 2}
+                hw={platformHW}
+                hh={NODE_HH_MAX}
+                title="No platforms"
+                subtitle="not forwarding"
+                muted
+              />
+            </motion.g>
+          ) : backendCluster ? (
+            <motion.g
+              key="backend-cluster"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22 }}
+              data-testid="flow-chart-cluster-platform"
+            >
+              <OrbitalCluster
+                cx={PLATFORM_COL_X}
+                cy={collectorCy}
+                side="platform"
+                label="Platforms"
+                items={backends.map((b) => {
+                  const meta = presetMetadataFor(b.backend.kind);
+                  return {
+                    key: b.id,
+                    title: b.label ?? meta.label,
+                    backendKind: b.backend.kind,
+                  };
+                })}
+              />
+            </motion.g>
+          ) : (
+            backendCenters.map((bcy, i) => {
+              const instance = backends[i]!;
+              const meta = presetMetadataFor(instance.backend.kind);
+              return (
+                <motion.g
+                  key={instance.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <FlowNode
+                    cx={PLATFORM_COL_X}
+                    cy={bcy}
+                    hw={platformHW}
+                    hh={nodeHH}
+                    title={instance.label ?? meta.label}
+                    backendKind={instance.backend.kind}
+                  />
+                </motion.g>
+              );
+            })
+          )}
+        </AnimatePresence>
       </svg>
 
       <div className="mt-3 flex items-center gap-3 px-1">
@@ -541,72 +576,6 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
         ) : null}
       </div>
     </Card>
-  );
-}
-
-interface ModeToggleProps {
-  mode: Mode;
-  onChange: (m: Mode) => void;
-}
-
-/** macOS-style segmented icon pair. Two square buttons in a hairline
- *  pill; the active one renders with an elevated surface so it reads
- *  as recessed. */
-function ModeToggle({ mode, onChange }: ModeToggleProps): JSX.Element {
-  return (
-    <div
-      role="group"
-      aria-label="Data flow view"
-      className="inline-flex items-center gap-0.5 rounded-[7px] border border-hairline p-0.5 dark:border-hairline-dark"
-    >
-      <ToggleButton
-        active={mode === 'standard'}
-        onClick={() => onChange('standard')}
-        label="Standard view"
-        testid="flow-chart-mode-standard"
-      >
-        <Minimize2 size={11} aria-hidden />
-      </ToggleButton>
-      <ToggleButton
-        active={mode === 'expanded'}
-        onClick={() => onChange('expanded')}
-        label="Expanded view"
-        testid="flow-chart-mode-expanded"
-      >
-        <Maximize2 size={11} aria-hidden />
-      </ToggleButton>
-    </div>
-  );
-}
-
-function ToggleButton({
-  active,
-  onClick,
-  label,
-  testid,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  testid: string;
-  children: React.ReactNode;
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={active}
-      onClick={onClick}
-      data-testid={testid}
-      className={`flex items-center justify-center rounded-[5px] px-1.5 py-1 transition-colors ${
-        active
-          ? 'bg-surface-elevated text-fg-primary shadow-sm dark:bg-surface-elevated-dark dark:text-fg-primary-dark'
-          : 'text-fg-tertiary hover:text-fg-secondary dark:text-fg-tertiary-dark dark:hover:text-fg-secondary-dark'
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -831,4 +800,216 @@ function connectorPath(startX: number, startY: number, endX: number, endY: numbe
   const c1x = startX + (endX - startX) * 0.5;
   const c2x = startX + (endX - startX) * 0.5;
   return `M ${startX} ${startY} C ${c1x} ${startY}, ${c2x} ${endY}, ${endX} ${endY}`;
+}
+
+/** Trove brand teal — mirrored from `tailwind.config.js` because SVG
+ *  attributes (`stroke`, `fill` inside `<animate>`) can't read Tailwind
+ *  classes. Keep in sync if the brand color ever changes. */
+const BRAND_COLOR = '#2dbfb8';
+
+interface OrbitalClusterItem {
+  key: string;
+  /** Hover tooltip + accessibility label for this logo. */
+  title: string;
+  harnessId?: HarnessId;
+  backendKind?: Backend['kind'];
+}
+
+interface OrbitalClusterProps {
+  /** Container center x. */
+  cx: number;
+  /** Container center y. */
+  cy: number;
+  /** Side disambiguator — used to make per-instance gradient ids unique
+   *  so two clusters on the same chart don't collide. */
+  side: 'harness' | 'platform';
+  /** Header label shown at the top of the container. */
+  label: string;
+  items: OrbitalClusterItem[];
+}
+
+/** Pick a logo size + orbit radius that scales smoothly with the
+ *  number of items. Smaller logos + larger radius as N grows so they
+ *  don't overlap on a single orbit, while still fitting CLUSTER_HW/HH. */
+function orbitGeometryFor(n: number): { logoSize: number; orbitR: number } {
+  if (n <= 6) return { logoSize: 18, orbitR: 26 };
+  if (n <= 9) return { logoSize: 16, orbitR: 32 };
+  if (n <= 14) return { logoSize: 14, orbitR: 36 };
+  return { logoSize: 12, orbitR: 38 };
+}
+
+/** Orbital Hub container used when a side has more than
+ *  CLUSTER_THRESHOLD nodes. Every logo orbits a brand-colored merge
+ *  point at the container's center. Logos translate around the orbit
+ *  (driven by `useAnimationFrame`) but do not rotate, so they remain
+ *  upright. The container has a subtle radial brand tint, a marching
+ *  dashed inner border, and a faint orbit guide ring so the motion
+ *  feels anchored rather than chaotic. */
+function OrbitalCluster({ cx, cy, side, label, items }: OrbitalClusterProps): JSX.Element {
+  const n = items.length;
+  const { logoSize, orbitR } = orbitGeometryFor(n);
+  const orbitCx = cx;
+  const orbitCy = cy + CLUSTER_ORBIT_DY;
+  const halfLogo = logoSize / 2;
+
+  /** ~24 s per revolution. Calm enough to read individual logos while
+   *  still conveying continuous motion. */
+  const periodMs = 24_000;
+
+  const logoRefs = useRef<(SVGGElement | null)[]>([]);
+  const startRef = useRef<number | null>(null);
+
+  useAnimationFrame((time) => {
+    if (startRef.current === null) startRef.current = time;
+    const elapsed = time - startRef.current;
+    const baseTheta = (elapsed / periodMs) * Math.PI * 2;
+    for (let i = 0; i < n; i++) {
+      const node = logoRefs.current[i];
+      if (!node) continue;
+      const phase = (i / n) * Math.PI * 2;
+      const theta = baseTheta + phase;
+      // -π/2 puts the first item at the top of the orbit (12 o'clock).
+      const x = orbitCx + orbitR * Math.cos(theta - Math.PI / 2);
+      const y = orbitCy + orbitR * Math.sin(theta - Math.PI / 2);
+      node.setAttribute('transform', `translate(${x - halfLogo}, ${y - halfLogo})`);
+    }
+  });
+
+  const left = cx - CLUSTER_HW;
+  const top = cy - CLUSTER_HH;
+  const gradientId = `cluster-grad-${side}`;
+
+  // Brand-color border perimeter (for the marching dashes). Match the
+  // inset rect's perimeter so the dasharray pattern reads cleanly.
+  const innerInset = 4;
+  const innerW = (CLUSTER_HW - innerInset) * 2;
+  const innerH = (CLUSTER_HH - innerInset) * 2;
+
+  return (
+    <g aria-label={`${label}: ${n} active`}>
+      <defs>
+        <radialGradient id={gradientId} cx="50%" cy="60%" r="60%">
+          <stop offset="0%" stopColor={BRAND_COLOR} stopOpacity={0.22} />
+          <stop offset="65%" stopColor={BRAND_COLOR} stopOpacity={0.06} />
+          <stop offset="100%" stopColor={BRAND_COLOR} stopOpacity={0} />
+        </radialGradient>
+      </defs>
+
+      {/* Base container — same surface treatment as a regular FlowNode
+          so the cluster reads as part of the same visual family. */}
+      <rect
+        x={left}
+        y={top}
+        width={CLUSTER_HW * 2}
+        height={CLUSTER_HH * 2}
+        rx={20}
+        ry={20}
+        className="fill-surface-elevated stroke-hairline dark:fill-surface-elevated-dark dark:stroke-hairline-dark"
+        strokeWidth={1}
+      />
+
+      {/* Brand-tinted glow overlay — gives the container interior depth
+          and a faint breathing pulse instead of a flat fill. */}
+      <rect
+        x={left}
+        y={top}
+        width={CLUSTER_HW * 2}
+        height={CLUSTER_HH * 2}
+        rx={20}
+        ry={20}
+        fill={`url(#${gradientId})`}
+        pointerEvents="none"
+      >
+        <animate attributeName="opacity" values="0.7;1;0.7" dur="5s" repeatCount="indefinite" />
+      </rect>
+
+      {/* Inner dashed brand-color border that slowly marches around the
+          perimeter. Echoes the dashed-flow technique used by FlowLane. */}
+      <rect
+        x={left + innerInset}
+        y={top + innerInset}
+        width={innerW}
+        height={innerH}
+        rx={16}
+        ry={16}
+        fill="none"
+        stroke={BRAND_COLOR}
+        strokeOpacity={0.35}
+        strokeWidth={1}
+        strokeDasharray="4 6"
+        pointerEvents="none"
+      >
+        <animate
+          attributeName="stroke-dashoffset"
+          from="0"
+          to="-20"
+          dur="6s"
+          repeatCount="indefinite"
+        />
+      </rect>
+
+      {/* Header — label + count, centered at top of container. */}
+      <text
+        x={cx}
+        y={top + 18}
+        textAnchor="middle"
+        fontSize={12}
+        fontWeight={600}
+        className="fill-fg-primary dark:fill-fg-primary-dark"
+      >
+        {label}
+      </text>
+      <text
+        x={cx}
+        y={top + 32}
+        textAnchor="middle"
+        fontSize={10}
+        className="fill-fg-secondary dark:fill-fg-secondary-dark"
+      >
+        {n} active
+      </text>
+
+      {/* Faint orbit guide ring — anchors the eye so the motion reads
+          as orbital rather than random drift. */}
+      <circle
+        cx={orbitCx}
+        cy={orbitCy}
+        r={orbitR}
+        fill="none"
+        stroke={BRAND_COLOR}
+        strokeOpacity={0.15}
+        strokeWidth={0.75}
+        strokeDasharray="1 3"
+      />
+
+      {/* Center merge point — the "convergence" the orbit points to.
+          Radius + opacity pulse on a 2.4 s loop, matching the existing
+          Collector halo cadence. */}
+      <circle cx={orbitCx} cy={orbitCy} r={3.5} fill={BRAND_COLOR} opacity={0.9}>
+        <animate attributeName="r" values="3;5;3" dur="2.4s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.55;1;0.55" dur="2.4s" repeatCount="indefinite" />
+      </circle>
+
+      {/* Logos orbit the merge point. Each `<g>`'s transform is updated
+          per-frame by `useAnimationFrame` above, so logos translate
+          without rotating themselves. */}
+      {items.map((item, i) => (
+        <g
+          key={item.key}
+          ref={(el) => {
+            logoRefs.current[i] = el;
+          }}
+        >
+          <title>{item.title}</title>
+          <NodeLogoSvg
+            x={0}
+            y={0}
+            size={logoSize}
+            {...(item.harnessId ? { harnessId: item.harnessId } : {})}
+            {...(item.backendKind ? { backendKind: item.backendKind } : {})}
+          />
+        </g>
+      ))}
+    </g>
+  );
 }
