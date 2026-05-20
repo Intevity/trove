@@ -223,6 +223,7 @@ fn render(backend: &Backend) -> RenderedCollector {
     let list = vec![BackendInstance {
         id: "11111111-2222-3333-4444-555566667777".to_string(),
         label: None,
+        enabled: true,
         backend: backend.clone(),
     }];
     render_with(&list, &empty_resolver).expect("render with empty resolver")

@@ -39,6 +39,7 @@ fn state_with(instance_backend: trove_app::app_state::Backend) -> AppState {
         backends: vec![BackendInstance {
             id: TEST_ID.to_string(),
             label: None,
+            enabled: true,
             backend: instance_backend,
         }],
         harnesses: Vec::new(),

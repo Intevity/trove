@@ -92,6 +92,7 @@ fn save_then_load_is_byte_identical_for_each_backend_kind() {
             backends: vec![trove_app::app_state::BackendInstance {
                 id: "11111111-2222-3333-4444-555566667777".to_string(),
                 label: None,
+                enabled: true,
                 backend: backend.clone(),
             }],
             harnesses: vec![sample_config(HarnessId::ClaudeCode)],

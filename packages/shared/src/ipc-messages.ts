@@ -78,6 +78,15 @@ export type UpdateBackendResponse = z.infer<typeof UpdateBackendResponse>;
 export const RemoveBackendResponse = z.null();
 export type RemoveBackendResponse = z.infer<typeof RemoveBackendResponse>;
 
+/** `set_backend_enabled` — args: { id: string, enabled: boolean }.
+ *  Flips the named instance's `enabled` flag. The instance stays in
+ *  `state.backends` either way — only the collector pipeline changes
+ *  — so a user can pause forwarding to a platform without losing its
+ *  configuration. Idempotent: no-op when `id` is unknown or the flag
+ *  already matches. */
+export const SetBackendEnabledResponse = z.null();
+export type SetBackendEnabledResponse = z.infer<typeof SetBackendEnabledResponse>;
+
 /** `clear_backend` — no arguments. Deletes every keychain entry and
  *  empties `state.backends`. Returns nothing. Backwards-compatible alias
  *  retained for callers that want to wipe the whole list in one shot. */
@@ -236,6 +245,7 @@ export const IpcCommandName = {
   AddBackend: 'add_backend',
   UpdateBackend: 'update_backend',
   RemoveBackend: 'remove_backend',
+  SetBackendEnabled: 'set_backend_enabled',
   ClearBackend: 'clear_backend',
   QuitApp: 'quit_app',
   UninstallApp: 'uninstall_app',

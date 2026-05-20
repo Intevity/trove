@@ -55,7 +55,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 10;
 
 /// Serde helper that defaults a `bool` field to `true`. Used for opt-out
 /// settings whose absence in a migrated document should be interpreted
@@ -265,12 +265,21 @@ pub enum BackendDraft {
 /// each [`Backend`] with a stable UUID id (used to scope keychain
 /// accounts and identify the row in IPC edit/remove calls) and an
 /// optional display label. Mirrors the Zod `BackendInstance`.
+///
+/// `enabled` (introduced in schema v10) gates whether the collector
+/// pipeline forwards to this instance and whether it appears on the
+/// Overview Data flow chart. Disabled instances persist in the state
+/// so the user can keep their configuration and re-enable later;
+/// pre-v10 documents migrate by defaulting to `true` via the
+/// `default_true` serde fallback.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendInstance {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub backend: Backend,
 }
 
@@ -454,7 +463,7 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2..=v9 migration. Earlier sprints added autoUpdateEnabled,
+        // v2..=v10 migration. Earlier sprints added autoUpdateEnabled,
         // identity, and mappings — all use `#[serde(default)]` so older
         // documents deserialize cleanly. v7 (multi-platform refactor)
         // replaces the single `backend` slot with a `backends` list; the
@@ -462,10 +471,14 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         // present. v8 adds launch_at_startup_enabled defaulting to true
         // via `default_true`. v9 (release-blockers commit train) flips
         // `trovePatch.format` from `"yaml"` to `"shell"` for wrapper
-        // adapter entries whose `configPath` is a shell rc. We re-stamp
-        // schema_version on the returned struct so the next save
-        // persists the current version to disk.
-        2..=9 => {
+        // adapter entries whose `configPath` is a shell rc. v10 adds
+        // per-instance `enabled` on every `BackendInstance` so a
+        // platform can be paused without deletion — v9 documents that
+        // omit the field default to `true` via the `default_true` serde
+        // fallback on the struct, so no value-level shim is required.
+        // We re-stamp schema_version on the returned struct so the
+        // next save persists the current version to disk.
+        2..=10 => {
             // Field-shape migrations applied at the JSON-value level so
             // we don't need to keep parallel legacy deserializer types
             // around. Applied in chronological order so a v2 document
@@ -1072,6 +1085,7 @@ mod tests {
         BackendInstance {
             id: "11111111-1111-1111-1111-111111111111".into(),
             label: None,
+            enabled: true,
             backend: sample_signoz(),
         }
     }
@@ -1096,7 +1110,7 @@ mod tests {
     fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 9);
+        assert_eq!(s.schema_version, 10);
         assert!(s.backends.is_empty());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
@@ -1588,7 +1602,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 9"));
+        assert!(on_disk.contains("\"schemaVersion\": 10"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1645,7 +1659,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 9"));
+        assert!(on_disk.contains("\"schemaVersion\": 10"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1737,7 +1751,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 9"));
+        assert!(on_disk.contains("\"schemaVersion\": 10"));
         assert!(on_disk.contains("\"mappings\""));
     }
 
@@ -1915,7 +1929,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 9"));
+        assert!(on_disk.contains("\"schemaVersion\": 10"));
         assert!(on_disk.contains("\"backends\""));
         assert!(!on_disk.contains("\"backend\":"));
     }
