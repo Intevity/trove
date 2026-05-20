@@ -31,7 +31,7 @@ use sha2::{Digest, Sha256};
 /// One of the config-file formats Trove patches. `Shell` shares the
 /// `# trove:start … # trove:end` comment-fence syntax with `Yaml` /
 /// `Toml`, but skips the document-level parser — a real shell rc has
-/// `export FOO="..."` lines and unbalanced quotes that YAML/serde_yml
+/// `export FOO="..."` lines and unbalanced quotes that `YAML/serde_yml`
 /// rejects. Wrapper-style adapters (aider, copilot-cli, cursor-cli)
 /// use `Shell`; tier-1 YAML adapters use `Yaml`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -1282,13 +1282,13 @@ alias ll='ls -la'
 
     #[test]
     fn shell_remove_strips_fence_only() {
-        let rc = r#"export FOO=bar
+        let rc = r"export FOO=bar
 
 # trove:start hash=deadbeef keys=aider
 aider() { :; }
 # trove:end
 alias ll='ls -la'
-"#;
+";
         let after = remove_region(Format::Shell, rc, "test-adapter").unwrap();
         assert!(!after.contains("# trove:start"));
         assert!(!after.contains("# trove:end"));

@@ -123,7 +123,7 @@ fn rotated_path(path: &Path) -> PathBuf {
 /// red or amber.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExporterErrorLine {
-    /// OTel collector component id, e.g. `otlphttp/openobserve-93eb10f1`.
+    /// `OTel` collector component id, e.g. `otlphttp/openobserve-93eb10f1`.
     pub component_id: String,
     /// The raw `error` field text from the structured log line.
     pub error: String,

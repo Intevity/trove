@@ -206,7 +206,7 @@ impl BackendHealthSamples {
 /// Pure derivation of the per-destination pill color from rolling
 /// samples plus the most-recent stderr error event. Truth table:
 ///
-/// | has_successes | has_failures | result |
+/// | `has_successes` | `has_failures` | result |
 /// |---------------|--------------|--------|
 /// | false         | false        | Gray   |
 /// | true          | false        | Green  |
@@ -234,7 +234,7 @@ pub fn derive_backend_health(
     let has_successes = window_sent > 0;
     let recent_error = matches!(
         samples.last_error_at,
-        Some(t) if now.signed_duration_since(t).num_seconds() <= BACKEND_HEALTH_WINDOW.as_secs() as i64,
+        Some(t) if now.signed_duration_since(t).num_seconds() <= i64::try_from(BACKEND_HEALTH_WINDOW.as_secs()).unwrap_or(i64::MAX),
     );
     let has_failures = window_failed > 0 || recent_error;
     match (has_successes, has_failures) {

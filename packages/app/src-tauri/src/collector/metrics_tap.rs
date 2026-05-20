@@ -92,7 +92,7 @@ pub struct MetricsSnapshot {
     /// non-empty `native_service_name_candidates`).
     #[serde(default)]
     pub diag_observations: DiagObservations,
-    /// Per-exporter cumulative counters, keyed by OTel component id
+    /// Per-exporter cumulative counters, keyed by `OTel` component id
     /// (e.g. `otlphttp/openobserve-93eb10f1`). Drives the per-platform
     /// health pill via `BackendHealthSamples::observe`.
     #[serde(default, skip)]
@@ -447,7 +447,7 @@ pub fn parse_signal_counts(body: &str) -> (SignalCounts, SignalCounts) {
     (received, sent)
 }
 
-/// Cumulative success / failure counters for a single OTel collector
+/// Cumulative success / failure counters for a single `OTel` collector
 /// exporter, summed across the three signal types. Used as the input to
 /// the per-backend health pill: window deltas drive the color.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -457,7 +457,7 @@ pub struct ExporterCounts {
 }
 
 /// Parse the collector's Prometheus dump and return cumulative
-/// `(sent, send_failed)` counters keyed by `exporter` label (the OTel
+/// `(sent, send_failed)` counters keyed by `exporter` label (the `OTel`
 /// collector component id, e.g. `otlphttp/openobserve-93eb10f1`).
 ///
 /// Sums across `spans` / `metric_points` / `log_records` — callers

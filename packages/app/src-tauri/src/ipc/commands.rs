@@ -729,6 +729,8 @@ pub fn get_app_state(app: tauri::AppHandle) -> Result<AppState, IpcError> {
 /// 250 ms); this command exists so the frontend hook has a value on
 /// mount before the first event arrives. Returns a vec sorted by
 /// `backendId`; entries with no observations yet have `status: "gray"`.
+#[allow(clippy::needless_pass_by_value)]
+#[must_use]
 #[tauri::command]
 pub fn get_backend_health(
     app: tauri::AppHandle,

@@ -203,13 +203,14 @@ fn env_suffix_for(id: &str) -> String {
     }
 }
 
-/// Resolve an OTel collector component id (e.g. `otlphttp/openobserve-93eb10f1`)
+/// Resolve an `OTel` collector component id (e.g. `otlphttp/openobserve-93eb10f1`)
 /// back to the [`BackendInstance::id`] it was derived from. Returns `None`
 /// for component ids that don't follow Trove's exporter naming scheme or
 /// that name an exporter not currently in `backends`.
 ///
 /// Used by the per-backend health pipeline to attribute metrics-tap counters
 /// and stderr error lines back to a specific destination row.
+#[must_use] 
 pub fn backend_id_from_component_id<'a>(
     component_id: &str,
     backends: &'a [BackendInstance],
@@ -520,7 +521,7 @@ fn render_exporter_block(
 }
 
 /// True if `endpoint`'s host segment is a loopback address — used to
-/// auto-disable TLS on presets like SigNoz whose cloud product is
+/// auto-disable TLS on presets like `SigNoz` whose cloud product is
 /// TLS-on but whose self-hosted OSS deploys plaintext gRPC on 4317.
 ///
 /// Recognises:
@@ -2008,7 +2009,7 @@ mod tests {
     fn backend_id_does_not_match_processor_component_ids() {
         let signoz = signoz_instance("31fb8e0a-0d50-4636-ab1a-868a4428a092");
         assert_eq!(
-            backend_id_from_component_id("transform/harness-tag", &[signoz.clone()]),
+            backend_id_from_component_id("transform/harness-tag", std::slice::from_ref(&signoz)),
             None,
         );
         assert_eq!(

@@ -5,7 +5,7 @@
 //!
 //! - **Pull (color):** every `MetricsSnapshot` from the metrics tap
 //!   carries a `per_exporter` map of cumulative sent / failed counters
-//!   keyed by OTel collector component id (e.g.
+//!   keyed by `OTel` collector component id (e.g.
 //!   `otlphttp/openobserve-93eb10f1`). Each tick we resolve the
 //!   component id back to a `BackendInstance.id` via
 //!   [`super::codegen::backend_id_from_component_id`] and call
@@ -38,7 +38,7 @@ use crate::collector::metrics_tap::MetricsSnapshot;
 /// Closure returning the current configured backend list. The tracker
 /// invokes it on every input event so newly-added or just-removed
 /// backends start / stop receiving updates within one tick. lib.rs
-/// constructs the closure capturing the AppHandle so it can read
+/// constructs the closure capturing the `AppHandle` so it can read
 /// `state.json` lazily.
 pub type BackendsFetcher = Arc<dyn Fn() -> Vec<BackendInstance> + Send + Sync + 'static>;
 
@@ -291,8 +291,8 @@ mod tests {
         assert_eq!(rx.borrow().len(), 2);
 
         // User removes signoz_b — next tick passes only signoz_a.
-        apply_metrics_tick(&samples, &[signoz_a.clone()], &snapshot_with(HashMap::new())).await;
-        publish(&samples, &[signoz_a.clone()], &tx).await;
+        apply_metrics_tick(&samples, std::slice::from_ref(&signoz_a), &snapshot_with(HashMap::new())).await;
+        publish(&samples, std::slice::from_ref(&signoz_a), &tx).await;
         rx.changed().await.unwrap();
         let payload = rx.borrow();
         assert_eq!(payload.len(), 1);

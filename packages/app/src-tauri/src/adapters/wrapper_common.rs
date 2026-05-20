@@ -403,7 +403,7 @@ fn locate_block(
     if owns_block { Some(legacy) } else { None }
 }
 
-/// Locate the byte range covering a fence pair (start_line..=end_line
+/// Locate the byte range covering a fence pair (`start_line..=end_line`
 /// inclusive of trailing newline). Returns `None` when either fence is
 /// absent or the end appears before the start.
 fn locate_fence_pair(content: &str, start_marker: &str, end_marker: &str) -> Option<(usize, usize)> {

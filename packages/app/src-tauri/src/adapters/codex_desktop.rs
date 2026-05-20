@@ -1,4 +1,4 @@
-//! OpenAI Codex desktop app adapter — `/Applications/Codex.app` (bundle
+//! `OpenAI` Codex desktop app adapter — `/Applications/Codex.app` (bundle
 //! id `com.openai.codex`). The desktop app is an Electron shell that
 //! delegates to the same Rust `codex app-server` backend the CLI uses,
 //! and both read `~/.codex/config.toml` at launch. That shared config
