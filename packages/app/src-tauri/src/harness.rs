@@ -16,7 +16,7 @@ pub enum HarnessId {
     ClaudeDesktop,
     GeminiCli,
     CodexCli,
-    /// OpenAI Codex desktop app (`/Applications/Codex.app`). Shares
+    /// `OpenAI` Codex desktop app (`/Applications/Codex.app`). Shares
     /// `~/.codex/config.toml` with the CLI — both invoke the same Rust
     /// `codex app-server` backend — so the codex-desktop adapter writes
     /// the same `[otel.*]` payload as codex-cli. The two adapters

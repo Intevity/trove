@@ -85,18 +85,22 @@ fn all_four_tier_1_adapters_apply_and_revert_byte_identical() {
     assert!(qwen_after.get("_trove").is_some());
 
     // Codex is TOML; assertions use toml_edit instead of serde_json.
+    // Codex 0.130+ schema uses externally-tagged exporter sub-tables —
+    // `[otel.exporter.otlp-http]` rather than the older
+    // `[otel.exporter] kind = "otlp-http"`. The exporter variant name
+    // is the sub-table key.
     let codex_text = fs::read_to_string(&codex_path).unwrap();
     let codex_doc: toml_edit::DocumentMut = codex_text
         .parse()
         .expect("post-apply Codex config.toml must parse as TOML");
     assert_eq!(codex_doc["user"]["name"].as_str(), Some("jeff"));
     assert_eq!(codex_doc["model"]["default"].as_str(), Some("o1"));
-    assert_eq!(
-        codex_doc["otel"]["exporter"]["kind"].as_str(),
-        Some("otlp-http")
+    assert!(
+        codex_doc["otel"]["exporter"]["otlp-http"].is_table_like(),
+        "expected [otel.exporter.otlp-http] sub-table, got: {codex_text}",
     );
     assert_eq!(
-        codex_doc["otel"]["exporter"]["endpoint"].as_str(),
+        codex_doc["otel"]["exporter"]["otlp-http"]["endpoint"].as_str(),
         Some("http://127.0.0.1:4318/v1/logs")
     );
     assert!(codex_text.contains("# trove:start"));
