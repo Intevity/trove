@@ -4,11 +4,47 @@
 
 use std::path::PathBuf;
 
-/// Resolves `binary` against the process's `$PATH`. Returns `None` if
-/// the binary isn't on PATH (the typical "harness not installed" case).
+/// Resolves `binary` against the process's `$PATH`, augmented with
+/// well-known Homebrew prefixes that macOS strips from GUI-launched
+/// apps. launchd inherits a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`),
+/// so a Trove launched from Finder / Spotlight / Dock would otherwise
+/// miss every CLI installed under `/opt/homebrew/bin` (Apple Silicon)
+/// or `/usr/local/bin` (Intel) — codex, claude, gemini, etc. Returns
+/// `None` if the binary isn't on the augmented path (the typical
+/// "harness not installed" case).
 #[must_use]
 pub fn probe_path(binary: &str) -> Option<PathBuf> {
-    which::which(binary).ok()
+    if let Ok(found) = which::which(binary) {
+        return Some(found);
+    }
+    // Fall back to the well-known Homebrew prefixes. These are
+    // canonical locations the user's shell rc would normally export,
+    // but the GUI-launch case doesn't run shell rc.
+    for fallback_dir in homebrew_fallback_dirs() {
+        let candidate = fallback_dir.join(binary);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Fallback directories appended to the GUI-launch PATH probe. macOS-
+/// only; other platforms return an empty list and the standard
+/// `which::which` call is the only signal.
+#[cfg(target_os = "macos")]
+fn homebrew_fallback_dirs() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/opt/homebrew/sbin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/local/sbin"),
+    ]
+}
+
+#[cfg(not(target_os = "macos"))]
+fn homebrew_fallback_dirs() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 /// Resolves `binary` against an explicit list of search directories,
@@ -82,6 +118,15 @@ mod tests {
     fn probe_path_in_returns_none_for_empty_dirs() {
         let result = probe_path_in("claude", &[]);
         assert!(result.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn homebrew_fallback_dirs_include_apple_silicon_and_intel_prefixes() {
+        let dirs = super::homebrew_fallback_dirs();
+        let joined: String = dirs.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(":");
+        assert!(joined.contains("/opt/homebrew/bin"), "{joined}");
+        assert!(joined.contains("/usr/local/bin"), "{joined}");
     }
 
     #[test]
