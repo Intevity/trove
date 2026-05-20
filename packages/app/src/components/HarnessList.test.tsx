@@ -165,11 +165,12 @@ describe('HarnessList', () => {
     expect(toggle.textContent).toBe('Enable');
   });
 
-  it('shows Disable label when troveRegionPresent is true', () => {
+  it('shows Disable label when the id is in enabledIds', () => {
     render(
       <HarnessList
-        harnesses={[row({ id: 'claude-code', troveRegionPresent: true })]}
+        harnesses={[row({ id: 'claude-code' })]}
         loading={false}
+        enabledIds={new Set(['claude-code'])}
       />,
     );
     const toggle = screen.getByLabelText('toggle-claude-code') as HTMLButtonElement;
@@ -189,8 +190,9 @@ describe('HarnessList', () => {
     const onDisable = vi.fn();
     render(
       <HarnessList
-        harnesses={[row({ id: 'claude-code', troveRegionPresent: true })]}
+        harnesses={[row({ id: 'claude-code' })]}
         loading={false}
+        enabledIds={new Set(['claude-code'])}
         onDisable={onDisable}
       />,
     );
@@ -201,14 +203,38 @@ describe('HarnessList', () => {
   it('shows the busy label when the row is mid-revert', () => {
     render(
       <HarnessList
-        harnesses={[row({ id: 'claude-code', troveRegionPresent: true })]}
+        harnesses={[row({ id: 'claude-code' })]}
         loading={false}
+        enabledIds={new Set(['claude-code'])}
         busyIds={new Set(['claude-code'])}
       />,
     );
     const toggle = screen.getByLabelText('toggle-claude-code') as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
     expect(toggle.textContent).toBe('Disabling…');
+  });
+
+  it('treats troveRegionPresent as irrelevant to the button label — only AppState drives it', () => {
+    // Cursor IDE and Cursor CLI share `~/.cursor/hooks.json`, so the
+    // filesystem-level `troveRegionPresent` flag goes true for BOTH
+    // when either is enabled. The button must source its label from
+    // `enabledIds` (the persisted `AppState.harnesses` set) instead.
+    render(
+      <HarnessList
+        harnesses={[
+          row({ id: 'cursor-ide', troveRegionPresent: true }),
+          row({ id: 'cursor-cli', troveRegionPresent: true }),
+        ]}
+        loading={false}
+        enabledIds={new Set(['cursor-ide'])}
+      />,
+    );
+    expect((screen.getByLabelText('toggle-cursor-ide') as HTMLButtonElement).textContent).toBe(
+      'Disable',
+    );
+    expect((screen.getByLabelText('toggle-cursor-cli') as HTMLButtonElement).textContent).toBe(
+      'Enable',
+    );
   });
 
   it('renders the telemetry status label for each row', () => {

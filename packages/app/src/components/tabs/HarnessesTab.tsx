@@ -9,6 +9,11 @@ interface Props {
   detectionError: TroveIpcError | null;
   busyIds: Set<HarnessId>;
   revertError: TroveIpcError | null;
+  /** Source-of-truth for which harnesses are currently active —
+   *  derived from `AppState.harnesses` upstream. Threaded through to
+   *  `HarnessList` so the Enable/Disable button reflects what's
+   *  actually persisted rather than what's on disk. */
+  enabledIds: ReadonlySet<HarnessId>;
   onEnable: (id: HarnessId) => void;
   onDisable: (id: HarnessId) => void;
   onRefresh: () => void;
@@ -20,6 +25,7 @@ export function HarnessesTab({
   detectionError,
   busyIds,
   revertError,
+  enabledIds,
   onEnable,
   onDisable,
   onRefresh,
@@ -40,6 +46,7 @@ export function HarnessesTab({
           onEnable={onEnable}
           onDisable={onDisable}
           busyIds={busyIds}
+          enabledIds={enabledIds}
           onRefresh={onRefresh}
         />
       )}
