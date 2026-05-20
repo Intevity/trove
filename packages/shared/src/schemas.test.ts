@@ -319,9 +319,9 @@ describe('AppState', () => {
     harnesses: [],
   };
 
-  it('parses a minimal v8 state with default identity off and empty mappings', () => {
+  it('parses a minimal v10 state with default identity off and empty mappings', () => {
     const parsed = AppState.parse({
-      schemaVersion: 9,
+      schemaVersion: 10,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
@@ -329,7 +329,7 @@ describe('AppState', () => {
       identity: defaultIdentity,
       mappings: emptyMappings,
     });
-    expect(parsed.schemaVersion).toBe(9);
+    expect(parsed.schemaVersion).toBe(10);
     expect(parsed.backends).toEqual([]);
     expect(parsed.harnesses).toEqual([]);
     expect(parsed.autoUpdateEnabled).toBe(false);
@@ -339,9 +339,9 @@ describe('AppState', () => {
     expect(parsed.mappings.harnesses).toEqual([]);
   });
 
-  it('parses a v8 state with autoUpdateEnabled true and identity tagging on', () => {
+  it('parses a v10 state with autoUpdateEnabled true and identity tagging on', () => {
     const parsed = AppState.parse({
-      schemaVersion: 9,
+      schemaVersion: 10,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: true,
@@ -362,9 +362,9 @@ describe('AppState', () => {
     expect(parsed.identity.email).toBe('ada@example.com');
   });
 
-  it('parses a v8 state with populated mapping rows', () => {
+  it('parses a v10 state with populated mapping rows', () => {
     const parsed = AppState.parse({
-      schemaVersion: 9,
+      schemaVersion: 10,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
@@ -398,7 +398,7 @@ describe('AppState', () => {
   it('rejects when launchAtStartupEnabled is missing', () => {
     expect(() =>
       AppState.parse({
-        schemaVersion: 9,
+        schemaVersion: 10,
         backends: [],
         harnesses: [],
         autoUpdateEnabled: false,
@@ -449,7 +449,7 @@ describe('AppState', () => {
     ).toThrow();
   });
 
-  it('rejects v2..v7 wire payloads (Rust loader migrates them to v8 before IPC return)', () => {
+  it('rejects v2..v9 wire payloads (Rust loader migrates them to v10 before IPC return)', () => {
     // Migrations live in `app_state::load_from_dir`; older payloads
     // should never appear at the IPC boundary, so the Zod literal
     // rejects them outright.

@@ -206,6 +206,7 @@ mod tests {
         BackendInstance {
             id: id.to_string(),
             label: None,
+            enabled: true,
             backend: Backend::Signoz {
                 endpoint: "localhost:14317".into(),
                 ingestion_key: SecretRef::for_account(format!("k.{id}")),

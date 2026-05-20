@@ -1305,6 +1305,7 @@ mod tests {
         BackendInstance {
             id: id.to_string(),
             label: None,
+            enabled: true,
             backend: Backend::Signoz {
                 endpoint: "ingest.us.signoz.cloud:443".into(),
                 ingestion_key: SecretRef::for_account(format!(
@@ -1318,6 +1319,7 @@ mod tests {
         BackendInstance {
             id: id.to_string(),
             label: None,
+            enabled: true,
             backend: Backend::Datadog {
                 site: "datadoghq.com".into(),
                 api_key: SecretRef::for_account(format!(
@@ -1331,6 +1333,7 @@ mod tests {
         BackendInstance {
             id: id.to_string(),
             label: None,
+            enabled: true,
             backend: Backend::Honeycomb {
                 team: SecretRef::for_account(format!("backend.honeycomb.team.{id}")),
                 dataset: "prod".into(),
@@ -1458,6 +1461,7 @@ mod tests {
         let instances = vec![BackendInstance {
             id: "cc11dd22-3333-4444-5555-666677778888".into(),
             label: None,
+            enabled: true,
             backend: Backend::OtlpGeneric {
                 endpoint: "https://example.test/v1/otlp".into(),
                 protocol: OtlpProtocol::Http,
@@ -1498,6 +1502,7 @@ mod tests {
                 vec![BackendInstance {
                     id: "dddd1111-2222-3333-4444-555566667777".into(),
                     label: None,
+                    enabled: true,
                     backend: Backend::GrafanaCloud {
                         endpoint: "https://otlp-gateway.grafana.net/otlp".into(),
                         auth: SecretRef::for_account("backend.grafana-cloud.auth.dddd1111"),
@@ -1509,6 +1514,7 @@ mod tests {
                 vec![BackendInstance {
                     id: "eeee1111-2222-3333-4444-555566667777".into(),
                     label: None,
+                    enabled: true,
                     backend: Backend::OtelcolPassthrough {
                         endpoint: "http://127.0.0.1:4318".into(),
                     },
@@ -1917,6 +1923,7 @@ mod tests {
         let instance = BackendInstance {
             id: "bbbbbbbb-2222-3333-4444-555566667777".into(),
             label: None,
+            enabled: true,
             backend: Backend::Signoz {
                 endpoint: "localhost:14317".into(),
                 ingestion_key: SecretRef::for_account(
@@ -1939,6 +1946,7 @@ mod tests {
         let instance = BackendInstance {
             id: "cccccccc-3333-4444-5555-666677778888".into(),
             label: None,
+            enabled: true,
             backend: Backend::Signoz {
                 endpoint: "127.0.0.1:14317".into(),
                 ingestion_key: SecretRef::for_account(

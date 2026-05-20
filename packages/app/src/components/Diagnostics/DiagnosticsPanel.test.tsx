@@ -44,12 +44,13 @@ function appState(opts?: {
   harnesses?: HarnessConfig[];
 }): AppState {
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     backends:
       opts?.backends === undefined
         ? [
             {
               id: '11111111-1111-1111-1111-111111111111',
+              enabled: true,
               backend: {
                 kind: 'signoz',
                 endpoint: 'ingest.us.signoz.cloud:443',

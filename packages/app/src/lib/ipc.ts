@@ -17,6 +17,7 @@ import {
   ListDetectedHarnessesResponse,
   PreviewPatchResponse,
   RemoveBackendResponse,
+  SetBackendEnabledResponse,
   ResetMappingsToDefaultsResponse,
   ResolveConflictResponse,
   ResolveIdentityPreviewResponse,
@@ -167,6 +168,15 @@ export async function updateBackend(
  *  collector reverts to the smoke pass-through config. */
 export async function removeBackend(id: string): Promise<void> {
   await invokeIpc(IpcCommandName.RemoveBackend, { id }, RemoveBackendResponse);
+}
+
+/** Flip the `enabled` flag on a single configured platform. The
+ *  instance stays in `state.backends` either way — only the collector
+ *  pipeline changes — so the user can pause forwarding to a platform
+ *  without losing its configuration. Idempotent when the flag already
+ *  matches; no-op when `id` is unknown. */
+export async function setBackendEnabled(id: string, enabled: boolean): Promise<void> {
+  await invokeIpc(IpcCommandName.SetBackendEnabled, { id, enabled }, SetBackendEnabledResponse);
 }
 
 /** Wipe every configured platform: deletes every keychain entry and

@@ -185,7 +185,7 @@ describe('getAppState', () => {
 
   it('returns the parsed AppState on success', async () => {
     const expected = {
-      schemaVersion: 9 as const,
+      schemaVersion: 10 as const,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
@@ -223,6 +223,7 @@ describe('addBackend', () => {
     };
     const persisted = {
       id: '11111111-1111-1111-1111-111111111111',
+      enabled: true,
       backend: {
         kind: 'signoz' as const,
         endpoint: 'ingest.us.signoz.cloud:443',
@@ -260,6 +261,7 @@ describe('updateBackend', () => {
     };
     const persisted = {
       id,
+      enabled: true,
       backend: {
         kind: 'datadog' as const,
         site: 'datadoghq.eu',

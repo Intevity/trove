@@ -762,6 +762,7 @@ pub fn add_backend(
     let instance = BackendInstance {
         id,
         label: label.filter(|s| !s.trim().is_empty()),
+        enabled: true,
         backend,
     };
 
@@ -810,6 +811,9 @@ pub fn update_backend(
     let instance = BackendInstance {
         id: id.clone(),
         label: label.filter(|s| !s.trim().is_empty()),
+        // Preserve the prior enabled state across edits so saving a
+        // disabled instance from the wizard doesn't silently re-enable it.
+        enabled: state.backends[slot_idx].enabled,
         backend,
     };
     state.backends[slot_idx] = instance.clone();
@@ -842,17 +846,53 @@ pub fn remove_backend(app: tauri::AppHandle, id: String) -> Result<(), IpcError>
     Ok(())
 }
 
+/// Flip the `enabled` flag on a single [`BackendInstance`]. The instance
+/// stays in `state.backends` either way — the collector pipeline is
+/// what changes — so the user can disable a platform to pause
+/// forwarding without losing its configuration, then re-enable later.
+/// No-op (returns `Ok`) when the id is unknown so the JS side doesn't
+/// have to coordinate state on a stale view.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_backend_enabled(
+    app: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<(), IpcError> {
+    let mut state = app_state::load(&app)?;
+    let Some(slot) = state.backends.iter_mut().find(|b| b.id == id) else {
+        return Ok(());
+    };
+    if slot.enabled == enabled {
+        return Ok(());
+    }
+    slot.enabled = enabled;
+    app_state::save(&app, &state)?;
+    reload_for_backends(&app, &state)?;
+    Ok(())
+}
+
 /// Re-render `collector.yaml` from `state.backends` and reload the
-/// supervisor. When the list is empty, fall back to the smoke config
-/// (the `OTel` collector refuses to start with a pipeline that lists no
-/// exporters). Used by every backend-mutating IPC command.
+/// supervisor. When the enabled list is empty (no backends configured,
+/// or all configured backends are disabled), fall back to the smoke
+/// config (the `OTel` collector refuses to start with a pipeline that
+/// lists no exporters). Used by every backend-mutating IPC command.
 fn reload_for_backends(app: &tauri::AppHandle, state: &AppState) -> Result<(), IpcError> {
-    if state.backends.is_empty() {
+    // Only enabled backends end up in the rendered pipeline. Disabled
+    // ones stay in `state.backends` (so the user can re-enable them
+    // without re-entering credentials) but contribute zero exporters.
+    let enabled: Vec<BackendInstance> = state
+        .backends
+        .iter()
+        .filter(|b| b.enabled)
+        .cloned()
+        .collect();
+    if enabled.is_empty() {
         crate::reload_collector(app, crate::smoke_config_yaml(), HashMap::new())
             .map_err(|e| boot_error_to_ipc(&e))?;
         return Ok(());
     }
-    let rendered = codegen::render(&state.backends).map_err(render_error_to_ipc)?;
+    let rendered = codegen::render(&enabled).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
     let yaml = render_with_overlays(rendered.yaml, state);
     crate::reload_collector(app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))?;
@@ -1285,10 +1325,16 @@ fn reload_collector_for_identity(
     app: &tauri::AppHandle,
     state: &AppState,
 ) -> Result<(), IpcError> {
-    if state.backends.is_empty() {
+    let enabled: Vec<BackendInstance> = state
+        .backends
+        .iter()
+        .filter(|b| b.enabled)
+        .cloned()
+        .collect();
+    if enabled.is_empty() {
         return Ok(());
     }
-    let rendered = codegen::render(&state.backends).map_err(render_error_to_ipc)?;
+    let rendered = codegen::render(&enabled).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
     let yaml = render_with_overlays(rendered.yaml, state);
     crate::reload_collector(app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))
@@ -1333,10 +1379,16 @@ pub fn apply_mappings(
     // Cursor hook is out-of-process JS — regenerate the script so the
     // user's edits take effect on the next Cursor reload.
     let _ = crate::adapters::cursor_common::regenerate_hooks_for_rules(&app, &state.mappings);
-    if state.backends.is_empty() {
+    let enabled: Vec<BackendInstance> = state
+        .backends
+        .iter()
+        .filter(|b| b.enabled)
+        .cloned()
+        .collect();
+    if enabled.is_empty() {
         return Ok(());
     }
-    let rendered = codegen::render(&state.backends).map_err(render_error_to_ipc)?;
+    let rendered = codegen::render(&enabled).map_err(render_error_to_ipc)?;
     let env = unwrap_env(rendered.env);
     let yaml = render_with_overlays(rendered.yaml, &state);
     crate::reload_collector(&app, &yaml, env).map_err(|e| boot_error_to_ipc(&e))

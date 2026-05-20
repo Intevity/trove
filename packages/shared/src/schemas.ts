@@ -408,20 +408,29 @@ export type MappingState = z.infer<typeof MappingState>;
  *  a stable identifier and an optional display label so the UI can
  *  edit/remove a specific instance without depending on `kind` (two
  *  instances of the same kind are valid). The Rust mirror is
- *  `app_state::BackendInstance`; both sides use UUID v4 string ids. */
+ *  `app_state::BackendInstance`; both sides use UUID v4 string ids.
+ *
+ *  `enabled` (added in schema v10) gates whether the collector
+ *  pipeline forwards to this instance and whether it appears on the
+ *  Overview Data flow chart. Disabled instances stay in the list so
+ *  the user can keep their configuration and re-enable later;
+ *  pre-v10 documents migrate by defaulting every instance to `true`. */
 export const BackendInstance = z.object({
   id: z.string().min(1),
   label: z.string().optional(),
+  enabled: z.boolean().default(true),
   backend: Backend,
 });
 export type BackendInstance = z.infer<typeof BackendInstance>;
 
 /** Persisted application state. Secrets are referenced via SecretRef only.
- *  Schema version 8 adds the opt-out `launchAtStartupEnabled` flag that
- *  controls whether Trove registers itself with the OS login-items
- *  mechanism. v7 documents migrate forward by defaulting the new field
- *  to `true` in the Rust loader (existing installs inherit the opt-out
- *  on first launch after upgrade).
+ *  Schema version 10 adds the per-instance `enabled` flag on every
+ *  `BackendInstance` so a platform can be paused without deleting its
+ *  configuration. v9 documents migrate forward by defaulting every
+ *  existing instance to `enabled: true` in the Rust loader.
+ *
+ *  v8: opt-out `launchAtStartupEnabled` flag controlling whether Trove
+ *  registers itself with the OS login-items mechanism.
  *
  *  v7 (multi-platform refactor): the single nullable `backend` slot was
  *  replaced with a `backends` list, broadcasting every signal to every
@@ -431,7 +440,7 @@ export type BackendInstance = z.infer<typeof BackendInstance>;
  *  schemaVersion to the current value so the next save persists at the
  *  current version. Older consumers cannot read newer files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(9),
+  schemaVersion: z.literal(10),
   backends: z.array(BackendInstance),
   harnesses: z.array(HarnessConfig),
   autoUpdateEnabled: z.boolean(),

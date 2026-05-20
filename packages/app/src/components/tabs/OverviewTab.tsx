@@ -40,12 +40,16 @@ export function OverviewTab({ appState, state, metrics, onOpenPlatforms }: Props
 
       <FlowChart
         harnesses={appState.harnesses.filter((h) => h.enabled)}
-        backends={appState.backends}
+        backends={appState.backends.filter((b) => b.enabled)}
         metrics={metrics}
         state={state}
       />
 
-      <SidecarPanel state={state} metrics={metrics} backends={appState.backends} />
+      <SidecarPanel
+        state={state}
+        metrics={metrics}
+        backends={appState.backends.filter((b) => b.enabled)}
+      />
     </div>
   );
 }

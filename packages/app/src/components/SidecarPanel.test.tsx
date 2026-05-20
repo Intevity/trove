@@ -111,6 +111,7 @@ describe('SidecarPanel', () => {
         backends={[
           {
             id: '11111111-1111-1111-1111-111111111111',
+            enabled: true,
             backend: {
               kind: 'signoz',
               endpoint: 'https://ingest.eu.signoz.cloud:443',

@@ -11,7 +11,7 @@ import type {
 } from '@trove/shared';
 
 import { useBackendHealth } from '../../hooks/useBackendHealth.js';
-import { TroveIpcError, removeBackend } from '../../lib/ipc.js';
+import { TroveIpcError, removeBackend, setBackendEnabled } from '../../lib/ipc.js';
 import { BackendLogo } from '../../lib/logos.js';
 import { Button, Card, CardHeader, CardTitle, Pill, StatusDot } from '../ui/index.js';
 import { BackendWizard, type WizardMode } from '../wizard/BackendWizard.js';
@@ -59,6 +59,22 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
       setError(null);
       try {
         await removeBackend(id);
+        await onAppStateRefresh();
+      } catch (e) {
+        setError(e instanceof TroveIpcError ? `${e.cause.kind}` : String(e));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [onAppStateRefresh],
+  );
+
+  const handleToggleEnabled = useCallback(
+    async (id: string, enabled: boolean) => {
+      setBusyId(id);
+      setError(null);
+      try {
+        await setBackendEnabled(id, enabled);
         await onAppStateRefresh();
       } catch (e) {
         setError(e instanceof TroveIpcError ? `${e.cause.kind}` : String(e));
@@ -180,6 +196,7 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
                 onAdd={() => openAddForKind(preset.kind)}
                 onEdit={openEdit}
                 onRemove={(id) => void handleRemove(id)}
+                onToggleEnabled={(id, enabled) => void handleToggleEnabled(id, enabled)}
               />
             ))}
           </ul>
@@ -197,6 +214,7 @@ interface PlatformRowProps {
   onAdd: () => void;
   onEdit: (instance: BackendInstance) => void;
   onRemove: (id: string) => void;
+  onToggleEnabled: (id: string, enabled: boolean) => void;
 }
 
 function PlatformRow({
@@ -207,6 +225,7 @@ function PlatformRow({
   onAdd,
   onEdit,
   onRemove,
+  onToggleEnabled,
 }: PlatformRowProps): JSX.Element {
   const configured = instances.length > 0;
   return (
@@ -261,6 +280,7 @@ function PlatformRow({
               busy={busyId === instance.id}
               onEdit={() => onEdit(instance)}
               onRemove={() => onRemove(instance.id)}
+              onToggleEnabled={() => onToggleEnabled(instance.id, !instance.enabled)}
             />
           ))}
         </ul>
@@ -276,13 +296,21 @@ interface BackendInstanceRowProps {
   busy: boolean;
   onEdit: () => void;
   onRemove: () => void;
+  /** Flip the instance's `enabled` flag. Disabled instances stay in
+   *  the list (so the user can re-enable later without re-entering
+   *  credentials) but are removed from the collector pipeline and
+   *  hidden from the Overview Data flow chart. */
+  onToggleEnabled: () => void;
 }
 
 /** One configured destination, rendered under its preset's row.
  *  Shows a 4-color status pill driven by the latest `backend-health`
  *  event; click the pill (or anywhere on the label area) to inline-
- *  expand the latest error / last-success detail. Edit + Remove
- *  buttons stop click propagation so they don't toggle the panel. */
+ *  expand the latest error / last-success detail. Edit, Disable/Enable,
+ *  and Remove buttons stop click propagation so they don't toggle the
+ *  panel. When the instance is disabled the row dims and the health
+ *  pill collapses to a neutral "disabled" marker — no scrape data is
+ *  meaningful because the collector isn't forwarding. */
 function BackendInstanceRow({
   instance,
   preset,
@@ -290,17 +318,20 @@ function BackendInstanceRow({
   busy,
   onEdit,
   onRemove,
+  onToggleEnabled,
 }: BackendInstanceRowProps): JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const status: BackendHealthStatus = health?.status ?? 'gray';
+  const enabled = instance.enabled;
+  const status: BackendHealthStatus = enabled ? (health?.status ?? 'gray') : 'gray';
   const dotColor: 'green' | 'amber' | 'red' | 'gray' = status;
   return (
     <li
       data-testid={`platform-instance-${instance.id}`}
       data-health-status={status}
+      data-enabled={enabled}
       className="border-b border-hairline last:border-b-0 dark:border-hairline-dark"
     >
-      <div className="flex items-center gap-2 px-3 py-1.5 pl-12">
+      <div className={`flex items-center gap-2 px-3 py-1.5 pl-12 ${enabled ? '' : 'opacity-55'}`}>
         <button
           type="button"
           aria-expanded={expanded}
@@ -312,11 +343,14 @@ function BackendInstanceRow({
           <StatusDot
             status={dotColor}
             size="sm"
-            pulse={status === 'green'}
-            label={`${preset.label} health: ${status}`}
+            pulse={enabled && status === 'green'}
+            label={enabled ? `${preset.label} health: ${status}` : `${preset.label}: disabled`}
           />
           <span className="min-w-0 flex-1 truncate">
             {instance.label ?? preset.label}
+            {enabled ? null : (
+              <span className="text-fg-tertiary dark:text-fg-tertiary-dark"> · disabled</span>
+            )}
             <BackendDetail backend={instance.backend} />
           </span>
         </button>
@@ -332,11 +366,20 @@ function BackendInstanceRow({
         <Button
           variant="ghost"
           size="sm"
+          testid={`platform-instance-toggle-enabled-${instance.id}`}
+          onClick={onToggleEnabled}
+          disabled={busy}
+        >
+          {enabled ? 'Disable' : 'Enable'}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           testid={`platform-instance-remove-${instance.id}`}
           onClick={onRemove}
           disabled={busy}
         >
-          {busy ? 'Removing…' : 'Remove'}
+          {busy ? '…' : 'Remove'}
         </Button>
       </div>
       {expanded ? <BackendHealthDetail health={health} /> : null}

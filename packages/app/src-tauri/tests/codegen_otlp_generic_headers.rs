@@ -30,6 +30,7 @@ fn wrap_single(backend: &Backend) -> Vec<BackendInstance> {
     vec![BackendInstance {
         id: "11111111-2222-3333-4444-555566667777".to_string(),
         label: None,
+        enabled: true,
         backend: backend.clone(),
     }]
 }

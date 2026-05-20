@@ -74,6 +74,7 @@ pub fn run() {
             ipc::commands::add_backend,
             ipc::commands::update_backend,
             ipc::commands::remove_backend,
+            ipc::commands::set_backend_enabled,
             ipc::commands::clear_backend,
             ipc::commands::quit_app,
             ipc::commands::uninstall_app,
@@ -455,11 +456,18 @@ fn prepare_collector_runtime(
 ) -> Result<(PathBuf, std::collections::HashMap<String, String>), CollectorBootError> {
     let config_path = collector_config_path(app)?;
     let (yaml, env) = match app_state::load(app) {
-        Ok(state) if state.backends.is_empty() => (
+        Ok(state) if state.backends.iter().all(|b| !b.enabled) => (
             SMOKE_CONFIG_YAML.to_string(),
             std::collections::HashMap::new(),
         ),
-        Ok(state) => match collector::codegen::render(&state.backends) {
+        Ok(state) => match collector::codegen::render(
+            &state
+                .backends
+                .iter()
+                .filter(|b| b.enabled)
+                .cloned()
+                .collect::<Vec<_>>(),
+        ) {
             Ok(rendered) => {
                 let env: std::collections::HashMap<String, String> = rendered
                     .env
