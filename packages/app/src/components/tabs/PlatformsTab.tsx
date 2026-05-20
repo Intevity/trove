@@ -1,7 +1,7 @@
 import { Plus, Search, X } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
-import { PRESETS, type PresetMetadata } from '@trove/collector-presets';
+import { BOTTOM_PINNED_KINDS, PRESETS, type PresetMetadata } from '@trove/collector-presets';
 import type {
   AppState,
   Backend,
@@ -81,11 +81,28 @@ export function PlatformsTab({ appState, onAppStateRefresh }: Props): JSX.Elemen
   }, [appState.backends]);
 
   const q = query.trim().toLowerCase();
-  const filteredPresets = useMemo(
-    () =>
-      q ? PRESETS.filter((p) => p.label.toLowerCase().includes(q) || p.kind.includes(q)) : PRESETS,
-    [q],
-  );
+  /** Sort order: recommended preset first, then enabled (≥1 configured
+   *  instance) destinations alphabetically by label, then disabled
+   *  destinations alphabetically, with the generic escape-hatch kinds
+   *  pinned at the very bottom regardless of enabled state. */
+  const filteredPresets = useMemo(() => {
+    const base = q
+      ? PRESETS.filter((p) => p.label.toLowerCase().includes(q) || p.kind.includes(q))
+      : PRESETS;
+    const isEnabled = (p: PresetMetadata): boolean => (instancesByKind[p.kind]?.length ?? 0) > 0;
+    return [...base].sort((a, b) => {
+      if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
+      const aBottom = BOTTOM_PINNED_KINDS.has(a.kind);
+      const bBottom = BOTTOM_PINNED_KINDS.has(b.kind);
+      if (aBottom !== bBottom) return aBottom ? 1 : -1;
+      if (!aBottom) {
+        const aOn = isEnabled(a);
+        const bOn = isEnabled(b);
+        if (aOn !== bOn) return aOn ? -1 : 1;
+      }
+      return a.label.localeCompare(b.label);
+    });
+  }, [q, instancesByKind]);
 
   if (wizardState.open) {
     return (

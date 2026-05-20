@@ -71,7 +71,12 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
       });
       try {
         await revertPatch(id);
-        await refresh();
+        // Refresh both the detected-harness list (feeds the Harnesses
+        // tab) and the parent appState (feeds the Overview Data flow
+        // chart). Without the appState refresh, the chart keeps showing
+        // the now-disabled harness until something else (e.g. removing
+        // a platform) happens to trigger a parent refresh.
+        await Promise.all([refresh(), onAppStateRefresh()]);
       } catch (err) {
         if (err instanceof TroveIpcError) setRevertError(err);
       } finally {
@@ -82,7 +87,7 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
         });
       }
     },
-    [refresh],
+    [refresh, onAppStateRefresh],
   );
 
   const handleApplied = useCallback(
@@ -90,9 +95,11 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
       setPreviewing(null);
       const advisory = POST_ENABLE_ADVISORIES[id];
       if (advisory) setToast(advisory);
-      await refresh();
+      // Same dual-refresh as handleDisable — enable also mutates the
+      // persisted harness list, so OverviewTab needs the new appState.
+      await Promise.all([refresh(), onAppStateRefresh()]);
     },
-    [refresh],
+    [refresh, onAppStateRefresh],
   );
 
   return (
