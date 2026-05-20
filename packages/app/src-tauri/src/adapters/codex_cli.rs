@@ -5,11 +5,14 @@
 //!
 //! Codex's schema (codex-rs/config/src/types.rs) is `deny_unknown_fields`
 //! on every struct, so emit only the documented keys. The three
-//! exporter slots — `[otel.exporter]` (logs), `[otel.trace_exporter]`,
-//! `[otel.metrics_exporter]` — are independent; Trove sets all three so
-//! a single Collector can ingest the full signal set. Verify the schema
-//! against the upstream Codex repo at every adapter rev — codex-rs is
-//! still adding fields.
+//! exporter slots — `[otel.exporter.<kind>]` (logs),
+//! `[otel.trace_exporter.<kind>]`, `[otel.metrics_exporter.<kind>]` —
+//! are independent; Trove sets all three so a single Collector can
+//! ingest the full signal set. Codex 0.130 moved the exporter from a
+//! `kind = "..."`-tagged table to an externally-tagged enum where the
+//! variant name is the sub-table key (e.g. `[otel.exporter.otlp-http]`).
+//! Verify the schema against the upstream Codex repo at every adapter
+//! rev — codex-rs is still adding fields.
 //!
 //! Known limitation: Codex gates `metrics_exporter` behind a separate
 //! `[analytics] enabled = true` toggle. Trove does not write the
@@ -86,30 +89,31 @@ fn build_region(_opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
 
     let mut payload = String::new();
 
-    // The sub-tables [otel.exporter] etc. implicitly establish the
-    // [otel] namespace, so the bare [otel] table is never emitted —
-    // that avoids colliding with any user-written [otel] section
-    // elsewhere in the file (TOML rejects duplicate top-level table
-    // definitions).
-    payload.push_str("[otel.exporter]\n");
-    payload.push_str("kind = \"otlp-http\"\n");
+    // Codex 0.130 changed each exporter from a tagged-by-`kind` table
+    // to an externally-tagged enum whose variant name is the TOML
+    // table key. The old form (`[otel.exporter]\nkind="otlp-http"`)
+    // now fails with `wanted exactly 1 element, more than 1 element`.
+    // The sub-tables [otel.exporter.otlp-http] etc. implicitly
+    // establish the [otel] namespace, so the bare [otel] table is
+    // never emitted — that avoids colliding with any user-written
+    // [otel] section elsewhere in the file (TOML rejects duplicate
+    // top-level table definitions).
+    payload.push_str("[otel.exporter.otlp-http]\n");
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/logs\"");
     payload.push_str("protocol = \"binary\"\n\n");
 
-    payload.push_str("[otel.trace_exporter]\n");
-    payload.push_str("kind = \"otlp-http\"\n");
+    payload.push_str("[otel.trace_exporter.otlp-http]\n");
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/traces\"");
     payload.push_str("protocol = \"binary\"\n\n");
 
-    payload.push_str("[otel.metrics_exporter]\n");
-    payload.push_str("kind = \"otlp-http\"\n");
+    payload.push_str("[otel.metrics_exporter.otlp-http]\n");
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/metrics\"");
     payload.push_str("protocol = \"binary\"\n");
 
     let keys = vec![
-        "otel.exporter".to_string(),
-        "otel.trace_exporter".to_string(),
-        "otel.metrics_exporter".to_string(),
+        "otel.exporter.otlp-http".to_string(),
+        "otel.trace_exporter.otlp-http".to_string(),
+        "otel.metrics_exporter.otlp-http".to_string(),
     ];
 
     Ok(ManagedRegion::for_text_block(payload, keys))
@@ -135,15 +139,14 @@ mod tests {
 
         let written = read_config(home.path());
         let doc: toml_edit::DocumentMut = written.parse().unwrap();
-        let exporter = doc["otel"]["exporter"].as_table().unwrap();
-        assert_eq!(exporter["kind"].as_str(), Some("otlp-http"));
+        let exporter = doc["otel"]["exporter"]["otlp-http"].as_table().unwrap();
         assert_eq!(
             exporter["endpoint"].as_str(),
             Some("http://127.0.0.1:4318/v1/logs")
         );
         assert_eq!(exporter["protocol"].as_str(), Some("binary"));
-        assert!(doc["otel"]["trace_exporter"].is_table());
-        assert!(doc["otel"]["metrics_exporter"].is_table());
+        assert!(doc["otel"]["trace_exporter"]["otlp-http"].is_table());
+        assert!(doc["otel"]["metrics_exporter"]["otlp-http"].is_table());
 
         assert!(written.contains("# trove:start"), "missing sentinel fence");
         assert!(written.contains("# trove:end"));
@@ -187,7 +190,7 @@ mod tests {
         assert_eq!(doc["user"]["name"].as_str(), Some("jeff"));
         assert_eq!(doc["model"]["default"].as_str(), Some("o1"));
         assert_eq!(
-            doc["otel"]["exporter"]["endpoint"].as_str(),
+            doc["otel"]["exporter"]["otlp-http"]["endpoint"].as_str(),
             Some("http://127.0.0.1:4318/v1/logs")
         );
     }
@@ -319,7 +322,7 @@ mod tests {
         assert_eq!(preview.status, PreviewStatus::Fresh);
         assert_eq!(preview.format, Format::Toml);
         assert_eq!(preview.before, "");
-        assert!(preview.after.contains("[otel.exporter]"));
+        assert!(preview.after.contains("[otel.exporter.otlp-http]"));
         assert!(preview.after.contains("# trove:start"));
     }
 
@@ -400,14 +403,19 @@ mod tests {
         apply(home.path(), &opts2).unwrap();
     }
 
-    // --- Pre-existing user-managed [otel.exporter] section conflicts -------
+    // --- Pre-existing user-managed [otel.exporter.<kind>] conflicts --------
 
     #[test]
-    fn pre_existing_otel_exporter_section_yields_unparseable_on_apply() {
+    fn pre_existing_otel_exporter_otlp_http_yields_unparseable_on_apply() {
+        // Codex's new schema makes `[otel.exporter.otlp-http]` a TOML
+        // sub-table. If the user has already written one (e.g. set up
+        // their own OTLP destination), splicing in our block produces
+        // a duplicate-header TOML document — the post-write validator
+        // rejects it and the original file is preserved.
         let home = tempdir().unwrap();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let original = "[otel.exporter]\nkind = \"none\"\n";
+        let original = "[otel.exporter.otlp-http]\nendpoint = \"http://example.com\"\n";
         fs::write(&path, original).unwrap();
 
         let err = apply(home.path(), &ApplyOptions::default()).unwrap_err();

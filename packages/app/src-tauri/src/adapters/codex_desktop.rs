@@ -5,9 +5,10 @@
 //! means a single `[otel.*]` block instruments both adapters.
 //!
 //! To let the user enable/disable the CLI and the desktop app
-//! independently in the UI — while keeping the TOML valid (no duplicate
-//! `[otel.exporter]` tables) — both adapters write into one shared
-//! managed region whose fence header carries `deps=codex-cli,codex-desktop`.
+//! independently in the UI — while keeping the TOML valid (no
+//! duplicate `[otel.exporter.<kind>]` tables) — both adapters write
+//! into one shared managed region whose fence header carries
+//! `deps=codex-cli,codex-desktop`.
 //! See [`crate::safety::sentinels::comment_fence`] for the
 //! reference-counted shared-block protocol: apply adds this adapter's
 //! id to the deps list; revert removes it and strips the block only
@@ -87,25 +88,23 @@ fn build_region(_opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
 
     let mut payload = String::new();
 
-    payload.push_str("[otel.exporter]\n");
-    payload.push_str("kind = \"otlp-http\"\n");
+    // See codex_cli::build_region for the schema-evolution note.
+    payload.push_str("[otel.exporter.otlp-http]\n");
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/logs\"");
     payload.push_str("protocol = \"binary\"\n\n");
 
-    payload.push_str("[otel.trace_exporter]\n");
-    payload.push_str("kind = \"otlp-http\"\n");
+    payload.push_str("[otel.trace_exporter.otlp-http]\n");
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/traces\"");
     payload.push_str("protocol = \"binary\"\n\n");
 
-    payload.push_str("[otel.metrics_exporter]\n");
-    payload.push_str("kind = \"otlp-http\"\n");
+    payload.push_str("[otel.metrics_exporter.otlp-http]\n");
     let _ = writeln!(payload, "endpoint = \"{COLLECTOR_BASE}/v1/metrics\"");
     payload.push_str("protocol = \"binary\"\n");
 
     let keys = vec![
-        "otel.exporter".to_string(),
-        "otel.trace_exporter".to_string(),
-        "otel.metrics_exporter".to_string(),
+        "otel.exporter.otlp-http".to_string(),
+        "otel.trace_exporter.otlp-http".to_string(),
+        "otel.metrics_exporter.otlp-http".to_string(),
     ];
 
     Ok(ManagedRegion::for_text_block(payload, keys))
@@ -129,8 +128,7 @@ mod tests {
 
         let written = read_config(home.path());
         let doc: toml_edit::DocumentMut = written.parse().unwrap();
-        let exporter = doc["otel"]["exporter"].as_table().unwrap();
-        assert_eq!(exporter["kind"].as_str(), Some("otlp-http"));
+        let exporter = doc["otel"]["exporter"]["otlp-http"].as_table().unwrap();
         assert_eq!(
             exporter["endpoint"].as_str(),
             Some("http://127.0.0.1:4318/v1/logs")
@@ -181,7 +179,7 @@ mod tests {
 
         // Payload is unchanged between the two applies — only the deps
         // list grows. The block appears once.
-        assert_eq!(after_both.matches("[otel.exporter]").count(), 1);
+        assert_eq!(after_both.matches("[otel.exporter.otlp-http]").count(), 1);
     }
 
     #[test]
@@ -239,7 +237,7 @@ mod tests {
         let home = tempdir().unwrap();
         let preview = preview(home.path(), &ApplyOptions::default()).unwrap();
         assert_eq!(preview.status, PreviewStatus::Fresh);
-        assert!(preview.after.contains("[otel.exporter]"));
+        assert!(preview.after.contains("[otel.exporter.otlp-http]"));
     }
 
     #[test]
