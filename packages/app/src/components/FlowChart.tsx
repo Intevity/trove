@@ -841,7 +841,7 @@ function CollectorNode({
   const orbitDy = 18;
   const orbitCx = cx;
   const orbitCy = cy + orbitDy;
-  const orbitR = 30;
+  const orbitR = 36;
   const troveSize = 44;
   const periodMs = 12_000;
   const dotR = 3.5;
@@ -980,8 +980,8 @@ function CollectorNode({
         r={orbitR}
         fill="none"
         stroke={BRAND_COLOR}
-        strokeOpacity={0.15}
-        strokeWidth={0.75}
+        strokeOpacity={0.3}
+        strokeWidth={0.85}
         strokeDasharray="1 3"
       />
 
@@ -1236,17 +1236,20 @@ function OrbitalCluster({
         ry={orbitRy}
         fill="none"
         stroke={BRAND_COLOR}
-        strokeOpacity={0.15}
-        strokeWidth={0.75}
+        strokeOpacity={0.3}
+        strokeWidth={0.85}
         strokeDasharray="1 3"
       />
 
       {/* Per-item connector to the merge dot. The line always exists
           (so React doesn't have to mount/unmount on every status flip),
           but only paints stroke when the item is active — fading via a
-          stroke-opacity transition. Dashes march toward the center to
-          reinforce "telemetry flowing in", mirroring the dashed-river
-          treatment FlowLane uses for incoming lanes. */}
+          stroke-opacity transition. Dashes march in the direction of
+          telemetry flow: inward (logo → center) on the harness side
+          where data is being collected, outward (center → logo) on the
+          platform side where data is being exported. Path direction is
+          logo → center either way; the dashoffset animation reverses
+          to flip the apparent direction without swapping x1/x2. */}
       {items.map((item, i) => {
         const active = activeKeys.has(item.key);
         return (
@@ -1269,8 +1272,8 @@ function OrbitalCluster({
           >
             <animate
               attributeName="stroke-dashoffset"
-              from="8"
-              to="0"
+              from={side === 'harness' ? '8' : '0'}
+              to={side === 'harness' ? '0' : '8'}
               dur="0.9s"
               repeatCount="indefinite"
             />
