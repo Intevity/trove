@@ -35,10 +35,10 @@ const LANES = [
   { kind: 'logs', label: 'Logs', accessor: 'logRecords' as const },
 ] as const;
 
-const VIEW_W = 800;
+const VIEW_W = 900;
 const HARNESS_COL_X = 110;
-const COLLECTOR_X = 400;
-const PLATFORM_COL_X = 700;
+const COLLECTOR_X = 450;
+const PLATFORM_COL_X = 790;
 const COLLECTOR_HW = 75;
 const COLLECTOR_HH = 80;
 /** Floor for column half-width. Most labels fit; the actual hw grows
@@ -282,9 +282,6 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
     for (const b of backends) backendActiveKeys.add(b.id);
   }
 
-  // SVG render height scales with viewBox so aspect stays sensible.
-  const renderH = Math.round((viewH / 240) * 200);
-
   return (
     <Card testid="flow-chart" className="my-1.5">
       <CardHeader className="mb-3">
@@ -315,8 +312,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
         viewBox={`0 0 ${VIEW_W} ${viewH}`}
         role="img"
         aria-label="Telemetry flow from harnesses through the collector to configured platforms"
-        className="w-full"
-        style={{ height: renderH }}
+        className="block w-full"
         data-testid="flow-chart-svg"
       >
         <defs>
