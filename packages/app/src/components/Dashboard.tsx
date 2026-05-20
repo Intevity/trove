@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import type { AppState, HarnessId } from '@trove/shared';
 
@@ -51,7 +51,11 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
   // `previewing` at the moment `onApplied` fires and stash it here.
   const [toast, setToast] = useState<string | null>(null);
 
-  const enabledHarnessCount = appState.harnesses.filter((h) => h.enabled).length;
+  const enabledHarnessIds = useMemo<ReadonlySet<HarnessId>>(
+    () => new Set(appState.harnesses.filter((h) => h.enabled).map((h) => h.id)),
+    [appState.harnesses],
+  );
+  const enabledHarnessCount = enabledHarnessIds.size;
   const state = status?.state ?? null;
   const metrics = snapshot ?? null;
   const health = deriveOverallHealth(state ?? { kind: 'idle' }, metrics, enabledHarnessCount);
@@ -125,6 +129,7 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
             detectionError={error}
             busyIds={busyIds}
             revertError={revertError}
+            enabledIds={enabledHarnessIds}
             onEnable={handleEnable}
             onDisable={(id) => void handleDisable(id)}
             onRefresh={() => void refresh()}

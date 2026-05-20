@@ -82,6 +82,15 @@ export interface HarnessListProps {
   onDisable?: (id: HarnessId) => void;
   busyIds?: ReadonlySet<HarnessId>;
   onRefresh?: () => void | Promise<void>;
+  /** Source-of-truth for which harnesses are currently active. Comes
+   *  from `AppState.harnesses.filter(h => h.enabled)` upstream — using
+   *  the persisted config rather than a filesystem probe keeps the
+   *  toggle in sync after add/remove cycles and correctly distinguishes
+   *  harnesses that share a config file (e.g. Cursor IDE and Cursor
+   *  CLI both live in `~/.cursor/hooks.json`). Defaults to empty so
+   *  unit tests rendering the list without a Dashboard don't have to
+   *  thread the prop. */
+  enabledIds?: ReadonlySet<HarnessId>;
 }
 
 export function HarnessList({
@@ -91,6 +100,7 @@ export function HarnessList({
   onDisable,
   busyIds,
   onRefresh,
+  enabledIds,
 }: HarnessListProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [openGuideFor, setOpenGuideFor] = useState<HarnessId | null>(null);
@@ -212,6 +222,7 @@ export function HarnessList({
               onEnable={onEnable}
               onDisable={onDisable}
               busy={busyIds?.has(harness.id) ?? false}
+              enabled={enabledIds?.has(harness.id) ?? false}
               onOpenGuide={() => setOpenGuideFor(harness.id)}
             />
           ))}
@@ -234,6 +245,10 @@ interface HarnessRowProps {
   onEnable: ((id: HarnessId) => void) | undefined;
   onDisable: ((id: HarnessId) => void) | undefined;
   busy: boolean;
+  /** True when this harness has an `enabled: true` entry in
+   *  `AppState.harnesses`. Drives the Enable/Disable button label
+   *  and click handler. */
+  enabled: boolean;
   onOpenGuide: () => void;
 }
 
@@ -242,6 +257,7 @@ function HarnessRow({
   onEnable,
   onDisable,
   busy,
+  enabled,
   onOpenGuide,
 }: HarnessRowProps): JSX.Element {
   const adapterAvailable = harness.adapterAvailable;
@@ -249,7 +265,6 @@ function HarnessRow({
   const hasGuide = Boolean(guide);
   const detectionLabel = describeDetection(harness);
   const telemetryLabel = describeTelemetry(harness);
-  const enabled = harness.troveRegionPresent;
   const badge = HARNESS_BADGES[harness.id];
 
   const buttonLabel = busy
