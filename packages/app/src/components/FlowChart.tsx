@@ -56,17 +56,17 @@ const PARTICLES_PER_LANE = 5;
  *  CLUSTER_THRESHOLD nodes. The container is intentionally wider than
  *  NODE_HW_MAX so logos have room to orbit without crowding the title;
  *  it still leaves ample horizontal space to the Collector column. */
-const CLUSTER_HW = 70;
-const CLUSTER_HH = 60;
+const CLUSTER_HW = 75;
+const CLUSTER_HH = 75;
 const CLUSTER_THRESHOLD = 3;
-/** Minimum viewBox height when any side renders a cluster, so the 120 px
+/** Minimum viewBox height when any side renders a cluster, so the 150 px
  *  tall container has visual breathing room regardless of how many rows
  *  the opposite side would otherwise demand. */
-const CLUSTER_MIN_VIEW_H = 170;
+const CLUSTER_MIN_VIEW_H = 180;
 /** Cluster header (title + count) sits in the top strip. The orbit's
  *  geometric center is offset downward by this amount so the orbit
- *  doesn't collide with the header text. */
-const CLUSTER_ORBIT_DY = 12;
+ *  clears the header text even at the largest member counts. */
+const CLUSTER_ORBIT_DY = 22;
 
 /** Inner-node geometry — kept aligned with FlowNode below. Logo +
  *  text padding + inter-glyph estimate combine to give a quick width
@@ -260,6 +260,26 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
   const harnessHW = harnessCluster ? CLUSTER_HW : columnHalfWidth(harnessTitles, true);
   const platformHW = backendCluster ? CLUSTER_HW : columnHalfWidth(backendTitles, true);
 
+  /** Which harnesses are currently emitting telemetry. Diag-attributed
+   *  emitters use their own per-source rate; watcher-emitters (absent
+   *  from `diagObservations`) inherit the aggregate so they read as
+   *  active whenever the chart is flowing — same convention the lane
+   *  animations use today. */
+  const harnessActiveKeys = new Set<string>();
+  if (harnessCluster) {
+    for (const h of harnesses) {
+      const r = perHarnessRates[h.id] ?? rates;
+      if (r.spans > 0 || r.metrics > 0 || r.logs > 0) harnessActiveKeys.add(h.id);
+    }
+  }
+  /** Per-backend attribution isn't exported by the collector today, so
+   *  every configured platform shares the aggregate flow state — either
+   *  all light up together or all dim. */
+  const backendActiveKeys = new Set<string>();
+  if (backendCluster && !allIdle) {
+    for (const b of backends) backendActiveKeys.add(b.id);
+  }
+
   // SVG render height scales with viewBox so aspect stays sensible.
   const renderH = Math.round((viewH / 240) * 200);
 
@@ -448,6 +468,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
                   title: HARNESS_LABELS[h.id] ?? h.id,
                   harnessId: h.id,
                 }))}
+                activeKeys={harnessActiveKeys}
               />
             </motion.g>
           ) : (
@@ -528,6 +549,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
                     backendKind: b.backend.kind,
                   };
                 })}
+                activeKeys={backendActiveKeys}
               />
             </motion.g>
           ) : (
@@ -826,16 +848,22 @@ interface OrbitalClusterProps {
   /** Header label shown at the top of the container. */
   label: string;
   items: OrbitalClusterItem[];
+  /** Keys whose owning source is currently emitting telemetry. Active
+   *  items render at full opacity with a brand-color halo; the rest fade
+   *  to a dim state so the active sources stand out at a glance. */
+  activeKeys: Set<string>;
 }
 
 /** Pick a logo size + orbit radius that scales smoothly with the
  *  number of items. Smaller logos + larger radius as N grows so they
- *  don't overlap on a single orbit, while still fitting CLUSTER_HW/HH. */
+ *  don't overlap on a single orbit, while still fitting CLUSTER_HW/HH.
+ *  At the high end the spacing tightens but neighbours never collide
+ *  outright — circumference 2πr stays above N * logoDiameter. */
 function orbitGeometryFor(n: number): { logoSize: number; orbitR: number } {
-  if (n <= 6) return { logoSize: 18, orbitR: 26 };
-  if (n <= 9) return { logoSize: 16, orbitR: 32 };
-  if (n <= 14) return { logoSize: 14, orbitR: 36 };
-  return { logoSize: 12, orbitR: 38 };
+  if (n <= 6) return { logoSize: 20, orbitR: 26 };
+  if (n <= 9) return { logoSize: 18, orbitR: 32 };
+  if (n <= 12) return { logoSize: 16, orbitR: 38 };
+  return { logoSize: 14, orbitR: 42 };
 }
 
 /** Orbital Hub container used when a side has more than
@@ -845,12 +873,22 @@ function orbitGeometryFor(n: number): { logoSize: number; orbitR: number } {
  *  upright. The container has a subtle radial brand tint, a marching
  *  dashed inner border, and a faint orbit guide ring so the motion
  *  feels anchored rather than chaotic. */
-function OrbitalCluster({ cx, cy, side, label, items }: OrbitalClusterProps): JSX.Element {
+function OrbitalCluster({
+  cx,
+  cy,
+  side,
+  label,
+  items,
+  activeKeys,
+}: OrbitalClusterProps): JSX.Element {
   const n = items.length;
   const { logoSize, orbitR } = orbitGeometryFor(n);
   const orbitCx = cx;
   const orbitCy = cy + CLUSTER_ORBIT_DY;
   const halfLogo = logoSize / 2;
+  /** Halo disc behind active logos extends past the logo edge so the
+   *  glow reads even on small (14 px) icons at the high-N tier. */
+  const haloR = halfLogo + 6;
 
   /** ~24 s per revolution. Calm enough to read individual logos while
    *  still conveying continuous motion. */
@@ -878,6 +916,7 @@ function OrbitalCluster({ cx, cy, side, label, items }: OrbitalClusterProps): JS
   const left = cx - CLUSTER_HW;
   const top = cy - CLUSTER_HH;
   const gradientId = `cluster-grad-${side}`;
+  const haloGradientId = `cluster-halo-${side}`;
 
   // Brand-color border perimeter (for the marching dashes). Match the
   // inset rect's perimeter so the dasharray pattern reads cleanly.
@@ -891,6 +930,13 @@ function OrbitalCluster({ cx, cy, side, label, items }: OrbitalClusterProps): JS
         <radialGradient id={gradientId} cx="50%" cy="60%" r="60%">
           <stop offset="0%" stopColor={BRAND_COLOR} stopOpacity={0.22} />
           <stop offset="65%" stopColor={BRAND_COLOR} stopOpacity={0.06} />
+          <stop offset="100%" stopColor={BRAND_COLOR} stopOpacity={0} />
+        </radialGradient>
+        {/* Brand-color halo behind active logos — soft falloff so the
+            glow reads as a halo rather than a solid disc. */}
+        <radialGradient id={haloGradientId} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor={BRAND_COLOR} stopOpacity={0.6} />
+          <stop offset="55%" stopColor={BRAND_COLOR} stopOpacity={0.22} />
           <stop offset="100%" stopColor={BRAND_COLOR} stopOpacity={0} />
         </radialGradient>
       </defs>
@@ -948,10 +994,12 @@ function OrbitalCluster({ cx, cy, side, label, items }: OrbitalClusterProps): JS
         />
       </rect>
 
-      {/* Header — label + count, centered at top of container. */}
+      {/* Header — label + count, centered near the top of container.
+          Kept high enough that the orbit clears the subtitle's descent
+          even at the largest N (orbit radius up to 42 + half-logo). */}
       <text
         x={cx}
-        y={top + 18}
+        y={top + 16}
         textAnchor="middle"
         fontSize={12}
         fontWeight={600}
@@ -961,7 +1009,7 @@ function OrbitalCluster({ cx, cy, side, label, items }: OrbitalClusterProps): JS
       </text>
       <text
         x={cx}
-        y={top + 32}
+        y={top + 30}
         textAnchor="middle"
         fontSize={10}
         className="fill-fg-secondary dark:fill-fg-secondary-dark"
@@ -992,24 +1040,41 @@ function OrbitalCluster({ cx, cy, side, label, items }: OrbitalClusterProps): JS
 
       {/* Logos orbit the merge point. Each `<g>`'s transform is updated
           per-frame by `useAnimationFrame` above, so logos translate
-          without rotating themselves. */}
-      {items.map((item, i) => (
-        <g
-          key={item.key}
-          ref={(el) => {
-            logoRefs.current[i] = el;
-          }}
-        >
-          <title>{item.title}</title>
-          <NodeLogoSvg
-            x={0}
-            y={0}
-            size={logoSize}
-            {...(item.harnessId ? { harnessId: item.harnessId } : {})}
-            {...(item.backendKind ? { backendKind: item.backendKind } : {})}
-          />
-        </g>
-      ))}
+          without rotating themselves. Active sources render at full
+          opacity with a brand-color radial halo that breathes; idle
+          sources dim down so the eye can pick out the live ones. */}
+      {items.map((item, i) => {
+        const active = activeKeys.has(item.key);
+        return (
+          <g
+            key={item.key}
+            ref={(el) => {
+              logoRefs.current[i] = el;
+            }}
+            style={{ transition: 'opacity 400ms ease' }}
+            opacity={active ? 1 : 0.35}
+          >
+            <title>{item.title}</title>
+            {active ? (
+              <circle cx={halfLogo} cy={halfLogo} r={haloR} fill={`url(#${haloGradientId})`}>
+                <animate
+                  attributeName="opacity"
+                  values="0.55;1;0.55"
+                  dur="1.8s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+            ) : null}
+            <NodeLogoSvg
+              x={0}
+              y={0}
+              size={logoSize}
+              {...(item.harnessId ? { harnessId: item.harnessId } : {})}
+              {...(item.backendKind ? { backendKind: item.backendKind } : {})}
+            />
+          </g>
+        );
+      })}
     </g>
   );
 }
