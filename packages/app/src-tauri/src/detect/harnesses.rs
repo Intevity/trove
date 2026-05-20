@@ -195,12 +195,14 @@ fn check_gemini_like_telemetry(text: &str) -> TelemetryStatus {
     }
 }
 
-/// Codex CLI's telemetry "master switch" is the kind of the exporter
-/// configured under `[otel.exporter]` / `[otel.trace_exporter]` /
-/// `[otel.metrics_exporter]`. Codex has no boolean enable toggle —
-/// setting any exporter `kind` to `"otlp-http"` or `"otlp-grpc"` turns
-/// OTLP emission on. Presence of the Trove fence also implies On
-/// (Trove only writes the fence when it has installed an OTLP exporter).
+/// Codex's telemetry "master switch" is the externally-tagged variant
+/// of each exporter slot under `[otel.exporter.<kind>]` /
+/// `[otel.trace_exporter.<kind>]` / `[otel.metrics_exporter.<kind>]`.
+/// Codex 0.130 moved from the older `kind = "<kind>"` discriminator to
+/// this shape; we still accept the legacy form so a Trove install
+/// across a Codex upgrade boundary doesn't surface as Off until the
+/// next apply. Presence of the Trove fence also implies On (Trove
+/// only writes the fence when it has installed an OTLP exporter).
 /// Returns Unknown only on TOML parse failure.
 fn check_codex_telemetry(text: &str) -> TelemetryStatus {
     if text.contains("# trove:start") {
@@ -213,12 +215,17 @@ fn check_codex_telemetry(text: &str) -> TelemetryStatus {
         return TelemetryStatus::Off;
     };
     for slot in ["exporter", "trace_exporter", "metrics_exporter"] {
-        let kind = otel
-            .get(slot)
-            .and_then(|v| v.as_table())
-            .and_then(|t| t.get("kind"))
-            .and_then(|v| v.as_str());
-        if matches!(kind, Some("otlp-http" | "otlp-grpc")) {
+        let Some(slot_table) = otel.get(slot).and_then(|v| v.as_table()) else {
+            continue;
+        };
+        // New shape: [otel.exporter.otlp-http] — variant key is the
+        // discriminator. Any otlp-http / otlp-grpc sub-table means On.
+        if slot_table.get("otlp-http").is_some() || slot_table.get("otlp-grpc").is_some() {
+            return TelemetryStatus::On;
+        }
+        // Legacy shape: `[otel.exporter]\nkind = "otlp-http"`.
+        let legacy_kind = slot_table.get("kind").and_then(|v| v.as_str());
+        if matches!(legacy_kind, Some("otlp-http" | "otlp-grpc")) {
             return TelemetryStatus::On;
         }
     }
@@ -440,12 +447,29 @@ mod tests {
     }
 
     #[test]
-    fn codex_telemetry_on_when_otlp_http_exporter_configured() {
+    fn codex_telemetry_on_when_otlp_http_exporter_configured_legacy_shape() {
+        // Legacy (pre-0.130) `kind = "otlp-http"` discriminator shape.
+        // Backward-compat path in check_codex_telemetry still recognises it.
         let home = tempdir().unwrap();
         let cfg = home.path().join(".codex").join("config.toml");
         write_settings(
             &cfg,
             "[otel.exporter]\nkind = \"otlp-http\"\nendpoint = \"http://127.0.0.1:4318/v1/logs\"\nprotocol = \"binary\"\n",
+        );
+
+        let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
+        assert_eq!(result.telemetry, TelemetryStatus::On);
+    }
+
+    #[test]
+    fn codex_telemetry_on_when_otlp_http_exporter_configured_new_shape() {
+        // Codex 0.130+ externally-tagged shape — variant name is the
+        // TOML sub-table key.
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".codex").join("config.toml");
+        write_settings(
+            &cfg,
+            "[otel.exporter.otlp-http]\nendpoint = \"http://127.0.0.1:4318/v1/logs\"\nprotocol = \"binary\"\n",
         );
 
         let result = detect(HarnessId::CodexCli, &detector_for(home.path()));
@@ -638,12 +662,12 @@ mod tests {
     fn codex_block(deps_token: Option<&str>) -> String {
         let header = match deps_token {
             Some(deps) => format!(
-                "# trove:start hash=abc keys=otel.exporter,otel.trace_exporter,otel.metrics_exporter deps={deps}"
+                "# trove:start hash=abc keys=otel.exporter.otlp-http,otel.trace_exporter.otlp-http,otel.metrics_exporter.otlp-http deps={deps}"
             ),
-            None => "# trove:start hash=abc keys=otel.exporter,otel.trace_exporter,otel.metrics_exporter".into(),
+            None => "# trove:start hash=abc keys=otel.exporter.otlp-http,otel.trace_exporter.otlp-http,otel.metrics_exporter.otlp-http".into(),
         };
         format!(
-            "{header}\n[otel.exporter]\nkind = \"otlp-http\"\nendpoint = \"http://127.0.0.1:4318/v1/logs\"\nprotocol = \"binary\"\n# trove:end\n"
+            "{header}\n[otel.exporter.otlp-http]\nendpoint = \"http://127.0.0.1:4318/v1/logs\"\nprotocol = \"binary\"\n# trove:end\n"
         )
     }
 
