@@ -66,6 +66,7 @@ For each harness, perform: apply → dashboard turns green → revert → dashbo
 
 For each backend, configure credentials, send a test export from Trove, and confirm receipt on the backend side.
 
+- [ ] Per-platform Disable / Enable round-trip — with at least one platform configured: click **Disable**, confirm the row dims and "· disabled" appears, the collector stops forwarding to it (verify on the backend side), and the platform vanishes from the Overview Data flow chart. Click **Enable** and confirm forwarding resumes and the chart picks it up again. Apply / revert credentials on a disabled platform should preserve its disabled state across the wizard Save.
 - [ ] SigNoz
 - [ ] Grafana
 - [ ] Honeycomb
