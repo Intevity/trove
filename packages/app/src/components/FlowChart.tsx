@@ -57,16 +57,18 @@ const PARTICLES_PER_LANE = 5;
  *  NODE_HW_MAX so logos have room to orbit without crowding the title;
  *  it still leaves ample horizontal space to the Collector column. */
 const CLUSTER_HW = 75;
-const CLUSTER_HH = 75;
+const CLUSTER_HH = 80;
 const CLUSTER_THRESHOLD = 3;
-/** Minimum viewBox height when any side renders a cluster, so the 150 px
+/** Minimum viewBox height when any side renders a cluster, so the 160 px
  *  tall container has visual breathing room regardless of how many rows
  *  the opposite side would otherwise demand. */
-const CLUSTER_MIN_VIEW_H = 180;
+const CLUSTER_MIN_VIEW_H = 190;
 /** Cluster header (title + count) sits in the top strip. The orbit's
- *  geometric center is offset downward by this amount so the orbit
- *  clears the header text even at the largest member counts. */
-const CLUSTER_ORBIT_DY = 22;
+ *  geometric center is offset downward from the container center by this
+ *  amount — enough to clear the header text, but small enough that the
+ *  orbit's bottom edge leaves comfortable padding above the container
+ *  bottom even at the largest member counts. */
+const CLUSTER_ORBIT_DY = 18;
 
 /** Inner-node geometry — kept aligned with FlowNode below. Logo +
  *  text padding + inter-glyph estimate combine to give a quick width
@@ -895,6 +897,11 @@ function OrbitalCluster({
   const periodMs = 24_000;
 
   const logoRefs = useRef<(SVGGElement | null)[]>([]);
+  /** One line per item, drawn from the logo's current orbital position
+   *  to the merge dot. Endpoints update every frame in lockstep with
+   *  the logo transform so the line stays anchored to its logo as it
+   *  travels the orbit. */
+  const lineRefs = useRef<(SVGLineElement | null)[]>([]);
   const startRef = useRef<number | null>(null);
 
   useAnimationFrame((time) => {
@@ -902,14 +909,18 @@ function OrbitalCluster({
     const elapsed = time - startRef.current;
     const baseTheta = (elapsed / periodMs) * Math.PI * 2;
     for (let i = 0; i < n; i++) {
-      const node = logoRefs.current[i];
-      if (!node) continue;
       const phase = (i / n) * Math.PI * 2;
       const theta = baseTheta + phase;
       // -π/2 puts the first item at the top of the orbit (12 o'clock).
       const x = orbitCx + orbitR * Math.cos(theta - Math.PI / 2);
       const y = orbitCy + orbitR * Math.sin(theta - Math.PI / 2);
-      node.setAttribute('transform', `translate(${x - halfLogo}, ${y - halfLogo})`);
+      const node = logoRefs.current[i];
+      if (node) node.setAttribute('transform', `translate(${x - halfLogo}, ${y - halfLogo})`);
+      const line = lineRefs.current[i];
+      if (line) {
+        line.setAttribute('x1', String(x));
+        line.setAttribute('y1', String(y));
+      }
     }
   });
 
@@ -1030,7 +1041,45 @@ function OrbitalCluster({
         strokeDasharray="1 3"
       />
 
+      {/* Per-item connector to the merge dot. The line always exists
+          (so React doesn't have to mount/unmount on every status flip),
+          but only paints stroke when the item is active — fading via a
+          stroke-opacity transition. Dashes march toward the center to
+          reinforce "telemetry flowing in", mirroring the dashed-river
+          treatment FlowLane uses for incoming lanes. */}
+      {items.map((item, i) => {
+        const active = activeKeys.has(item.key);
+        return (
+          <line
+            key={`line-${item.key}`}
+            ref={(el) => {
+              lineRefs.current[i] = el;
+            }}
+            x1={orbitCx}
+            y1={orbitCy}
+            x2={orbitCx}
+            y2={orbitCy}
+            stroke={BRAND_COLOR}
+            strokeOpacity={active ? 0.55 : 0}
+            strokeWidth={1}
+            strokeDasharray="3 5"
+            strokeLinecap="round"
+            pointerEvents="none"
+            style={{ transition: 'stroke-opacity 400ms ease' }}
+          >
+            <animate
+              attributeName="stroke-dashoffset"
+              from="8"
+              to="0"
+              dur="0.9s"
+              repeatCount="indefinite"
+            />
+          </line>
+        );
+      })}
+
       {/* Center merge point — the "convergence" the orbit points to.
+          Drawn after the lines so the dot caps each line's center end.
           Radius + opacity pulse on a 2.4 s loop, matching the existing
           Collector halo cadence. */}
       <circle cx={orbitCx} cy={orbitCy} r={3.5} fill={BRAND_COLOR} opacity={0.9}>
