@@ -138,6 +138,14 @@ export const PRESETS: readonly PresetMetadata[] = [
   },
 ];
 
+/** Kinds pinned to the end of any sorted presets list. Both are
+ *  generic escape hatches — keep them out of the way so the
+ *  vendor-specific destinations get top billing. */
+export const BOTTOM_PINNED_KINDS: ReadonlySet<PresetKind> = new Set([
+  'otlp-generic',
+  'otelcol-passthrough',
+]);
+
 /** Fast lookup by kind. */
 export function presetMetadataFor(kind: PresetKind): PresetMetadata {
   const found = PRESETS.find((p) => p.kind === kind);

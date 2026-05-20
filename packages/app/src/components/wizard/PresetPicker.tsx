@@ -1,5 +1,6 @@
 import type { BackendDraft } from '@trove/shared';
-import { PRESETS } from '@trove/collector-presets';
+import { BOTTOM_PINNED_KINDS, PRESETS, type PresetMetadata } from '@trove/collector-presets';
+import { useMemo } from 'react';
 
 import { BackendLogo } from '../../lib/logos.js';
 import { Pill } from '../ui/index.js';
@@ -10,7 +11,19 @@ export interface PresetPickerProps {
   onSelect: (kind: PresetKind) => void;
 }
 
+/** Sort order: recommended platform first, then everything else
+ *  alphabetically by label, with the generic escape-hatch kinds
+ *  pinned at the very bottom. */
+function comparePresets(a: PresetMetadata, b: PresetMetadata): number {
+  if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
+  const aBottom = BOTTOM_PINNED_KINDS.has(a.kind);
+  const bBottom = BOTTOM_PINNED_KINDS.has(b.kind);
+  if (aBottom !== bBottom) return aBottom ? 1 : -1;
+  return a.label.localeCompare(b.label);
+}
+
 export function PresetPicker({ onSelect }: PresetPickerProps): JSX.Element {
+  const sortedPresets = useMemo(() => [...PRESETS].sort(comparePresets), []);
   return (
     <section data-testid="preset-picker">
       <h2 className="text-[20px] font-semibold tracking-tight text-fg-primary dark:text-fg-primary-dark">
@@ -21,7 +34,7 @@ export function PresetPicker({ onSelect }: PresetPickerProps): JSX.Element {
         backend you choose. You can swap this later from the dashboard.
       </p>
       <ul className="mt-6 grid gap-3" role="list">
-        {PRESETS.map((preset) => (
+        {sortedPresets.map((preset) => (
           <li key={preset.kind}>
             <button
               type="button"
