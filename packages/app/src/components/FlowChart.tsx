@@ -234,9 +234,21 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
   const viewH = anyCluster ? Math.max(CLUSTER_MIN_VIEW_H, baseViewH) : baseViewH;
   const collectorCy = viewH / 2;
 
-  const harnessCenters = computeColumnCenters(harnessRows, viewH);
-  const backendCenters = computeColumnCenters(backendRows, viewH);
   const nodeHH = Math.min(NODE_HH_MAX, Math.floor((viewH - 50) / Math.max(rows, 1) / 2));
+  /** When either side is a cluster the viewBox is forced to
+   *  CLUSTER_MIN_VIEW_H so the cluster container fits. Individual
+   *  nodes on the opposite side then spread across that taller
+   *  viewBox, but the default 22px padding leaves the top/bottom
+   *  centers offset to (viewH - 22) — close enough to the edge that
+   *  a 24px nodeHH gets clipped by SVG's viewBox bounds. Align the
+   *  padding with the cluster's vertical span instead so individual
+   *  nodes both sit inside the viewBox and visually line up with the
+   *  cluster on the other side. */
+  const colPadding = anyCluster
+    ? Math.max(COL_PADDING, (viewH - 2 * CLUSTER_HH) / 2 + nodeHH)
+    : COL_PADDING;
+  const harnessCenters = computeColumnCenters(harnessRows, viewH, colPadding);
+  const backendCenters = computeColumnCenters(backendRows, viewH, colPadding);
 
   /** Pick the period for a harness's lane. In cluster mode (one row
    *  represents every harness) we use the aggregate. Otherwise we look
