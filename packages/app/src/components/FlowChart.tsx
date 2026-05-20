@@ -39,8 +39,8 @@ const VIEW_W = 800;
 const HARNESS_COL_X = 110;
 const COLLECTOR_X = 400;
 const PLATFORM_COL_X = 700;
-const COLLECTOR_HW = 70;
-const COLLECTOR_HH = 36;
+const COLLECTOR_HW = 75;
+const COLLECTOR_HH = 80;
 /** Floor for column half-width. Most labels fit; the actual hw grows
  *  to envelop the widest label in the column (see [`columnHalfWidth`]). */
 const NODE_HW_MIN = 60;
@@ -56,7 +56,7 @@ const PARTICLES_PER_LANE = 5;
  *  CLUSTER_THRESHOLD nodes. The container is intentionally wider than
  *  NODE_HW_MAX so logos have room to orbit without crowding the title;
  *  it still leaves ample horizontal space to the Collector column. */
-const CLUSTER_HW = 75;
+const CLUSTER_HW = 95;
 const CLUSTER_HH = 80;
 const CLUSTER_THRESHOLD = 3;
 /** Minimum viewBox height when any side renders a cluster, so the 160 px
@@ -402,35 +402,6 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
           </g>
         ) : null}
 
-        {/* Collector halo pulse when running */}
-        {running ? (
-          <rect
-            x={COLLECTOR_X - COLLECTOR_HW - 2}
-            y={collectorCy - COLLECTOR_HH - 2}
-            width={(COLLECTOR_HW + 2) * 2}
-            height={(COLLECTOR_HH + 2) * 2}
-            rx={12}
-            ry={12}
-            fill="none"
-            stroke="#0A84FF"
-            strokeWidth={1.5}
-            strokeOpacity={0.35}
-          >
-            <animate
-              attributeName="stroke-opacity"
-              values="0.35;0;0.35"
-              dur="2.4s"
-              repeatCount="indefinite"
-            />
-            <animate
-              attributeName="stroke-width"
-              values="1.5;5;1.5"
-              dur="2.4s"
-              repeatCount="indefinite"
-            />
-          </rect>
-        ) : null}
-
         {/* Harness column */}
         <AnimatePresence mode="popLayout" initial={false}>
           {harnesses.length === 0 ? (
@@ -499,14 +470,16 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
         </AnimatePresence>
 
         {/* Collector node */}
-        <FlowNode
+        <CollectorNode
           cx={COLLECTOR_X}
           cy={collectorCy}
-          hw={COLLECTOR_HW}
-          hh={COLLECTOR_HH}
-          title="Collector"
-          subtitle={running ? 'running' : (state?.kind ?? 'idle')}
-          highlight
+          running={running}
+          statusLabel={running ? 'running' : (state?.kind ?? 'idle')}
+          laneActivity={{
+            spans: rates.spans > 0,
+            metrics: rates.metrics > 0,
+            logs: rates.logs > 0,
+          }}
         />
 
         {/* Platform column */}
@@ -831,6 +804,227 @@ function connectorPath(startX: number, startY: number, endX: number, endY: numbe
  *  classes. Keep in sync if the brand color ever changes. */
 const BRAND_COLOR = '#2dbfb8';
 
+interface CollectorNodeProps {
+  /** Container center x. */
+  cx: number;
+  /** Container center y. */
+  cy: number;
+  /** When true, draw the outer pulse halo to signal the collector is
+   *  live (matches the existing 2.4 s cadence used elsewhere). */
+  running: boolean;
+  /** Status string rendered as the subtitle (`running`, `idle`, etc.). */
+  statusLabel: string;
+  /** Which lanes are currently flowing — drives which lane-colored
+   *  dot is visible in the inner orbit. */
+  laneActivity: { spans: boolean; metrics: boolean; logs: boolean };
+}
+
+/** The central Collector container. Mirrors the cluster aesthetic
+ *  (brand-tinted radial gradient, breathing overlay, header at top)
+ *  with its own twist on the orbit theme: three lane-colored dots
+ *  orbit the Trove logo at the container's center, one per signal
+ *  type. A dot lights up + grows a soft lane-color halo when its
+ *  lane is flowing and dims when idle, giving an at-a-glance view
+ *  of which signal types the collector is actively receiving. */
+function CollectorNode({
+  cx,
+  cy,
+  running,
+  statusLabel,
+  laneActivity,
+}: CollectorNodeProps): JSX.Element {
+  const hw = COLLECTOR_HW;
+  const hh = COLLECTOR_HH;
+  /** Trove logo + lane-dot orbit share a center that sits a little
+   *  below the container center, leaving room for the title block at
+   *  the top — the same vertical layout the clusters use. */
+  const orbitDy = 18;
+  const orbitCx = cx;
+  const orbitCy = cy + orbitDy;
+  const orbitR = 30;
+  const troveSize = 44;
+  const periodMs = 12_000;
+  const dotR = 3.5;
+  const haloR = 8;
+
+  const left = cx - hw;
+  const top = cy - hh;
+  const dotRefs = useRef<(SVGGElement | null)[]>([]);
+  const startRef = useRef<number | null>(null);
+
+  useAnimationFrame((time) => {
+    if (startRef.current === null) startRef.current = time;
+    const elapsed = time - startRef.current;
+    const baseTheta = (elapsed / periodMs) * Math.PI * 2;
+    for (let i = 0; i < LANES.length; i++) {
+      const dot = dotRefs.current[i];
+      if (!dot) continue;
+      const phase = (i / LANES.length) * Math.PI * 2;
+      const theta = baseTheta + phase;
+      const x = orbitCx + orbitR * Math.cos(theta - Math.PI / 2);
+      const y = orbitCy + orbitR * Math.sin(theta - Math.PI / 2);
+      dot.setAttribute('transform', `translate(${x}, ${y})`);
+    }
+  });
+
+  return (
+    <g aria-label={`Collector — ${statusLabel}`}>
+      <defs>
+        <radialGradient id="collector-grad" cx="50%" cy="60%" r="60%">
+          <stop offset="0%" stopColor={BRAND_COLOR} stopOpacity={0.28} />
+          <stop offset="65%" stopColor={BRAND_COLOR} stopOpacity={0.08} />
+          <stop offset="100%" stopColor={BRAND_COLOR} stopOpacity={0} />
+        </radialGradient>
+      </defs>
+
+      {/* Outer pulse halo when running — drawn first so it sits behind
+          the container outline. Same 2.4 s cadence the previous static
+          collector node used. */}
+      {running ? (
+        <rect
+          x={left - 2}
+          y={top - 2}
+          width={(hw + 2) * 2}
+          height={(hh + 2) * 2}
+          rx={22}
+          ry={22}
+          fill="none"
+          stroke={BRAND_COLOR}
+          strokeWidth={1.5}
+          strokeOpacity={0.35}
+        >
+          <animate
+            attributeName="stroke-opacity"
+            values="0.35;0;0.35"
+            dur="2.4s"
+            repeatCount="indefinite"
+          />
+          <animate
+            attributeName="stroke-width"
+            values="1.5;5;1.5"
+            dur="2.4s"
+            repeatCount="indefinite"
+          />
+        </rect>
+      ) : null}
+
+      {/* Container — brand-highlighted to mark it as the chart's focal
+          point, with the same surface fill as the clusters underneath. */}
+      <rect
+        x={left}
+        y={top}
+        width={hw * 2}
+        height={hh * 2}
+        rx={20}
+        ry={20}
+        className="fill-brand/[0.06] stroke-brand/55 dark:fill-brand/[0.10]"
+        strokeWidth={1.5}
+      />
+
+      {/* Brand-tinted glow overlay — matches the cluster treatment so
+          the three containers feel part of one family. */}
+      <rect
+        x={left}
+        y={top}
+        width={hw * 2}
+        height={hh * 2}
+        rx={20}
+        ry={20}
+        fill="url(#collector-grad)"
+        pointerEvents="none"
+      >
+        <animate attributeName="opacity" values="0.7;1;0.7" dur="5s" repeatCount="indefinite" />
+      </rect>
+
+      {/* Header */}
+      <text
+        x={cx}
+        y={top + 22}
+        textAnchor="middle"
+        fontSize={14}
+        fontWeight={600}
+        className="fill-fg-primary dark:fill-fg-primary-dark"
+        style={{ filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.25))' }}
+      >
+        Collector
+      </text>
+      <text
+        x={cx}
+        y={top + 38}
+        textAnchor="middle"
+        fontSize={11}
+        className="fill-fg-secondary dark:fill-fg-secondary-dark"
+        style={{ filter: 'drop-shadow(0 1px 1.5px rgba(0,0,0,0.2))' }}
+      >
+        {statusLabel}
+      </text>
+
+      {/* Trove logo sitting at the orbit center — the convergence the
+          lane dots orbit around. Held at a moderate opacity so the dots
+          read clearly against it. */}
+      <image
+        href={troveLogo}
+        x={orbitCx - troveSize / 2}
+        y={orbitCy - troveSize / 2}
+        width={troveSize}
+        height={troveSize}
+        opacity={0.55}
+        preserveAspectRatio="xMidYMid meet"
+        aria-hidden="true"
+      />
+
+      {/* Faint guide ring */}
+      <circle
+        cx={orbitCx}
+        cy={orbitCy}
+        r={orbitR}
+        fill="none"
+        stroke={BRAND_COLOR}
+        strokeOpacity={0.15}
+        strokeWidth={0.75}
+        strokeDasharray="1 3"
+      />
+
+      {/* Three lane-colored dots orbit the Trove logo. Each <g> is
+          translated per frame by useAnimationFrame above; opacity is
+          driven by lane activity with a CSS transition for smooth
+          handoff between idle and live states. */}
+      {LANES.map((lane, i) => {
+        const active = laneActivity[lane.kind];
+        const color = LANE_COLORS[lane.kind];
+        return (
+          <g
+            key={lane.kind}
+            ref={(el) => {
+              dotRefs.current[i] = el;
+            }}
+            style={{ transition: 'opacity 400ms ease' }}
+            opacity={active ? 1 : 0.18}
+          >
+            {active ? (
+              <circle cx={0} cy={0} r={haloR} fill={color} opacity={0.35}>
+                <animate
+                  attributeName="r"
+                  values={`${haloR - 2};${haloR + 2};${haloR - 2}`}
+                  dur="2s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0.2;0.45;0.2"
+                  dur="2s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+            ) : null}
+            <circle cx={0} cy={0} r={dotR} fill={color} />
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
 interface OrbitalClusterItem {
   key: string;
   /** Hover tooltip + accessibility label for this logo. */
@@ -856,16 +1050,19 @@ interface OrbitalClusterProps {
   activeKeys: Set<string>;
 }
 
-/** Pick a logo size + orbit radius that scales smoothly with the
- *  number of items. Smaller logos + larger radius as N grows so they
- *  don't overlap on a single orbit, while still fitting CLUSTER_HW/HH.
- *  At the high end the spacing tightens but neighbours never collide
- *  outright — circumference 2πr stays above N * logoDiameter. */
-function orbitGeometryFor(n: number): { logoSize: number; orbitR: number } {
-  if (n <= 6) return { logoSize: 20, orbitR: 26 };
-  if (n <= 9) return { logoSize: 18, orbitR: 32 };
-  if (n <= 12) return { logoSize: 16, orbitR: 38 };
-  return { logoSize: 14, orbitR: 42 };
+/** Pick a logo size + elliptical orbit radii that scale smoothly with
+ *  the number of items. The orbit is wider than tall — the cluster
+ *  container has horizontal room to spare, so spreading items across
+ *  the X axis keeps the icons large and legible while the orbit's
+ *  vertical footprint stays compact enough to clear the header and
+ *  bottom padding. At the high end the spacing tightens but neighbours
+ *  never collide outright — the ellipse's arc length stays above
+ *  N * logoDiameter. */
+function orbitGeometryFor(n: number): { logoSize: number; orbitRx: number; orbitRy: number } {
+  if (n <= 6) return { logoSize: 24, orbitRx: 50, orbitRy: 32 };
+  if (n <= 9) return { logoSize: 22, orbitRx: 60, orbitRy: 36 };
+  if (n <= 12) return { logoSize: 20, orbitRx: 70, orbitRy: 38 };
+  return { logoSize: 18, orbitRx: 78, orbitRy: 42 };
 }
 
 /** Orbital Hub container used when a side has more than
@@ -884,12 +1081,12 @@ function OrbitalCluster({
   activeKeys,
 }: OrbitalClusterProps): JSX.Element {
   const n = items.length;
-  const { logoSize, orbitR } = orbitGeometryFor(n);
+  const { logoSize, orbitRx, orbitRy } = orbitGeometryFor(n);
   const orbitCx = cx;
   const orbitCy = cy + CLUSTER_ORBIT_DY;
   const halfLogo = logoSize / 2;
   /** Halo disc behind active logos extends past the logo edge so the
-   *  glow reads even on small (14 px) icons at the high-N tier. */
+   *  glow reads even on the smallest icons at the high-N tier. */
   const haloR = halfLogo + 6;
 
   /** ~24 s per revolution. Calm enough to read individual logos while
@@ -912,8 +1109,8 @@ function OrbitalCluster({
       const phase = (i / n) * Math.PI * 2;
       const theta = baseTheta + phase;
       // -π/2 puts the first item at the top of the orbit (12 o'clock).
-      const x = orbitCx + orbitR * Math.cos(theta - Math.PI / 2);
-      const y = orbitCy + orbitR * Math.sin(theta - Math.PI / 2);
+      const x = orbitCx + orbitRx * Math.cos(theta - Math.PI / 2);
+      const y = orbitCy + orbitRy * Math.sin(theta - Math.PI / 2);
       const node = logoRefs.current[i];
       if (node) node.setAttribute('transform', `translate(${x - halfLogo}, ${y - halfLogo})`);
       const line = lineRefs.current[i];
@@ -1006,11 +1203,12 @@ function OrbitalCluster({
       </rect>
 
       {/* Header — label + count, centered near the top of container.
-          Kept high enough that the orbit clears the subtitle's descent
-          even at the largest N (orbit radius up to 42 + half-logo). */}
+          Pushed down a few px so the title's top edge clears the
+          marching dashed inner border with a visible gap instead of
+          riding right against it. */}
       <text
         x={cx}
-        y={top + 16}
+        y={top + 22}
         textAnchor="middle"
         fontSize={12}
         fontWeight={600}
@@ -1020,7 +1218,7 @@ function OrbitalCluster({
       </text>
       <text
         x={cx}
-        y={top + 30}
+        y={top + 36}
         textAnchor="middle"
         fontSize={10}
         className="fill-fg-secondary dark:fill-fg-secondary-dark"
@@ -1028,12 +1226,14 @@ function OrbitalCluster({
         {n} active
       </text>
 
-      {/* Faint orbit guide ring — anchors the eye so the motion reads
-          as orbital rather than random drift. */}
-      <circle
+      {/* Faint orbit guide — an ellipse so it traces the wider path
+          the logos travel. Anchors the eye so the motion reads as
+          orbital rather than random drift. */}
+      <ellipse
         cx={orbitCx}
         cy={orbitCy}
-        r={orbitR}
+        rx={orbitRx}
+        ry={orbitRy}
         fill="none"
         stroke={BRAND_COLOR}
         strokeOpacity={0.15}
