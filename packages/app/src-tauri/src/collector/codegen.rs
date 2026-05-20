@@ -679,10 +679,16 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         HarnessId::ClaudeCode => &["claude-code", "claude"],
         HarnessId::GeminiCli => &["gemini-cli", "gemini"],
         HarnessId::QwenCode => &["qwen-code", "qwen"],
-        // Codex CLI's default service.name is the unprefixed `codex`
-        // per upstream; users with shell env overrides may also see
-        // `codex-cli`.
-        HarnessId::CodexCli => &["codex-cli", "codex"],
+        // Codex's Rust backend emits with `service.name=codex-app-server`
+        // (the binary name of the `codex app-server` process — same
+        // backend whether invoked by the CLI or by the desktop app).
+        // Trove deliberately routes both the codex-cli and codex-desktop
+        // rows through this single tag rather than minting separate
+        // ones; the codex-desktop arm in `native_service_name_candidates`
+        // returns an empty slice for exactly this reason. Users with
+        // shell env overrides may also see `codex-cli` or `codex`, so
+        // accept all three.
+        HarnessId::CodexCli => &["codex-app-server", "codex-cli", "codex"],
         HarnessId::Opencode => &["opencode"],
         // Claude Desktop (Cowork) sends OTLP logs whose resource carries
         // `service.name=claude-cowork` or `claude-desktop`. Tag both so
