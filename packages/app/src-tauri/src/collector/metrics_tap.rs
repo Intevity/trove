@@ -1,11 +1,13 @@
 //! Scrape the bundled trove-otelcol's internal Prometheus metrics and
 //! publish them as a [`MetricsSnapshot`] for the dashboard + tray.
 //!
-//! When `service.telemetry.metrics.address: 127.0.0.1:8888` is set in
+//! When `service.telemetry.metrics.address: 127.0.0.1:18888` is set in
 //! the active YAML (added in this same PR to every preset and the
 //! smoke config), the Collector exposes its own counters on
-//! `:8888/metrics` in Prometheus exposition format. The interesting
-//! families for Sprint 6:
+//! `:18888/metrics` in Prometheus exposition format. Port 18888 is
+//! the OTel default 8888 shifted by +10000 so we don't collide with
+//! other tooling that uses 8888 (devspace, generic Prometheus setups,
+//! vanilla otelcol runs). The interesting families for Sprint 6:
 //!
 //! - `otelcol_receiver_accepted_spans` / `_metric_points` / `_log_records`
 //!   — total signals the OTLP receivers have accepted from harnesses.
@@ -37,7 +39,7 @@ use tokio::time::Instant;
 
 /// Default endpoint the bundled YAML configs expose. Trove never binds
 /// external interfaces.
-pub const DEFAULT_METRICS_URL: &str = "http://127.0.0.1:8888/metrics";
+pub const DEFAULT_METRICS_URL: &str = "http://127.0.0.1:18888/metrics";
 
 /// Default scrape cadence. Aligns with the watch coalescing semantics:
 /// the dashboard only needs the latest snapshot, not a packet of every
@@ -80,7 +82,7 @@ pub type DiagObservations = HashMap<String, SignalCounts>;
 /// `last_signal_at` is `None` until the first time the receiver totals
 /// strictly increase between scrapes. After that it tracks the most
 /// recent such increase. Persists across `unreachable: true` snapshots
-/// so the dashboard doesn't flicker amber on a transient :8888 hiccup.
+/// so the dashboard doesn't flicker amber on a transient :18888 hiccup.
 #[derive(Clone, Debug, Serialize)]
 pub struct MetricsSnapshot {
     pub received: SignalCounts,

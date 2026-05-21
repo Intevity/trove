@@ -19,7 +19,7 @@
 //! | `Running`                    | reachable          | ≥ 1               | older than 60s    | amber  |
 //! | `Running`                    | reachable          | ≥ 1               | none yet          | amber  |
 //!
-//! `:8888` unreachable is deliberately mapped to **amber**, not red — a
+//! `:18888` unreachable is deliberately mapped to **amber**, not red — a
 //! user who customised their YAML to drop the telemetry block hasn't
 //! broken the data path, only the introspection.
 
