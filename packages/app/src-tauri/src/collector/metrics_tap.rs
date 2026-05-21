@@ -5,9 +5,10 @@
 //! the active YAML (added in this same PR to every preset and the
 //! smoke config), the Collector exposes its own counters on
 //! `:18888/metrics` in Prometheus exposition format. Port 18888 is
-//! the OTel default 8888 shifted by +10000 so we don't collide with
-//! other tooling that uses 8888 (devspace, generic Prometheus setups,
-//! vanilla otelcol runs). The interesting families for Sprint 6:
+//! the `OTel` default `8888` shifted by +10000 so we don't collide
+//! with other tooling that uses 8888 (devspace, generic Prometheus
+//! setups, vanilla otelcol runs). The interesting families for
+//! Sprint 6:
 //!
 //! - `otelcol_receiver_accepted_spans` / `_metric_points` / `_log_records`
 //!   — total signals the OTLP receivers have accepted from harnesses.
