@@ -80,7 +80,7 @@ async fn supervisor_spawns_restarts_and_shuts_down_cleanly() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn smoke_config_exposes_prometheus_metrics_endpoint() {
     // Sprint 6 PR 1 acceptance: the smoke-config exposes
-    // :8888/metrics with otelcol_* counters that metrics_tap can
+    // :18888/metrics with otelcol_* counters that metrics_tap can
     // scrape. Skips when no bundled binary is available, mirroring
     // the existing test in this file.
     let Some(binary_path) = locate_binary() else {
@@ -107,10 +107,10 @@ async fn smoke_config_exposes_prometheus_metrics_endpoint() {
     assert!(pid > 0);
 
     // Direct scrape: confirms the YAML edit landed the endpoint.
-    let body = scrape(":8888/metrics", "http://127.0.0.1:8888/metrics").await;
+    let body = scrape(":18888/metrics", "http://127.0.0.1:18888/metrics").await;
     assert!(
         body.contains("otelcol_"),
-        "expected otelcol_* counters in :8888/metrics body; got {} bytes",
+        "expected otelcol_* counters in :18888/metrics body; got {} bytes",
         body.len(),
     );
     // Even without traffic, the service emits its own process counters.
