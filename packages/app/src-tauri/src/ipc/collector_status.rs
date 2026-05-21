@@ -104,7 +104,7 @@ pub struct MetricsSnapshotWire {
     pub last_signal_ms_ago: Option<u64>,
     /// Milliseconds since the most recent successful scrape.
     pub scraped_ms_ago: u64,
-    /// True when the scrape couldn't reach `:8888/metrics` (user
+    /// True when the scrape couldn't reach `:18888/metrics` (user
     /// customised the YAML to drop the telemetry block, etc.).
     pub unreachable: bool,
     /// Convenience: derived green/amber/red, identical truth table to

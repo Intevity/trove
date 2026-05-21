@@ -62,7 +62,7 @@ pub struct SupervisorOptions {
     /// surviving `trove-otelcol` process from a previous app session
     /// (e.g., a force-quit or crash that bypassed `kill_on_drop`)
     /// before spawning a new child. Without this, an orphan child
-    /// holding port 8888 (the otelcol Prometheus telemetry endpoint)
+    /// holding port 18888 (the otelcol Prometheus telemetry endpoint)
     /// blocks every subsequent spawn with `bind: address already in
     /// use`, producing a perpetual crashloop. `None` disables the
     /// feature (only used by tests that don't need it).
@@ -319,7 +319,7 @@ async fn supervise_loop(
     // Reap any orphaned collector left behind by a prior app session
     // (force-quit, crash, or installer replacing the bundle without a
     // clean shutdown). If we skip this, the orphan still owns
-    // 127.0.0.1:8888 (the otelcol Prometheus telemetry endpoint) and
+    // 127.0.0.1:18888 (the otelcol Prometheus telemetry endpoint) and
     // every spawn here fails with `bind: address already in use`,
     // producing a crashloop the user sees as "Sidecar down".
     //

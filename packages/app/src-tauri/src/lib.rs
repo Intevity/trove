@@ -545,7 +545,7 @@ fn ensure_log_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
 /// child's PID. Lives next to `collector.yaml` in the app data dir.
 /// On the next launch, the supervisor reads this file to detect any
 /// orphaned `trove-otelcol` process from a previous session that
-/// otherwise blocks port 8888 and triggers a perpetual crashloop.
+/// otherwise blocks port 18888 and triggers a perpetual crashloop.
 fn collector_pid_path(app: &AppHandle) -> Result<PathBuf, CollectorBootError> {
     let dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&dir)?;

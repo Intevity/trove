@@ -54,6 +54,10 @@ service:
     # sent totals for the dashboard. The `readers` schema replaced the
     # legacy `address` scalar in OTel Collector v0.151; the older form
     # is rejected by the migration helper.
+    #
+    # Port 18888 is OTel's default 8888 shifted by +10000 — avoids
+    # collisions with other tooling that follows the upstream default
+    # (devspace, generic Prometheus setups, vanilla otelcol runs).
     metrics:
       level: basic
       readers:
@@ -61,4 +65,4 @@ service:
             exporter:
               prometheus:
                 host: '127.0.0.1'
-                port: 8888
+                port: 18888
