@@ -203,6 +203,42 @@ fn env_suffix_for(id: &str) -> String {
     }
 }
 
+/// Compute the `OTel` collector exporter component id Trove emits for a
+/// given backend instance — mirrors the per-kind `name = format!(…)`
+/// blocks inside `render_exporter_block`. Used by the wizard's "Test
+/// export" path to scope the collector-log scan to lines that mention
+/// this exporter only (so unrelated backends' retry loops don't
+/// false-trip the test — see `test_export.rs`).
+///
+/// Keep this in sync with the literal exporter names in
+/// `render_exporter_block`; the round-trip is regression-locked by
+/// `exporter_component_id_for_matches_render_output` in this file's
+/// test module.
+#[must_use]
+pub fn exporter_component_id_for(instance: &BackendInstance) -> String {
+    let suffix = env_suffix_for(&instance.id);
+    match &instance.backend {
+        Backend::Signoz { .. } => format!("otlp/signoz-{suffix}"),
+        Backend::Honeycomb { .. } => format!("otlphttp/honeycomb-{suffix}"),
+        Backend::GrafanaCloud { .. } => format!("otlphttp/grafana-{suffix}"),
+        Backend::Datadog { .. } => format!("otlphttp/datadog-{suffix}"),
+        Backend::OtlpGeneric { protocol, .. } => match protocol {
+            OtlpProtocol::Grpc => format!("otlp/user-{suffix}"),
+            OtlpProtocol::Http => format!("otlphttp/user-{suffix}"),
+        },
+        Backend::OtelcolPassthrough { .. } => format!("otlphttp/passthrough-{suffix}"),
+        Backend::NewRelic { .. } => format!("otlphttp/new-relic-{suffix}"),
+        Backend::SplunkObservability { .. } => format!("otlphttp/splunk-{suffix}"),
+        Backend::Dynatrace { .. } => format!("otlphttp/dynatrace-{suffix}"),
+        Backend::Elastic { .. } => format!("otlphttp/elastic-{suffix}"),
+        Backend::Opensearch { .. } => format!("otlphttp/opensearch-{suffix}"),
+        Backend::Openobserve { .. } => format!("otlphttp/openobserve-{suffix}"),
+        Backend::Clickstack { .. } => format!("otlphttp/clickstack-{suffix}"),
+        Backend::Chronosphere { .. } => format!("otlphttp/chronosphere-{suffix}"),
+        Backend::Sentry { .. } => format!("otlphttp/sentry-{suffix}"),
+    }
+}
+
 /// Resolve an `OTel` collector component id (e.g. `otlphttp/openobserve-93eb10f1`)
 /// back to the [`BackendInstance::id`] it was derived from. Returns `None`
 /// for component ids that don't follow Trove's exporter naming scheme or

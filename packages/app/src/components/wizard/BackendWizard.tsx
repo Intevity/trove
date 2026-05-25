@@ -2,7 +2,13 @@ import { useCallback, useState } from 'react';
 
 import type { BackendDraft, BackendInstance, TestExportResult } from '@trove/shared';
 
-import { TroveIpcError, addBackend, testExport, updateBackend } from '../../lib/ipc.js';
+import {
+  TroveIpcError,
+  addBackend,
+  removeBackend,
+  testExport,
+  updateBackend,
+} from '../../lib/ipc.js';
 import { Card, StatusDot } from '../ui/index.js';
 import { CredentialsForm, type Kind } from './CredentialsForm.js';
 import { PresetPicker } from './PresetPicker.js';
@@ -41,6 +47,31 @@ export function BackendWizard({
   const [testResult, setTestResult] = useState<TestExportResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Bug-H tracking: in add mode, the first "Test export" click persists
+   *  a real backend entry so the supervised collector picks up the new
+   *  exporter and the test sees through end-to-end. We remember the
+   *  returned id so we can (a) update-in-place on re-test (avoid
+   *  duplicate entries) and (b) remove it on any non-Save exit path.
+   *  Always `null` in edit mode (the instance already existed). */
+  const [pendingInstanceId, setPendingInstanceId] = useState<string | null>(null);
+
+  /** Discards an add-mode pending instance before exiting. Edit-mode
+   *  changes are persisted by `updateBackend(...)` in `handleTest`;
+   *  reverting them cleanly would need the original instance + secrets,
+   *  which the keychain can't return — so we leave the edited state on
+   *  cancel and document that as a known limitation (the user can still
+   *  re-open the row and put the old values back). */
+  const dropPendingInstance = useCallback(async () => {
+    if (pendingInstanceId === null) return;
+    try {
+      await removeBackend(pendingInstanceId);
+    } catch {
+      // Swallow — the user is cancelling; surfacing an IPC error here
+      // would block the dismiss path. Worst case: a stale row that the
+      // user can delete from the Platforms tab.
+    }
+    setPendingInstanceId(null);
+  }, [pendingInstanceId]);
 
   const handlePresetSelect = useCallback((next: Kind) => {
     setKind(next);
@@ -55,36 +86,51 @@ export function BackendWizard({
     setError(null);
   }, []);
 
-  const handleBackToPicker = useCallback(() => {
+  const handleBackToPicker = useCallback(async () => {
     // In edit mode (or any flow that bypassed the picker) there's
     // nowhere to step back to — cancel instead.
     if (isEdit || skipPicker) {
+      await dropPendingInstance();
       onComplete();
       return;
     }
+    await dropPendingInstance();
     setStep('pick-preset');
     setKind(null);
     setDraft(null);
     setTestResult(null);
     setError(null);
-  }, [isEdit, skipPicker, onComplete]);
+  }, [isEdit, skipPicker, onComplete, dropPendingInstance]);
 
-  const handleBackToCreds = useCallback(() => {
+  const handleBackToCreds = useCallback(async () => {
+    // Drop the pending entry so an edited credential set isn't tested
+    // against a stale exporter on the next "Test export" click.
+    await dropPendingInstance();
     setStep('enter-creds');
     setError(null);
-  }, []);
+  }, [dropPendingInstance]);
 
   const handleTest = useCallback(async () => {
     if (!draft) return;
     setBusy(true);
     setError(null);
     try {
+      let backendId: string;
       if (isEdit) {
         await updateBackend(mode.instance.id, draft, mode.instance.label);
+        backendId = mode.instance.id;
+      } else if (pendingInstanceId !== null) {
+        // Re-test of a pending add: update the existing entry in place
+        // (Bug-H: don't add a second row each time the user re-clicks
+        // Test).
+        await updateBackend(pendingInstanceId, draft, undefined);
+        backendId = pendingInstanceId;
       } else {
-        await addBackend(draft);
+        const instance = await addBackend(draft);
+        setPendingInstanceId(instance.id);
+        backendId = instance.id;
       }
-      const result = await testExport();
+      const result = await testExport(backendId);
       setTestResult(result);
     } catch (e) {
       const message =
@@ -98,11 +144,19 @@ export function BackendWizard({
     } finally {
       setBusy(false);
     }
-  }, [draft, isEdit, mode]);
+  }, [draft, isEdit, mode, pendingInstanceId]);
 
   const handleSave = useCallback(() => {
+    // Pending entry becomes permanent — clear our cleanup pointer so a
+    // subsequent dismiss can't accidentally remove a saved row.
+    setPendingInstanceId(null);
     onComplete();
   }, [onComplete]);
+
+  const handleCancel = useCallback(async () => {
+    await dropPendingInstance();
+    onComplete();
+  }, [dropPendingInstance, onComplete]);
 
   return (
     <Card as="div" padding="lg" testid="backend-wizard">
@@ -113,7 +167,7 @@ export function BackendWizard({
           kind={kind}
           {...(isEdit ? { initialFields: nonSecretFieldsForEdit(mode.instance) } : {})}
           onSubmit={handleCredsSubmit}
-          onBack={handleBackToPicker}
+          onBack={() => void handleBackToPicker()}
         />
       ) : null}
       {step === 'test-export' ? (
@@ -121,9 +175,11 @@ export function BackendWizard({
           busy={busy}
           result={testResult}
           backendKind={draft?.kind ?? kind ?? undefined}
+          showCancel={!isEdit && pendingInstanceId !== null}
+          onCancel={() => void handleCancel()}
           onTest={() => void handleTest()}
           onSave={handleSave}
-          onBack={handleBackToCreds}
+          onBack={() => void handleBackToCreds()}
         />
       ) : null}
 

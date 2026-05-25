@@ -113,10 +113,18 @@ pub fn synthetic_payload() -> serde_json::Value {
 /// failure markers until `budget` elapses. Pure function: takes paths
 /// and URLs, no `AppHandle`. The Tauri `#[command]` wrapper resolves
 /// these from `app.path()` and calls in.
+///
+/// `exporter_filter` scopes the log scan to lines that mention the
+/// given `OTel` component id substring (e.g. `otlphttp/sentry-3a0c9975`).
+/// When `None`, every [`FAILURE_MARKERS`] hit triggers a `failed`
+/// result — the original behavior, kept as a fallback for callers that
+/// don't know which exporter is under test. With a filter, the scan
+/// ignores failures from unrelated exporters (Bug-I fix from 2026-05-25).
 pub async fn test_export_at(
     endpoint: &str,
     log_path: &Path,
     budget: Duration,
+    exporter_filter: Option<&str>,
 ) -> TestExportResult {
     let deadline = Instant::now() + budget;
     let log_offset = current_log_size(log_path);
@@ -156,7 +164,7 @@ pub async fn test_export_at(
     // exporters log on failure within seconds; absence of a failure
     // marker by `deadline` means we report `ok`.
     while Instant::now() < deadline {
-        if let Some(marker) = scan_log_for_marker(log_path, log_offset) {
+        if let Some(marker) = scan_log_for_marker(log_path, log_offset, exporter_filter) {
             return TestExportResult {
                 status: TestExportStatus::Failed,
                 detail: format!("collector log surfaced exporter failure: {marker}"),
@@ -241,7 +249,11 @@ fn append_log_trailer(detail: String, log_path: &Path) -> String {
 /// Read `log_path` from `since` to current length and return the first
 /// failure-marker line found, or `None` if no marker is present in the
 /// new bytes.
-fn scan_log_for_marker(log_path: &Path, since: u64) -> Option<String> {
+fn scan_log_for_marker(
+    log_path: &Path,
+    since: u64,
+    exporter_filter: Option<&str>,
+) -> Option<String> {
     let bytes = std::fs::read(log_path).ok()?;
     if (bytes.len() as u64) <= since {
         return None;
@@ -250,6 +262,16 @@ fn scan_log_for_marker(log_path: &Path, since: u64) -> Option<String> {
     let new_slice = &bytes[since_usize..];
     let new_text = std::str::from_utf8(new_slice).ok()?;
     for line in new_text.lines() {
+        // Bug-I scoping: when an exporter component id is provided,
+        // skip any failure line that doesn't mention it. otelcol logs
+        // the exporter id as `otelcol.component.id: "<kind>/<name>-<suffix>"`
+        // on every record; the substring match works for both the
+        // structured JSON encoding and the human-readable console form.
+        if let Some(needle) = exporter_filter {
+            if !line.contains(needle) {
+                continue;
+            }
+        }
         for marker in FAILURE_MARKERS {
             if line.contains(marker) {
                 // Trim absurdly long lines so we don't dump the whole
@@ -290,7 +312,7 @@ mod tests {
     fn scan_returns_none_on_missing_log() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("absent.log");
-        assert!(scan_log_for_marker(&path, 0).is_none());
+        assert!(scan_log_for_marker(&path, 0, None).is_none());
     }
 
     #[test]
@@ -302,7 +324,7 @@ mod tests {
             b"hello\nPermanent error: 401 Unauthorized\nstill running\n",
         )
         .unwrap();
-        let line = scan_log_for_marker(&path, 0).unwrap();
+        let line = scan_log_for_marker(&path, 0, None).unwrap();
         assert!(line.contains("Permanent error"));
     }
 
@@ -314,7 +336,7 @@ mod tests {
         std::fs::write(&path, prefix).unwrap();
         let suffix_offset = prefix.len() as u64;
         // No new bytes after the offset → no marker.
-        assert!(scan_log_for_marker(&path, suffix_offset).is_none());
+        assert!(scan_log_for_marker(&path, suffix_offset, None).is_none());
 
         // Append new bytes containing a marker; should now match.
         let appended = "Permanent error: fresh\n";
@@ -322,12 +344,8 @@ mod tests {
             .append(true)
             .open(&path)
             .unwrap();
-        std::fs::write(
-            &path,
-            format!("{prefix}{appended}").as_bytes(),
-        )
-        .unwrap();
-        let line = scan_log_for_marker(&path, suffix_offset).unwrap();
+        std::fs::write(&path, format!("{prefix}{appended}").as_bytes()).unwrap();
+        let line = scan_log_for_marker(&path, suffix_offset, None).unwrap();
         assert!(line.contains("fresh"));
     }
 
@@ -337,8 +355,47 @@ mod tests {
         let path = dir.path().join("c.log");
         let huge = format!("Permanent error: {}\n", "x".repeat(5000));
         std::fs::write(&path, &huge).unwrap();
-        let line = scan_log_for_marker(&path, 0).unwrap();
+        let line = scan_log_for_marker(&path, 0, None).unwrap();
         assert!(line.len() <= 240);
+    }
+
+    #[test]
+    fn scan_with_exporter_filter_ignores_unrelated_failure_lines() {
+        // Bug-I regression lock. Two exporters in the log; one is the
+        // row under test (sentry-3a0c9975), the other is unrelated
+        // (signoz-31fb8e0a) and is retry-looping. With the filter set
+        // to the sentry exporter id, the scan must ignore the signoz
+        // failure entirely.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        let body = "\
+2026-05-25T10:00:00 info  some healthy line\n\
+2026-05-25T10:00:01 error Exporting failed. Will retry. {\"otelcol.component.id\":\"otlp/signoz-31fb8e0a\",\"error\":\"connection refused\"}\n\
+2026-05-25T10:00:02 info  unrelated line\n\
+";
+        std::fs::write(&path, body).unwrap();
+        assert!(
+            scan_log_for_marker(&path, 0, Some("otlphttp/sentry-3a0c9975")).is_none(),
+            "filter should drop the signoz failure"
+        );
+        // Confirm the same file would have matched without the filter
+        // (sanity check: the bug is the filter, not the markers).
+        assert!(scan_log_for_marker(&path, 0, None).is_some());
+    }
+
+    #[test]
+    fn scan_with_exporter_filter_matches_target_failure_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        let body = "\
+2026-05-25T10:00:00 info  unrelated line\n\
+2026-05-25T10:00:01 error Exporting failed. {\"otelcol.component.id\":\"otlphttp/sentry-3a0c9975\",\"error\":\"Permanent error: 404\"}\n\
+";
+        std::fs::write(&path, body).unwrap();
+        let line =
+            scan_log_for_marker(&path, 0, Some("otlphttp/sentry-3a0c9975")).unwrap();
+        assert!(line.contains("Permanent error"));
+        assert!(line.contains("otlphttp/sentry-3a0c9975"));
     }
 
     #[test]
@@ -424,6 +481,7 @@ mod tests {
             "http://127.0.0.1:1/v1/traces",
             &log,
             Duration::from_millis(800),
+            None,
         )
         .await;
         // Either Failed (request error) or Timeout (under 1s budget) is

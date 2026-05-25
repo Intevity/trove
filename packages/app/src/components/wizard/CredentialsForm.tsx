@@ -551,8 +551,16 @@ function renderFields(
             label="OTLP endpoint"
             value={draft.endpoint}
             onChange={(v) => setDraft({ ...draft, endpoint: v })}
-            placeholder="https://o<org>.ingest.sentry.io/api/<project>/otel/"
+            placeholder="https://o<org>.ingest.sentry.io/api/<project>/integration/otlp/"
             testId="sentry-endpoint"
+            helper={
+              <span>
+                Use Sentry&apos;s OTLP relay route (`/api/&lt;project&gt;/integration/otlp/`), not
+                the envelope endpoint. The otlphttp exporter appends `v1/traces` and `v1/logs`
+                automatically; Sentry self-hosted does not ingest OTLP metrics yet, so the metrics
+                path 404s by design.
+              </span>
+            }
           />
           <PasswordField
             label="X-Sentry-Auth header"
