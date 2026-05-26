@@ -25,6 +25,7 @@ pub mod cursor_cli;
 pub mod cursor_common;
 pub mod cursor_hook_codegen;
 pub mod cursor_ide;
+pub mod droid;
 pub mod gemini_cli;
 pub mod gemini_watcher;
 pub mod opencode;

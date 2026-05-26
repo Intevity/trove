@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use crate::adapters::{
     ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, claude_desktop,
     claude_desktop_watcher, cline, cline_watcher, codex_cli, codex_desktop, copilot_cli, cursor_cli,
-    cursor_ide, gemini_cli, gemini_watcher, opencode,
+    cursor_ide, droid, gemini_cli, gemini_watcher, opencode,
     qwen_code,
 };
 use crate::app_state::{
@@ -249,13 +249,13 @@ where
         // than a host-file patch. Same shape as Cline: synthetic preview,
         // synthetic apply, no host file touched.
         HarnessId::ClaudeDesktop => claude_desktop::preview(home, options),
+        HarnessId::Droid => droid::preview(home, options),
         // Detection-only harnesses: no adapter wired today. The UI keeps
         // the toggle disabled (via adapter_available = has_adapter()),
         // so this branch should never be hit in practice. Surface the
         // error explicitly so any accidental IPC call is informative
         // rather than a panic.
         HarnessId::JunieCli
-        | HarnessId::Droid
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
         | HarnessId::Forgecode => Err(IpcError::HarnessNotImplemented { id: harness_id }),
@@ -328,9 +328,9 @@ pub async fn apply_patch(
         // follow-on `spawn_tier3_watcher` + `upsert_harness` calls do
         // the real work (watcher up, state.json entry persisted).
         HarnessId::ClaudeDesktop => claude_desktop::apply(&home, &options),
+        HarnessId::Droid => droid::apply(&home, &options),
         // Detection-only harnesses: see comment in preview_patch_inner.
         HarnessId::JunieCli
-        | HarnessId::Droid
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
         | HarnessId::Forgecode => Err(IpcError::HarnessNotImplemented { id: harness_id }),
@@ -691,11 +691,11 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         // The follow-on watcher abort + state.json remove (below) does
         // the disable work.
         HarnessId::ClaudeDesktop => claude_desktop::revert(&home),
+        HarnessId::Droid => droid::revert(&home),
         // Detection-only harnesses: apply never succeeds, so revert is
         // a no-op. Returning Ok rather than HarnessNotImplemented keeps
         // a stray revert call from confusing the UI.
         HarnessId::JunieCli
-        | HarnessId::Droid
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
         | HarnessId::Forgecode => Ok(()),
@@ -1677,10 +1677,10 @@ pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         // lives there; the Harnesses tab uses this string only for the
         // "config path" tooltip).
         HarnessId::ClaudeDesktop => claude_desktop::config_path(home),
+        HarnessId::Droid => droid::config_path(home),
         // Detection-only harnesses: dotfile dir matches config_search_paths;
         // used only as a display tooltip in the Harnesses tab.
         HarnessId::JunieCli => home.join(".junie"),
-        HarnessId::Droid => home.join(".droid"),
         HarnessId::KimiCodeCli => home.join(".kimi"),
         HarnessId::Devin => home.join(".devin"),
         HarnessId::Forgecode => home.join(".forge"),
@@ -1877,7 +1877,10 @@ fn spawn_tier3_watcher(
             mappings,
             claude_desktop_watcher::DEFAULT_POLL_INTERVAL,
         )),
+        // Tier 1 native-OTLP harnesses need no watcher — the SDK pushes
+        // directly to the collector. Droid is included here.
         HarnessId::ClaudeCode
+        | HarnessId::Droid
         | HarnessId::CodexCli
         | HarnessId::CodexDesktop
         | HarnessId::CursorIde
@@ -1885,7 +1888,6 @@ fn spawn_tier3_watcher(
         | HarnessId::Opencode
         // Detection-only harnesses never spawn a watcher.
         | HarnessId::JunieCli
-        | HarnessId::Droid
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
         | HarnessId::Forgecode => None,

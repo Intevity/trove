@@ -695,6 +695,14 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // `service.name=claude-cowork` or `claude-desktop`. Tag both so
         // future renames don't silently drop `harness.id` assignment.
         HarnessId::ClaudeDesktop => &["claude-desktop", "claude-cowork"],
+        // Droid's SDK hardcodes `service.name=cli` which is too generic
+        // to filter on. We return a placeholder non-empty slice so Droid
+        // participates in the tag/diag pipeline loops (both gated by
+        // `!candidates.is_empty()`). The actual tagging and filtering use
+        // metric-name prefix matching via `metric_name_tag_prefix()`, not
+        // this service.name value. See `build_harness_tag_block` and
+        // `apply_diag_pipelines` for the special-case handling.
+        HarnessId::Droid => &["droid"],
         // Hook/watcher harnesses tag `harness.id` themselves in their
         // OTLP payload, and detection-only harnesses have no native OTEL
         // emission — neither contributes service.name candidates.
@@ -709,7 +717,6 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // catches both `codex-cli` and `codex` resource tags.
         | HarnessId::CodexDesktop
         | HarnessId::JunieCli
-        | HarnessId::Droid
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
         | HarnessId::Forgecode => &[],
@@ -1083,34 +1090,58 @@ fn apply_diag_pipelines(yaml: String, tag_harnesses: &[&HarnessMapping]) -> Stri
         return yaml;
     }
 
-    // Each filter processor drops records whose resource service.name
-    // doesn't match the harness's known candidates — the `outgoing_items`
-    // counter on the processor then equals the per-harness count for
-    // that signal type. One processor block carries `traces.span`,
-    // `metrics.datapoint`, and `logs.log_record` rules so the same
-    // processor can be plugged into all three diagnostic pipelines.
+    // Each filter processor drops records that don't belong to the
+    // harness, so the `outgoing_items` counter on the processor equals
+    // the per-harness count for that signal type.
+    //
+    // Standard harnesses match on resource `service.name`; metric-name-
+    // prefix harnesses (e.g. Droid, whose SDK ignores
+    // `OTEL_RESOURCE_ATTRIBUTES`) match on metric name prefix instead
+    // and use `metrics.metric` context rather than `metrics.datapoint`.
     let mut processor_defs = String::new();
     let mut pipeline_entries = String::new();
     for h in &diag {
         let suffix = harness_id_suffix(h.harness_id);
-        let names = native_service_name_candidates(h.harness_id);
-        let drop_clause = names
-            .iter()
-            .map(|n| format!("resource.attributes[\"service.name\"] != \"{n}\""))
-            .collect::<Vec<_>>()
-            .join(" and ");
 
         let _ = writeln!(processor_defs, "  filter/diag-{suffix}:");
         let _ = writeln!(processor_defs, "    error_mode: ignore");
-        let _ = writeln!(processor_defs, "    traces:");
-        let _ = writeln!(processor_defs, "      span:");
-        let _ = writeln!(processor_defs, "        - '{drop_clause}'");
-        let _ = writeln!(processor_defs, "    metrics:");
-        let _ = writeln!(processor_defs, "      datapoint:");
-        let _ = writeln!(processor_defs, "        - '{drop_clause}'");
-        let _ = writeln!(processor_defs, "    logs:");
-        let _ = writeln!(processor_defs, "      log_record:");
-        let _ = writeln!(processor_defs, "        - '{drop_clause}'");
+
+        if let Some(prefix) = h.harness_id.metric_name_tag_prefix() {
+            // Metric-name-prefix harness (e.g., Droid): filter by metric name
+            // rather than service.name. Droid emits metrics only — traces and
+            // logs are drop-all (`'true'` evaluates to true → record is dropped).
+            let _ = writeln!(processor_defs, "    traces:");
+            let _ = writeln!(processor_defs, "      span:");
+            let _ = writeln!(processor_defs, "        - 'true'");
+            let _ = writeln!(processor_defs, "    metrics:");
+            let _ = writeln!(processor_defs, "      metric:");
+            let _ = writeln!(
+                processor_defs,
+                "        - 'not IsMatch(name, \"^{prefix}\\\\.\")'"
+            );
+            let _ = writeln!(processor_defs, "    logs:");
+            let _ = writeln!(processor_defs, "      log_record:");
+            let _ = writeln!(processor_defs, "        - 'true'");
+        } else {
+            // Standard harness: drop records whose service.name doesn't match
+            // any of the harness's known candidates.
+            let names = native_service_name_candidates(h.harness_id);
+            let drop_clause = names
+                .iter()
+                .map(|n| format!("resource.attributes[\"service.name\"] != \"{n}\""))
+                .collect::<Vec<_>>()
+                .join(" and ");
+
+            let _ = writeln!(processor_defs, "    traces:");
+            let _ = writeln!(processor_defs, "      span:");
+            let _ = writeln!(processor_defs, "        - '{drop_clause}'");
+            let _ = writeln!(processor_defs, "    metrics:");
+            let _ = writeln!(processor_defs, "      datapoint:");
+            let _ = writeln!(processor_defs, "        - '{drop_clause}'");
+            let _ = writeln!(processor_defs, "    logs:");
+            let _ = writeln!(processor_defs, "      log_record:");
+            let _ = writeln!(processor_defs, "        - '{drop_clause}'");
+        }
 
         let _ = writeln!(pipeline_entries, "    traces/diag-{suffix}:");
         let _ = writeln!(pipeline_entries, "      receivers: [otlp]");
@@ -1183,37 +1214,80 @@ fn replace_pipeline_processors(yaml: &str, pipeline_name: &str, inserts: &str) -
 /// `harness.id` — keeps the dashboard filter consistent across signal
 /// types.
 fn build_harness_tag_block(synth: &[&HarnessMapping]) -> String {
-    let mut statements = String::new();
+    // Resource-context statements for standard harnesses: match on
+    // `service.name` resource attribute.
+    let mut resource_statements = String::new();
+    // Metric-context statement blocks for harnesses whose SDK ignores
+    // `OTEL_RESOURCE_ATTRIBUTES` — match on metric name prefix instead.
+    // Each entry is a full `- context: metric\n  statements:\n  - ...` block.
+    let mut metric_name_blocks = String::new();
+
     for h in synth {
         let candidates = native_service_name_candidates(h.harness_id);
         if candidates.is_empty() {
             continue;
         }
         let harness_id_str = harness_id_suffix(h.harness_id);
-        for service_name in candidates {
+        if let Some(prefix) = h.harness_id.metric_name_tag_prefix() {
+            // Metric-name-prefix harness (e.g., Droid): tag by metric name.
+            // Only emitted in metric_statements (harness emits no logs/traces).
+            let label = h.harness_id.label();
+            let _ = writeln!(metric_name_blocks, "      - context: metric");
+            let _ = writeln!(metric_name_blocks, "        statements:");
             let _ = writeln!(
-                statements,
-                "          - 'set(attributes[\"harness.id\"], \"{harness_id_str}\") where attributes[\"service.name\"] == \"{service_name}\"'"
+                metric_name_blocks,
+                "          - 'set(resource.attributes[\"harness.id\"], \"{harness_id_str}\") where IsMatch(name, \"^{prefix}\\\\.\")'"
             );
             let _ = writeln!(
-                statements,
-                "          - 'set(attributes[\"harness.name\"], \"{}\") where attributes[\"service.name\"] == \"{service_name}\"'",
-                h.harness_id.label(),
+                metric_name_blocks,
+                "          - 'set(resource.attributes[\"harness.name\"], \"{label}\") where IsMatch(name, \"^{prefix}\\\\.\")'"
             );
+        } else {
+            // Standard harness: tag by service.name resource attribute.
+            for service_name in candidates {
+                let _ = writeln!(
+                    resource_statements,
+                    "          - 'set(attributes[\"harness.id\"], \"{harness_id_str}\") where attributes[\"service.name\"] == \"{service_name}\"'"
+                );
+                let _ = writeln!(
+                    resource_statements,
+                    "          - 'set(attributes[\"harness.name\"], \"{}\") where attributes[\"service.name\"] == \"{service_name}\"'",
+                    h.harness_id.label(),
+                );
+            }
         }
     }
 
-    if statements.is_empty() {
+    if resource_statements.is_empty() && metric_name_blocks.is_empty() {
         return String::new();
     }
 
     let mut block = String::new();
     let _ = writeln!(block, "  transform/harness-tag:");
-    for kind in ["metric_statements", "log_statements", "trace_statements"] {
-        let _ = writeln!(block, "    {kind}:");
+
+    // metric_statements: resource-context (standard harnesses) + metric-context
+    // (metric-name-prefix harnesses like Droid).
+    let _ = writeln!(block, "    metric_statements:");
+    if !resource_statements.is_empty() {
         let _ = writeln!(block, "      - context: resource");
         let _ = writeln!(block, "        statements:");
-        block.push_str(&statements);
+        block.push_str(&resource_statements);
+    }
+    block.push_str(&metric_name_blocks);
+
+    // log_statements and trace_statements: resource-context only (metric-name-prefix
+    // harnesses like Droid emit no logs or traces, so they need no entry here).
+    for kind in ["log_statements", "trace_statements"] {
+        let _ = writeln!(block, "    {kind}:");
+        if resource_statements.is_empty() {
+            // Only metric-name-prefix harnesses present — emit empty list
+            // so the YAML key is structurally valid but no-op.
+            let _ = writeln!(block, "      []");
+        } else {
+            let _ = writeln!(block, "      - context: resource");
+            let _ = writeln!(block, "        statements:");
+            block.push_str(&resource_statements);
+        }
     }
     block
 }

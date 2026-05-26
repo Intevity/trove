@@ -440,6 +440,240 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
+// ---------------------------------------------------------------------------
+// ExportSpec — plain `export KEY=VALUE` shell-rc adapters
+// ---------------------------------------------------------------------------
+//
+// Some harnesses (e.g. Droid) are configured exclusively via environment
+// variables; they need no shell-function wrapper, just a line like:
+//
+//   export OTEL_TELEMETRY_ENDPOINT=http://127.0.0.1:4318
+//
+// `ExportSpec` drives a parallel set of public functions that follow the
+// same atomic-write + backup + fence pattern as the `WrapperSpec` trio,
+// but render `export K=V` lines instead of function definitions.
+//
+// Legacy migration: if the user has a pre-namespace `# trove:start` block
+// whose body contains `legacy_body_probe`, the first `apply` replaces it
+// in-place with the namespaced fence — dropping any vars that the new
+// adapter intentionally does not write (e.g. `OTEL_RESOURCE_ATTRIBUTES`).
+
+/// Spec for shell-RC adapters that inject plain `export KEY=VALUE` lines
+/// rather than shell-function wrappers.
+///
+/// `legacy_body_probe`: when `Some`, enables migration of a legacy
+/// un-namespaced `# trove:start` block whose body contains the probe
+/// string. On the next `apply`, that block is replaced in-place with the
+/// namespaced `# trove:{adapter_id}:start` form.
+#[derive(Clone, Debug)]
+pub struct ExportSpec {
+    /// Fence namespace: `# trove:{adapter_id}:start` / `# trove:{adapter_id}:end`.
+    pub adapter_id: &'static str,
+    /// Key-value pairs to write as `export K=V` lines (in order).
+    pub vars: &'static [(&'static str, &'static str)],
+    /// If `Some`, adopt a legacy un-namespaced block whose body contains
+    /// this string. `None` skips legacy detection.
+    pub legacy_body_probe: Option<&'static str>,
+}
+
+/// Render the managed export block for `spec` — one `export K=V\n` per var.
+#[must_use]
+pub fn build_export_block(spec: &ExportSpec) -> String {
+    let mut out = String::new();
+    for (k, v) in spec.vars {
+        let _ = writeln!(out, "export {k}={v}");
+    }
+    out
+}
+
+/// Insert or replace this adapter's managed export block in `content`.
+/// Uses `locate_export_block` so a matching legacy block is migrated.
+#[must_use]
+fn upsert_export_block(content: &str, block: &str, spec: &ExportSpec) -> String {
+    if let Some((start, end)) = locate_export_block(content, spec) {
+        let mut out = String::with_capacity(content.len() + block.len());
+        out.push_str(&content[..start]);
+        out.push_str(&render_fenced(block, spec.adapter_id));
+        out.push_str(&content[end..]);
+        out
+    } else {
+        let mut out = String::with_capacity(content.len() + block.len() + 64);
+        out.push_str(content);
+        if !content.is_empty() && !content.ends_with('\n') {
+            out.push('\n');
+        }
+        if !content.is_empty() && !content.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str(&render_fenced(block, spec.adapter_id));
+        out
+    }
+}
+
+/// Apply Trove's managed export block to the primary shell rc file.
+/// Atomic write + backup. Returns the resulting `TrovePatch` (or
+/// `IpcError::Internal` if no shell rc exists).
+pub fn apply_export_to_primary_shell_rc(
+    home: &Path,
+    spec: &ExportSpec,
+    _opts: &ApplyOptions,
+) -> Result<TrovePatch, IpcError> {
+    let path = primary_shell_rc(home).ok_or_else(|| IpcError::Internal {
+        reason: "no shell rc file (~/.zshrc, ~/.bashrc, fish/config.fish) exists; create one before enabling".into(),
+    })?;
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    let block = build_export_block(spec);
+    let new_content = upsert_export_block(&current, &block, spec);
+
+    if new_content != current {
+        backup_file(&path).map_err(|e| IpcError::Io {
+            path: path.display().to_string(),
+            reason: format!("backup failed: {e}"),
+        })?;
+        write_atomic(&path, new_content.as_bytes()).map_err(|e| IpcError::Io {
+            path: path.display().to_string(),
+            reason: e.to_string(),
+        })?;
+        let _ = prune_backups(&path, BACKUPS_TO_KEEP);
+    }
+
+    Ok(TrovePatch {
+        managed_block_hash: sha256_hex(block.as_bytes()),
+        file_hash_at_last_write: sha256_hex(new_content.as_bytes()),
+        format: Format::Shell,
+        last_written_region_payload: block,
+    })
+}
+
+/// Compute the diff for `apply_export_to_primary_shell_rc` without writing.
+/// Status: `Idempotent` if the existing block is byte-identical to the
+/// proposed block; `Conflict` if a Trove block is present with different
+/// bytes; `Fresh` otherwise.
+pub fn preview_export_for_primary_shell_rc(
+    home: &Path,
+    spec: &ExportSpec,
+    _opts: &ApplyOptions,
+) -> Result<PatchPreview, IpcError> {
+    let path = primary_shell_rc(home).ok_or_else(|| IpcError::Internal {
+        reason: "no shell rc file exists; create ~/.zshrc or ~/.bashrc before enabling".into(),
+    })?;
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    let proposed = build_export_block(spec);
+    let new_content = upsert_export_block(&current, &proposed, spec);
+
+    let status = if let Some(existing) = extract_export_block(&current, spec) {
+        if existing.trim() == proposed.trim() {
+            PreviewStatus::Idempotent
+        } else {
+            PreviewStatus::Conflict
+        }
+    } else {
+        PreviewStatus::Fresh
+    };
+
+    Ok(PatchPreview {
+        config_path: path,
+        format: Format::Shell,
+        before: current,
+        after: new_content,
+        status,
+    })
+}
+
+/// Strip Trove's managed export block for one adapter from the primary
+/// shell rc file. No-op when no block is present. Also strips a matching
+/// legacy un-namespaced block via `locate_export_block`.
+pub fn revert_export_primary_shell_rc(home: &Path, spec: &ExportSpec) -> Result<(), IpcError> {
+    let Some(path) = primary_shell_rc(home) else {
+        return Ok(());
+    };
+    let Ok(current) = std::fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    if locate_export_block(&current, spec).is_none() {
+        return Ok(());
+    }
+    let stripped = strip_export_block(&current, spec);
+    if stripped != current {
+        backup_file(&path).map_err(|e| IpcError::Io {
+            path: path.display().to_string(),
+            reason: format!("backup failed: {e}"),
+        })?;
+        write_atomic(&path, stripped.as_bytes()).map_err(|e| IpcError::Io {
+            path: path.display().to_string(),
+            reason: e.to_string(),
+        })?;
+        let _ = prune_backups(&path, BACKUPS_TO_KEEP);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ExportSpec private helpers
+// ---------------------------------------------------------------------------
+
+/// Return the inner export block text for `spec` if present.
+#[must_use]
+fn extract_export_block(content: &str, spec: &ExportSpec) -> Option<String> {
+    let (start, end) = locate_export_block(content, spec)?;
+    let block = &content[start..end];
+    let mut lines: Vec<&str> = block.lines().collect();
+    let opens = lines.first().is_some_and(|l| {
+        let t = l.trim_start();
+        t.starts_with(&fence_start(spec.adapter_id)) || t.starts_with(LEGACY_FENCE_START)
+    });
+    let closes = lines.last().is_some_and(|l| {
+        let t = l.trim_start();
+        t.starts_with(&fence_end(spec.adapter_id)) || t.starts_with(LEGACY_FENCE_END)
+    });
+    if opens && closes {
+        lines.remove(0);
+        lines.pop();
+    }
+    Some(lines.join("\n"))
+}
+
+/// Strip this adapter's managed export block from `content`. Mirrors
+/// `strip_managed_block` but uses `locate_export_block`.
+#[must_use]
+fn strip_export_block(content: &str, spec: &ExportSpec) -> String {
+    let Some((start, end)) = locate_export_block(content, spec) else {
+        return content.to_string();
+    };
+    let prefix = &content[..start];
+    let prefix_trimmed: &str = if prefix.ends_with("\n\n") {
+        &prefix[..prefix.len() - 1]
+    } else {
+        prefix
+    };
+    let mut out = String::with_capacity(content.len());
+    out.push_str(prefix_trimmed);
+    let after = &content[end..];
+    out.push_str(after.trim_start_matches('\n'));
+    if !out.ends_with('\n') && !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+/// Locate the byte range covering this adapter's managed export block,
+/// including the fence start/end lines. Tries the namespaced fence first;
+/// falls back to a legacy un-namespaced block whose body contains
+/// `spec.legacy_body_probe` (when `Some`).
+fn locate_export_block(content: &str, spec: &ExportSpec) -> Option<(usize, usize)> {
+    if let Some(span) =
+        locate_fence_pair(content, &fence_start(spec.adapter_id), &fence_end(spec.adapter_id))
+    {
+        return Some(span);
+    }
+    // Legacy block adoption: adopt a pre-namespace block only when its
+    // body contains the probe string (confirming it belongs to this adapter).
+    let probe = spec.legacy_body_probe?;
+    let legacy = locate_fence_pair(content, LEGACY_FENCE_START, LEGACY_FENCE_END)?;
+    let body = &content[legacy.0..legacy.1];
+    if body.contains(probe) { Some(legacy) } else { None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

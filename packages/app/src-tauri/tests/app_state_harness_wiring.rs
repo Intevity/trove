@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 
 use trove_app::adapters::{
-    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, opencode, qwen_code,
+    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, droid, gemini_cli, opencode,
+    qwen_code,
 };
 use trove_app::app_state::{
     AppState, harness_config_from_apply, load_from_dir, remove_harness_in, upsert_harness_in,
@@ -58,6 +59,16 @@ fn apply_then_persist(
             opencode::apply(home, &options).unwrap(),
             opencode::config_path(home),
         ),
+        HarnessId::Droid => {
+            // Droid patches the primary shell RC, not a harness-specific
+            // config file. Seed an empty .zshrc so wrapper_common's
+            // "needs a shell rc" precondition is satisfied in the tempdir.
+            let zshrc = home.join(".zshrc");
+            if !zshrc.exists() {
+                std::fs::write(&zshrc, "").unwrap();
+            }
+            (droid::apply(home, &options).unwrap(), droid::config_path(home))
+        }
         other => panic!(
             "harness {other:?} should not reach apply_then_persist (cursor uses its own helper, Tier 3 isn't implemented yet)"
         ),
@@ -74,6 +85,7 @@ fn revert_then_unpersist(id: HarnessId, home: &Path, config_dir: &Path) {
         HarnessId::GeminiCli => gemini_cli::revert(home).unwrap(),
         HarnessId::QwenCode => qwen_code::revert(home).unwrap(),
         HarnessId::Opencode => opencode::revert(home).unwrap(),
+        HarnessId::Droid => droid::revert(home).unwrap(),
         other => panic!(
             "harness {other:?} should not reach revert_then_unpersist (cursor uses its own helper, Tier 3 isn't implemented yet)"
         ),
@@ -201,13 +213,21 @@ fn separate_harnesses_get_separate_entries() {
         cfg.path(),
         ApplyOptions::default(),
     );
+    // Droid patches the primary shell RC — seed it before applying.
+    std::fs::write(home.path().join(".zshrc"), "").unwrap();
+    apply_then_persist(
+        HarnessId::Droid,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+    );
 
     let state = load_from_dir(cfg.path()).unwrap();
-    assert_eq!(state.harnesses.len(), 4);
+    assert_eq!(state.harnesses.len(), 5);
     let ids: Vec<HarnessId> = state.harnesses.iter().map(|h| h.id).collect();
     for id in HarnessId::tier_1() {
         // ClaudeDesktop is adapter-backed by the audit-log tap but
-        // this test didn't apply it (it only applies the four
+        // this test didn't apply it (it only applies the five
         // explicitly named above). It's auto-enabled by a separate
         // path on first app boot, not by `apply_then_persist`.
         // CodexDesktop shares ~/.codex/config.toml with CodexCli via

@@ -52,7 +52,7 @@ pub fn default_state() -> MappingState {
             // the dashboard via detection but emit no telemetry until a
             // future adapter lands.
             defaults_for(HarnessId::JunieCli),
-            defaults_for(HarnessId::Droid),
+            defaults_for(HarnessId::Droid), // Tier 1 — full native-OTLP mapping
             defaults_for(HarnessId::KimiCodeCli),
             defaults_for(HarnessId::Devin),
             defaults_for(HarnessId::Forgecode),
@@ -89,10 +89,10 @@ pub fn defaults_for(id: HarnessId) -> HarnessMapping {
         HarnessId::Cline => cline_defaults(),
         HarnessId::Aider => aider_defaults(),
         HarnessId::CopilotCli => copilot_cli_defaults(),
+        HarnessId::Droid => droid_defaults(),
         // Detection-only harnesses: empty source list. The dashboard
         // shows the row, but no codegen overlay or watcher attaches.
         HarnessId::JunieCli
-        | HarnessId::Droid
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
         | HarnessId::Forgecode => detection_only_defaults(id),
@@ -741,6 +741,63 @@ fn copilot_cli_defaults() -> HarnessMapping {
     let mut m = aider_defaults();
     m.harness_id = HarnessId::CopilotCli;
     m
+}
+
+/// Droid (factory.ai CLI) Tier 1 native-OTLP defaults.
+///
+/// Droid emits all metrics under the `droid.*` namespace with delta
+/// temporality (60s flush interval).
+///
+/// Metrics included by default:
+/// - `droid.tool.invocations` → events(event.kind=tool.call)
+/// - `droid.tool.execution_time` → turn.duration(event.kind=tool.call)
+/// - `droid.code.files_modified` → events(event.kind=file.edit)
+/// - `droid.slash_command.invocations` → events(event.kind=chat.turn)
+///
+/// Metrics excluded by default:
+/// - `droid.mcp.tool_invocations` — overlap with `droid.tool.invocations`
+///   is unknown; excluded conservatively to avoid potential double-counting.
+/// - `droid.git.commits` / `droid.git.pull_requests` — no clean Tier A target.
+/// - `droid.code.files_read` / `droid.code.lines_modified` — no Tier A equivalent.
+/// - `droid.skill.invocations` / `droid.hook.invocations` — internal machinery.
+/// - `droid.auth.login_success` / `droid.repo.metadata` — no Tier A equivalent.
+fn droid_defaults() -> HarnessMapping {
+    HarnessMapping {
+        harness_id: HarnessId::Droid,
+        enabled: true,
+        sources: vec![
+            // Tool calls → events(event.kind=tool.call)
+            MappingSource::SynthesizeFromNative {
+                native_metric: "droid.tool.invocations".into(),
+                target_metric: TierAMetric::Events.id(),
+                attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([("event.kind".into(), "tool.call".into())]),
+            },
+            // Tool execution time (histogram, seconds) → turn.duration(event.kind=tool.call)
+            MappingSource::SynthesizeFromNative {
+                native_metric: "droid.tool.execution_time".into(),
+                target_metric: TierAMetric::TurnDuration.id(),
+                attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([("event.kind".into(), "tool.call".into())]),
+            },
+            // Files modified → events(event.kind=file.edit)
+            MappingSource::SynthesizeFromNative {
+                native_metric: "droid.code.files_modified".into(),
+                target_metric: TierAMetric::Events.id(),
+                attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([("event.kind".into(), "file.edit".into())]),
+            },
+            // Slash command invocations → events(event.kind=chat.turn)
+            // Slash commands are the primary user-initiated interaction unit.
+            MappingSource::SynthesizeFromNative {
+                native_metric: "droid.slash_command.invocations".into(),
+                target_metric: TierAMetric::Events.id(),
+                attribute_map: BTreeMap::new(),
+                inject_attributes: BTreeMap::from([("event.kind".into(), "chat.turn".into())]),
+            },
+        ],
+        cost_overrides: BTreeMap::new(),
+    }
 }
 
 #[cfg(test)]
