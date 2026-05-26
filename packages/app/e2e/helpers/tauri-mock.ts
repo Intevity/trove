@@ -42,7 +42,7 @@ export interface TauriMockState {
 
 export const DEFAULT_MOCK_STATE: TauriMockState = {
   appState: {
-    schemaVersion: 10,
+    schemaVersion: 11,
     backends: [],
     harnesses: [],
     autoUpdateEnabled: false,

@@ -15,7 +15,7 @@ const baseIdentity = { enabled: false, source: 'auto' as const, name: '', email:
 
 function appStateWithMappings(mappings: MappingState): AppState {
   return {
-    schemaVersion: 10,
+    schemaVersion: 11,
     backends: [],
     harnesses: [],
     autoUpdateEnabled: false,
