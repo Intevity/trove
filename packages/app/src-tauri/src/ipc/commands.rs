@@ -1767,6 +1767,16 @@ pub fn respawn_persisted_watchers(app: &tauri::AppHandle) {
 /// and swallowed — the worst case is the watcher just doesn't start
 /// this boot, which the user can fix by clicking Enable.
 fn autoenable_claude_desktop_on_first_run(app: &tauri::AppHandle) {
+    // Only proceed if Desktop is actually installed on this machine.
+    // Reuses the same detection signal the Harnesses tab shows so the
+    // two views stay in sync.
+    let desktop_detected = detect_all()
+        .into_iter()
+        .any(|h| h.id == HarnessId::ClaudeDesktop && h.detected);
+    if !desktop_detected {
+        tracing::debug!("autoenable: claude-desktop not detected on this machine; skipping");
+        return;
+    }
     let state = match app_state::load(app) {
         Ok(s) => s,
         Err(e) => {
@@ -2181,11 +2191,15 @@ mod tests {
         use crate::app_state::{HarnessConfig, upsert_harness_in};
 
         let dir = tempfile::tempdir().unwrap();
+        // Use the tempdir itself as the sessions root so the v11 migration's
+        // Path::exists() check preserves this entry (a non-existent path would
+        // be treated as a phantom entry and cleaned up).
+        let sessions_root = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions_root).unwrap();
         let entry = HarnessConfig {
             id: HarnessId::ClaudeDesktop,
             enabled: true,
-            config_path: "/Users/dev/Library/Application Support/Claude/local-agent-mode-sessions"
-                .to_string(),
+            config_path: sessions_root.to_string_lossy().into_owned(),
             last_patched_at: "2026-05-17T00:00:00Z".to_string(),
             trove_patch: TrovePatch {
                 managed_block_hash: "c".repeat(64),

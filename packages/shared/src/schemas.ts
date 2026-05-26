@@ -440,7 +440,7 @@ export type BackendInstance = z.infer<typeof BackendInstance>;
  *  schemaVersion to the current value so the next save persists at the
  *  current version. Older consumers cannot read newer files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(10),
+  schemaVersion: z.literal(11),
   backends: z.array(BackendInstance),
   harnesses: z.array(HarnessConfig),
   autoUpdateEnabled: z.boolean(),
