@@ -748,13 +748,21 @@ fn copilot_cli_defaults() -> HarnessMapping {
 /// Droid emits all metrics under the `droid.*` namespace with delta
 /// temporality (60s flush interval).
 ///
-/// Metrics included by default:
+/// **Native OTLP metrics** (via `SynthesizeFromNative`):
 /// - `droid.tool.invocations` → events(event.kind=tool.call)
 /// - `droid.tool.execution_time` → turn.duration(event.kind=tool.call)
 /// - `droid.code.files_modified` → events(event.kind=file.edit)
 /// - `droid.slash_command.invocations` → events(event.kind=chat.turn)
 ///
-/// Metrics excluded by default:
+/// **Log-watcher metrics** (via `HookRule`, sourced from
+/// `crate::adapters::droid_watcher`):
+/// - `droid.tokens.input` → tokens(direction=input) — full-price new input tokens
+/// - `droid.tokens.output` → tokens(direction=output)
+/// - `droid.tokens.cache_read` → tokens(`direction=cache_read`) — cache-read tokens
+/// - `droid.cost` → cost.usd(cost.method=estimated) — from contextCount + outputTokens;
+///   cacheReadInputTokens excluded (billed at a lower rate; ~10% underestimate)
+///
+/// **Excluded by default** (native OTLP):
 /// - `droid.mcp.tool_invocations` — overlap with `droid.tool.invocations`
 ///   is unknown; excluded conservatively to avoid potential double-counting.
 /// - `droid.git.commits` / `droid.git.pull_requests` — no clean Tier A target.
@@ -794,6 +802,39 @@ fn droid_defaults() -> HarnessMapping {
                 target_metric: TierAMetric::Events.id(),
                 attribute_map: BTreeMap::new(),
                 inject_attributes: BTreeMap::from([("event.kind".into(), "chat.turn".into())]),
+            },
+            // droid_watcher hook rules — the log watcher emits per-call
+            // observations against these `when` keys. Users can disable
+            // or retarget any of them via the Mappings editor; the watcher
+            // re-reads this table on every poll so edits take effect
+            // without a restart.
+            MappingSource::HookRule {
+                when: "droid.tokens.input".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "input"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "droid.tokens.output".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "output"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "droid.tokens.cache_read".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "cache_read"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "droid.cost".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::CostUsd.id(),
+                    attributes: attr("cost.method", "estimated"),
+                }),
             },
         ],
         cost_overrides: BTreeMap::new(),

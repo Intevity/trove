@@ -1107,9 +1107,15 @@ fn apply_diag_pipelines(yaml: String, tag_harnesses: &[&HarnessMapping]) -> Stri
         let _ = writeln!(processor_defs, "    error_mode: ignore");
 
         if let Some(prefix) = h.harness_id.metric_name_tag_prefix() {
-            // Metric-name-prefix harness (e.g., Droid): filter by metric name
-            // rather than service.name. Droid emits metrics only — traces and
-            // logs are drop-all (`'true'` evaluates to true → record is dropped).
+            // Metric-name-prefix harness (e.g., Droid): primary identity signal
+            // is the metric name prefix because the SDK ignores
+            // OTEL_RESOURCE_ATTRIBUTES and emits service.name="cli" (too
+            // generic). Supplemental log-watcher traffic uses a different
+            // naming convention (`trove.harness.*`) but the watcher explicitly
+            // sets service.name=<harness-id> on every payload, so we OR the two
+            // conditions: pass if name matches the prefix OR service.name matches
+            // the harness id. Traces/logs are drop-all (native SDK only emits
+            // metrics; watcher emits metrics only).
             let _ = writeln!(processor_defs, "    traces:");
             let _ = writeln!(processor_defs, "      span:");
             let _ = writeln!(processor_defs, "        - 'true'");
@@ -1117,7 +1123,7 @@ fn apply_diag_pipelines(yaml: String, tag_harnesses: &[&HarnessMapping]) -> Stri
             let _ = writeln!(processor_defs, "      metric:");
             let _ = writeln!(
                 processor_defs,
-                "        - 'not IsMatch(name, \"^{prefix}\\\\.\")'"
+                "        - 'not IsMatch(name, \"^{prefix}\\\\.\") and resource.attributes[\"service.name\"] != \"{suffix}\"'"
             );
             let _ = writeln!(processor_defs, "    logs:");
             let _ = writeln!(processor_defs, "      log_record:");

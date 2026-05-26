@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use crate::adapters::{
     ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, claude_desktop,
     claude_desktop_watcher, cline, cline_watcher, codex_cli, codex_desktop, copilot_cli, cursor_cli,
-    cursor_ide, droid, gemini_cli, gemini_watcher, opencode,
+    cursor_ide, droid, droid_watcher, gemini_cli, gemini_watcher, opencode,
     qwen_code,
 };
 use crate::app_state::{
@@ -1867,6 +1867,16 @@ fn spawn_tier3_watcher(
             mappings,
             gemini_watcher::DEFAULT_POLL_INTERVAL,
         )),
+        // Droid emits OTLP natively for tool / event metrics (Tier 1)
+        // but the factory.ai SDK writes no token or cost data over that
+        // path. The log watcher tails ~/.factory/logs/droid-log-single.log
+        // for per-call token / cost data to supplement the native signal.
+        HarnessId::Droid => Some(droid_watcher::spawn(
+            droid_watcher::log_path(home),
+            options.clone(),
+            mappings,
+            droid_watcher::DEFAULT_POLL_INTERVAL,
+        )),
         // Claude Desktop (Cowork) has no admin-OTLP path that actually
         // works upstream (Anthropic #39471, #38984). We tail
         // `audit.jsonl` files Cowork writes per session and synthesise
@@ -1877,10 +1887,10 @@ fn spawn_tier3_watcher(
             mappings,
             claude_desktop_watcher::DEFAULT_POLL_INTERVAL,
         )),
-        // Tier 1 native-OTLP harnesses need no watcher — the SDK pushes
-        // directly to the collector. Droid is included here.
+        // Tier 1 native-OTLP harnesses that need no supplemental watcher
+        // — the SDK pushes directly to the collector and covers all Tier A
+        // metric categories.
         HarnessId::ClaudeCode
-        | HarnessId::Droid
         | HarnessId::CodexCli
         | HarnessId::CodexDesktop
         | HarnessId::CursorIde

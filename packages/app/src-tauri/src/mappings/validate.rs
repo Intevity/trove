@@ -37,7 +37,7 @@ fn allowed_values(key: &str) -> Option<&'static [&'static str]> {
             "session.start",
             "session.end",
         ]),
-        "direction" => Some(&["input", "output"]),
+        "direction" => Some(&["input", "output", "cache_read"]),
         "cost.method" => Some(&["exact", "estimated"]),
         "error.kind" => Some(&[
             "rate_limit",
