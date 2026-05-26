@@ -29,4 +29,8 @@ pre-push:
       run: cargo clippy --manifest-path packages/app/src-tauri/Cargo.toml --all-targets -- -D warnings
     cargo-test:
       glob: '*.{rs,toml}'
-      run: cargo test --manifest-path packages/app/src-tauri/Cargo.toml --workspace
+      # --test-threads=1 serialises integration tests that bind to TCP ports
+      # (wizard_test_export stubs). The unit-test crate still runs its own
+      # tests in parallel internally; only the cross-crate test runner is
+      # serialised, so wall-clock impact is small.
+      run: cargo test --manifest-path packages/app/src-tauri/Cargo.toml --workspace -- --test-threads=1
