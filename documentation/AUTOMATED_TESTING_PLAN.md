@@ -215,9 +215,9 @@ in [`harness-platform-matrix.md`](harness-platform-matrix.md) per cell.
 | claude-code         | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
 | gemini-cli          | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
 | cursor-cli          | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
-| claude-desktop (op) | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ]           | [ ]          |
-| cursor-ide (op)     | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ]           | [ ]          |
-| cline (op)          | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ]           | [ ]          |
+| claude-desktop (op) | [ ]           | [ ]               | [ ]           | [x]          | [ ]              | [ ]           | [ ] _(⊕)_    |
+| cursor-ide (op)     | [ ]           | [ ]               | [ ]           | [x]          | [ ]              | [ ]           | [ ]          |
+| cline (op)          | [ ] _(⊛)_     | [ ] _(⊛)_         | [ ] _(⊛)_     | [ ] _(⊛)_    | [ ] _(⊛)_        | [ ] _(⊛)_     | [ ] _(⊛)_    |
 | codex-cli           | [x]           | [x]               | [x]           | [x]          | [x] _(☆ spans)_  | [x]           | [x]          |
 | qwen-code           | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
 | opencode            | [ ] _(◊)_     | [x]               | [ ] _(◊)_     | [x]          | [ ] _(◊)_        | [ ] _(◊)_     | [ ] _(◊)_    |

@@ -742,7 +742,15 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // exports `harness.id=claude-code` and codex inherits it). The
         // transform's `set` is idempotent, so re-tagging from the
         // wrapper's own `service.name` is always safe.
-        HarnessId::CursorCli => &["cursor-cli"],
+        // Bug L (2026-05-27): the Cursor IDE hook path emits with
+        // `service.name=cursor` (the IDE's own product identifier),
+        // while cursor-cli's wrapper-emitted OTLP uses `cursor-cli`.
+        // Both map to the same harness (Trove doesn't distinguish IDE
+        // vs CLI in the matrix beyond row labelling). Listing both
+        // service.names here lets the harness-tag transform stamp
+        // `harness.id=cursor-cli` regardless of which path the record
+        // arrived from.
+        HarnessId::CursorCli => &["cursor-cli", "cursor"],
         HarnessId::Aider => &["aider"],
         HarnessId::CopilotCli => &["copilot-cli"],
         // Detection-only harnesses and hook-only emitters have no native
@@ -1781,6 +1789,16 @@ mod tests {
                 "{wrapper} must appear in the harness-tag transform's matcher list"
             );
         }
+
+        // Bug L regression lock — Cursor IDE hooks emit
+        // `service.name=cursor` (not `cursor-cli`). Without an explicit
+        // candidate the harness-tag transform stamps `harness.id=cursor`,
+        // which doesn't match the matrix's `cursor-cli` row. See the
+        // 2026-05-27 ◍ run-log entry for the live observation.
+        assert!(
+            out.contains("\"service.name\"] == \"cursor\""),
+            "Cursor IDE alias `cursor` must appear in the harness-tag transform's matcher list"
+        );
     }
 
     #[test]
