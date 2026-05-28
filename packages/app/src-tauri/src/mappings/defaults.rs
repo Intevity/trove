@@ -758,7 +758,7 @@ fn copilot_cli_defaults() -> HarnessMapping {
 /// `crate::adapters::droid_watcher`):
 /// - `droid.tokens.input` → tokens(direction=input) — full-price new input tokens
 /// - `droid.tokens.output` → tokens(direction=output)
-/// - `droid.tokens.cache_read` → tokens(`direction=cache_read`) — cache-read tokens
+/// - `droid.tokens.cache_read` → tokens(`direction=cacheRead`) — cache-read tokens
 /// - `droid.cost` → cost.usd(cost.method=estimated) — from contextCount + outputTokens;
 ///   cacheReadInputTokens excluded (billed at a lower rate; ~10% underestimate)
 ///
@@ -826,7 +826,7 @@ fn droid_defaults() -> HarnessMapping {
                 when: "droid.tokens.cache_read".into(),
                 emit: Some(HookEmit {
                     metric: TierAMetric::Tokens.id(),
-                    attributes: attr("direction", "cache_read"),
+                    attributes: attr("direction", "cacheRead"),
                 }),
             },
             MappingSource::HookRule {

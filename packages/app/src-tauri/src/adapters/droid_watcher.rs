@@ -459,7 +459,7 @@ mod tests {
         let directions: Vec<&str> = dps.iter().filter_map(|dp| direction_of(dp)).collect();
         assert!(directions.contains(&"input"), "missing direction=input");
         assert!(directions.contains(&"output"), "missing direction=output");
-        assert!(directions.contains(&"cache_read"), "missing direction=cache_read");
+        assert!(directions.contains(&"cacheRead"), "missing direction=cacheRead");
     }
 
     #[test]
@@ -475,8 +475,8 @@ mod tests {
         let tokens = metric_by_name(&payload, "trove.harness.tokens").unwrap();
         let dps = tokens["sum"]["dataPoints"].as_array().unwrap();
         assert!(
-            !dps.iter().any(|dp| direction_of(dp) == Some("cache_read")),
-            "zero cache_read_input_tokens must not emit a cache_read data point"
+            !dps.iter().any(|dp| direction_of(dp) == Some("cacheRead")),
+            "zero cache_read_input_tokens must not emit a cacheRead data point"
         );
     }
 

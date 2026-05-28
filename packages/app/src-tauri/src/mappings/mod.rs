@@ -488,7 +488,7 @@ fn inject_missing_droid_watcher_hook_rules(sources: &mut Vec<MappingSource>) -> 
     const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         ("droid.tokens.input",      "tokens",   "direction",   "input"),
         ("droid.tokens.output",     "tokens",   "direction",   "output"),
-        ("droid.tokens.cache_read", "tokens",   "direction",   "cache_read"),
+        ("droid.tokens.cache_read", "tokens",   "direction",   "cacheRead"),
         ("droid.cost",              "cost.usd", "cost.method", "estimated"),
     ];
     let mut changed = false;
