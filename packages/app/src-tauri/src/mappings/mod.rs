@@ -498,10 +498,10 @@ fn inject_missing_droid_watcher_hook_rules(sources: &mut Vec<MappingSource>) -> 
         });
         if !already_present {
             sources.push(MappingSource::HookRule {
-                when: when_key.to_string(),
+                when: (*when_key).to_string(),
                 emit: Some(HookEmit {
-                    metric: metric.to_string(),
-                    attributes: BTreeMap::from([(attr_k.to_string(), attr_v.to_string())]),
+                    metric: (*metric).to_string(),
+                    attributes: BTreeMap::from([((*attr_k).to_string(), (*attr_v).to_string())]),
                 }),
             });
             changed = true;

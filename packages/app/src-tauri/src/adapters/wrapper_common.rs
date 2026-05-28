@@ -127,10 +127,10 @@ pub struct ExportSpec {
 #[derive(Clone, Copy, Debug)]
 pub enum LegacyProbe<'a> {
     /// Adopt a legacy block if its body defines a shell function named
-    /// `name() {` for any of the given names (WrapperSpec adapters).
+    /// `name() {` for any of the given names (`WrapperSpec` adapters).
     FunctionNames(&'a [&'static str]),
     /// Adopt a legacy block if its body contains this literal string
-    /// (ExportSpec adapters).
+    /// (`ExportSpec` adapters).
     BodyContains(&'a str),
 }
 
@@ -500,10 +500,12 @@ mod tests {
     const AIDER_NAMES: &[&str] = &["aider"];
     const COPILOT_NAMES: &[&str] = &["copilot", "gh-copilot"];
 
+    #[allow(clippy::unnecessary_wraps)]
     fn aider_legacy() -> Option<LegacyProbe<'static>> {
         Some(LegacyProbe::FunctionNames(AIDER_NAMES))
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn copilot_legacy() -> Option<LegacyProbe<'static>> {
         Some(LegacyProbe::FunctionNames(COPILOT_NAMES))
     }
