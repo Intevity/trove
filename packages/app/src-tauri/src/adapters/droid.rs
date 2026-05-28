@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 
 use super::wrapper_common::{
-    ExportSpec, apply_export_to_primary_shell_rc, preview_export_for_primary_shell_rc,
-    primary_shell_rc, revert_export_primary_shell_rc,
+    ExportSpec, LegacyProbe, apply_to_primary_shell_rc, build_export_block,
+    preview_for_primary_shell_rc, primary_shell_rc, revert_primary_shell_rc,
 };
 use super::{ApplyOptions, PatchPreview, TrovePatch};
 use crate::ipc::IpcError;
@@ -42,16 +42,32 @@ pub fn config_path(home: &Path) -> PathBuf {
     primary_shell_rc(home).unwrap_or_else(|| home.join(".zshrc"))
 }
 
-pub fn preview(home: &Path, opts: &ApplyOptions) -> Result<PatchPreview, IpcError> {
-    preview_export_for_primary_shell_rc(home, &SPEC, opts)
+pub fn preview(home: &Path, _opts: &ApplyOptions) -> Result<PatchPreview, IpcError> {
+    let body = build_export_block(&SPEC);
+    preview_for_primary_shell_rc(
+        home,
+        SPEC.adapter_id,
+        &body,
+        SPEC.legacy_body_probe.map(LegacyProbe::BodyContains),
+    )
 }
 
-pub fn apply(home: &Path, opts: &ApplyOptions) -> Result<TrovePatch, IpcError> {
-    apply_export_to_primary_shell_rc(home, &SPEC, opts)
+pub fn apply(home: &Path, _opts: &ApplyOptions) -> Result<TrovePatch, IpcError> {
+    let body = build_export_block(&SPEC);
+    apply_to_primary_shell_rc(
+        home,
+        SPEC.adapter_id,
+        &body,
+        SPEC.legacy_body_probe.map(LegacyProbe::BodyContains),
+    )
 }
 
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    revert_export_primary_shell_rc(home, &SPEC)
+    revert_primary_shell_rc(
+        home,
+        SPEC.adapter_id,
+        SPEC.legacy_body_probe.map(LegacyProbe::BodyContains),
+    )
 }
 
 #[cfg(test)]
