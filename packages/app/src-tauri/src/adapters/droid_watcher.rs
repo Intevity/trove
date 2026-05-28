@@ -709,12 +709,10 @@ mod tests {
     #[test]
     fn session_delta_returns_none_when_no_token_usage() {
         let mut state = SessionDeltaMap::new();
-        let no_usage = format!(
-            "[2026-05-26T20:00:00Z] INFO: [Session] Saving session settings | Context: \
-             {{\"value\":{{\"sessionId\":\"s1\",\"path\":\"/tmp/x.json\",\"hasTokenUsage\":false}},\
-             \"tags\":{{\"platform\":\"linux\"}}}}"
-        );
-        assert!(parse_session_delta(&no_usage, &mut state).is_none());
+        let no_usage = "[2026-05-26T20:00:00Z] INFO: [Session] Saving session settings | Context: \
+             {\"value\":{\"sessionId\":\"s1\",\"path\":\"/tmp/x.json\",\"hasTokenUsage\":false},\
+             \"tags\":{\"platform\":\"linux\"}}";
+        assert!(parse_session_delta(no_usage, &mut state).is_none());
     }
 
     #[test]
