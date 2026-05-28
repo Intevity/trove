@@ -353,6 +353,7 @@ fn build_metrics_payload(
             &t.model,
             t.input_tokens,
             t.output_tokens,
+            0,
             &std::collections::BTreeMap::new(),
         ) {
             acc.observe_double_sum("gemini.cost", usd, &model_attr);

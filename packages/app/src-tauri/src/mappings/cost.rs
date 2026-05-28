@@ -75,21 +75,26 @@ pub fn lookup_rate(
     None
 }
 
-/// Convenience wrapper for converting an (`input_tokens`, `output_tokens`)
-/// pair into a USD figure using `lookup_rate`. Returns `None` when the
-/// model is unrecognized.
+/// Convenience wrapper for converting token counts into a USD figure using
+/// `lookup_rate`. Returns `None` when the model is unrecognized.
+///
+/// `cache_read_tokens` are billed at 0.1× the base input rate (Anthropic
+/// prompt-cache read pricing, confirmed May 2026). Pass `0` for models or
+/// callers where cache-read token counts are unavailable.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn estimate_cost_usd(
     model_name: &str,
     input_tokens: u64,
     output_tokens: u64,
+    cache_read_tokens: u64,
     overrides: &BTreeMap<String, CostOverride>,
 ) -> Option<f64> {
     let (input_rate, output_rate) = lookup_rate(model_name, overrides)?;
     let input = (input_tokens as f64 / 1000.0) * input_rate;
     let output = (output_tokens as f64 / 1000.0) * output_rate;
-    Some(input + output)
+    let cache_read = (cache_read_tokens as f64 / 1000.0) * input_rate * 0.1;
+    Some(input + output + cache_read)
 }
 
 #[cfg(test)]
@@ -133,8 +138,15 @@ mod tests {
     fn estimate_cost_does_the_math() {
         // 1000 input + 1000 output @ sonnet-4 ($3 + $15) = $18
         let usd =
-            estimate_cost_usd("claude-sonnet-4", 1000, 1000, &BTreeMap::new()).unwrap();
+            estimate_cost_usd("claude-sonnet-4", 1000, 1000, 0, &BTreeMap::new()).unwrap();
         assert!((usd - 18.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cache_read_tokens_add_ten_percent_of_input_rate() {
+        // 10 000 cache-read tokens @ sonnet-4 ($3/1k input * 0.1 * 10) = $3.00
+        let usd = estimate_cost_usd("claude-sonnet-4", 0, 0, 10_000, &BTreeMap::new()).unwrap();
+        assert!((usd - 3.0).abs() < f64::EPSILON);
     }
 
     #[test]
