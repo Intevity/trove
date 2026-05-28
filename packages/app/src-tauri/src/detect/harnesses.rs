@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use crate::adapters::wrapper_common;
 use crate::harness::HarnessId;
 use crate::safety::sentinels::{Format, extract_region};
 
@@ -62,9 +63,19 @@ pub fn detect(id: HarnessId, detector: &Detector) -> DetectedHarness {
         }
     }
 
-    let (telemetry, trove_region_present) = match config_path.as_deref() {
-        Some(path) => (read_telemetry(id, path), read_trove_region_present(id, path)),
-        None => (TelemetryStatus::Unknown, false),
+    // Droid's telemetry indicator lives in the shell RC (the
+    // `# trove:droid:start` fence), not in `~/.factory/settings.json`.
+    // Read it directly via the shell-rc helpers rather than routing through
+    // the config-file branches below.
+    let (telemetry, trove_region_present) = if id == HarnessId::Droid {
+        let t = check_droid_telemetry(&detector.home);
+        let region = matches!(t, TelemetryStatus::On);
+        (t, region)
+    } else {
+        match config_path.as_deref() {
+            Some(path) => (read_telemetry(id, path), read_trove_region_present(id, path)),
+            None => (TelemetryStatus::Unknown, false),
+        }
     };
 
     DetectedHarness {
@@ -242,6 +253,32 @@ fn check_cursor_telemetry(text: &str) -> TelemetryStatus {
         Ok(None) => TelemetryStatus::Off,
         Err(_) => TelemetryStatus::Unknown,
     }
+}
+
+/// Droid's telemetry signal lives in the primary shell RC, not in any
+/// harness config file. The namespaced `# trove:droid:start` fence
+/// is authoritative: its presence means Trove has installed the
+/// `OTEL_TELEMETRY_ENDPOINT` export, so telemetry is `On`.
+///
+/// A legacy un-namespaced `# trove:start` block that contains
+/// `OTEL_TELEMETRY_ENDPOINT` is treated as `Off` — the endpoint
+/// variable is present but hasn't been migrated to the per-adapter
+/// fence yet; the user should re-enable in the UI to migrate it.
+fn check_droid_telemetry(home: &Path) -> TelemetryStatus {
+    let Some(rc_path) = wrapper_common::primary_shell_rc(home) else {
+        return TelemetryStatus::Unknown;
+    };
+    let Ok(text) = std::fs::read_to_string(&rc_path) else {
+        return TelemetryStatus::Unknown;
+    };
+    if text.contains("# trove:droid:start") {
+        return TelemetryStatus::On;
+    }
+    // Legacy block present but not yet migrated to the namespaced fence.
+    if text.contains("# trove:start") && text.contains("OTEL_TELEMETRY_ENDPOINT") {
+        return TelemetryStatus::Off;
+    }
+    TelemetryStatus::Unknown
 }
 
 /// `OpenCode`'s telemetry signal is whether the `OTel` plugin is
