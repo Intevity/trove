@@ -49,13 +49,13 @@ filter/diag-droid:
   error_mode: ignore
   traces:
     span:
-      - 'true'          # drop all — Droid emits no traces
+      - 'true' # drop all — Droid emits no traces
   metrics:
     metric:
-      - 'not IsMatch(name, "^droid\\.")'   # drop non-droid metrics; keep droid.*
+      - 'not IsMatch(name, "^droid\\.")' # drop non-droid metrics; keep droid.*
   logs:
     log_record:
-      - 'true'          # drop all — Droid emits no logs
+      - 'true' # drop all — Droid emits no logs
 ```
 
 > **OTel filter semantics:** a condition evaluating to `true` **drops** the record; `false` passes it through. `'true'` and `'false'` are literal constant expressions. Using `'false'` as a "drop-all" is wrong — it passes everything through.
@@ -73,10 +73,11 @@ transform/harness-tag:
         - 'set(resource.attributes["harness.name"], "Droid") where IsMatch(name, "^droid\\.")'
     - context: resource
       statements:
-        - ...  # service.name-based tags for other harnesses
+        - ... # service.name-based tags for other harnesses
 ```
 
 `context: metric` in the OTel transform processor exposes:
+
 - `name` — the metric name
 - `resource.attributes["key"]` — readable and writable
 
@@ -107,6 +108,7 @@ droid
 ```
 
 **Prometheus internal metrics** at `http://127.0.0.1:8888/metrics`:
+
 - `otelcol_processor_incoming_items{processor="filter/diag-droid"}` — total records entering the filter
 - `otelcol_processor_outgoing_items{processor="filter/diag-droid"}` — records passing the filter (= Droid-attributed records)
 - `otelcol_processor_outgoing_items{processor="metricstransform/tierA-droid"}` — confirms `droid.*` metrics are being received and Tier A copies inserted
