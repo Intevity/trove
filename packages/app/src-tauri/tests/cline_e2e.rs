@@ -61,6 +61,7 @@ async fn cline_watcher_emits_otlp_log_for_a_fixture_task() {
         .subscribe();
         cline_watcher::run(
             tasks_dir,
+            std::path::PathBuf::from("/var/empty/trove-cline-cli-unused"),
             ApplyOptions::default(),
             mappings,
             Duration::from_millis(50),
@@ -129,6 +130,7 @@ async fn cline_watcher_emits_only_once_per_unchanged_task() {
         .subscribe();
         cline_watcher::run(
             tasks_dir,
+            std::path::PathBuf::from("/var/empty/trove-cline-cli-unused"),
             ApplyOptions::default(),
             mappings,
             Duration::from_millis(50),

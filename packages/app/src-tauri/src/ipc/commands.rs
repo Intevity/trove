@@ -1848,6 +1848,7 @@ fn spawn_tier3_watcher(
     let handle = match id {
         HarnessId::Cline => Some(cline_watcher::spawn(
             cline::tasks_dir(home),
+            cline::cli_sessions_dir(home),
             options.clone(),
             mappings,
             cline_watcher::DEFAULT_POLL_INTERVAL,

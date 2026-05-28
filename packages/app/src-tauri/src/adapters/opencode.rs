@@ -125,7 +125,23 @@ fn ensure_otel_plugin_installed(config_dir: &Path) {
         );
         return;
     }
-    let status = std::process::Command::new("npm")
+    // Resolve `npm` via `probe_path` (PATH + Homebrew + nvm/volta/fnm
+    // fallbacks). A GUI-launched Trove inherits launchd's minimal PATH
+    // and can't find npm under `~/.nvm/...`, which is exactly where
+    // npm lives for users without a Homebrew node. Without this
+    // explicit resolution the bootstrap silently fails on every
+    // Finder/Spotlight/Dock launch.
+    let Some(npm) = crate::detect::probe_path("npm") else {
+        tracing::warn!(
+            target: "opencode.adapter",
+            "could not resolve `npm` on PATH or via Homebrew/nvm/volta/fnm \
+             fallbacks; opencode will run without the OTLP plugin. \
+             Install Node.js or run `cd {} && npm install {OTEL_PLUGIN_PACKAGE}` manually.",
+            config_dir.display()
+        );
+        return;
+    };
+    let status = std::process::Command::new(&npm)
         .arg("install")
         .arg("--silent")
         .arg("--no-audit")

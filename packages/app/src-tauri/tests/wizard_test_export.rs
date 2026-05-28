@@ -298,6 +298,7 @@ async fn test_export_succeeds_against_a_stub_otlp_receiver() {
         "http://127.0.0.1:4318/v1/traces",
         &log_path,
         Duration::from_secs(5),
+        None,
     )
     .await;
 
@@ -356,6 +357,7 @@ async fn run_test_export_for_preset(
         "http://127.0.0.1:4318/v1/traces",
         &log_path,
         Duration::from_secs(5),
+        None,
     )
     .await;
 
@@ -483,6 +485,7 @@ async fn test_export_reports_failure_when_backend_unreachable() {
         "http://127.0.0.1:4318/v1/traces",
         &log_path,
         Duration::from_secs(5),
+        None,
     )
     .await;
 

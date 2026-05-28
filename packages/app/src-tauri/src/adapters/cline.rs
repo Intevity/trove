@@ -70,6 +70,23 @@ pub fn tasks_dir(home: &Path) -> PathBuf {
     cline_global_storage_root(home).join("tasks")
 }
 
+/// `~/.cline/data/sessions/` — Cline's standalone CLI (`npm i -g cline`,
+/// version 3.x+) writes session state here, separate from the VS Code
+/// extension's `globalStorage/.../tasks/` tree. Per-session layout is
+/// `<sid>/<sid>.json` (session meta) + `<sid>/<sid>.messages.json` (an
+/// object with `version`, `updated_at`, `messages[]`, `system_prompt`).
+/// Same row in the matrix; same `harness.id=cline` emission — Trove's
+/// watcher walks both dirs in one tick so the user gets coverage
+/// regardless of which interface they're using.
+///
+/// Path is hard-coded to the canonical `$HOME/.cline` location used by
+/// the npm-installed binary (the same path the CLI's own `--help`
+/// references). Tests pass an explicit `home`.
+#[must_use]
+pub fn cli_sessions_dir(home: &Path) -> PathBuf {
+    home.join(".cline").join("data").join("sessions")
+}
+
 /// Best-guess `VSCode` user-data dir. Cline's globalStorage lives under
 /// `<user_data>/User/globalStorage/<id>`. `home` is the test seam.
 fn vscode_user_data_dir(home: &Path) -> PathBuf {

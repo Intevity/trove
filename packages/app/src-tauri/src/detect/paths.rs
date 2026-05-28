@@ -72,10 +72,14 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
             // 2. globalStorage/<id> (extension has run at least once)
             // 3. .vscode/extensions/<id>-* (extension installed but not
             //    yet run; the suffix is a semver added by VSCode)
+            // 4. ~/.cline/data/sessions (standalone CLI, npm-installed
+            //    `cline` 3.x+) — same harness id, separate storage tree.
+            //    Either signal source triggers detection.
             // The watcher follows config_path() → globalStorage root.
             paths.push(crate::adapters::cline::tasks_dir(home));
             paths.push(crate::adapters::cline::cline_global_storage_root(home));
             paths.extend(cline_extension_dir_candidates(home));
+            paths.push(crate::adapters::cline::cli_sessions_dir(home));
         }
         // Sprint 9 PR 3 — Aider / Copilot CLI detect via PATH binary
         // only (`aider`, `gh`); no config dir to probe. The detector's
