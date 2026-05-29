@@ -304,7 +304,7 @@ fn render_exporter_block(
             // is a one-line change.
             env.insert(
                 endpoint_var.clone(),
-                Zeroizing::new(format!("https://api.{site}/api/intake/otlp/v1")),
+                Zeroizing::new(format!("https://api.{site}/api/intake/otlp")),
             );
             env.insert(key_var.clone(), resolver(&api_key.account)?);
             let name = format!("otlphttp/datadog-{suffix_lower}");
@@ -1527,7 +1527,7 @@ mod tests {
             .expect("endpoint env var");
         assert_eq!(
             endpoint_value.as_str(),
-            "https://api.datadoghq.com/api/intake/otlp/v1",
+            "https://api.datadoghq.com/api/intake/otlp",
         );
     }
 
