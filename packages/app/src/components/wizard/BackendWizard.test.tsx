@@ -115,12 +115,14 @@ describe('BackendWizard', () => {
     expect(screen.getByTestId('test-export-save-anyway')).toBeDefined();
   });
 
-  it('lets the user back out of the credentials step', () => {
+  it('lets the user back out of the credentials step', async () => {
     render(<BackendWizard onComplete={vi.fn()} />);
     fireEvent.click(screen.getByTestId('preset-honeycomb'));
     expect(screen.getByTestId('credentials-form')).toBeDefined();
     fireEvent.click(screen.getByTestId('credentials-form-back'));
-    expect(screen.getByTestId('preset-picker')).toBeDefined();
+    // handleBackToPicker is async (awaits dropPendingInstance), so the
+    // picker re-render lands on a microtask after the click returns.
+    expect(await screen.findByTestId('preset-picker')).toBeDefined();
   });
 
   it('surfaces ipc errors raised by add_backend', async () => {

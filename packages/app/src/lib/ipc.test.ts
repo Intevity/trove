@@ -320,7 +320,7 @@ describe('testExport', () => {
     invokeMock.mockResolvedValueOnce({ status: 'ok', detail: '1 trace exported' });
     const result = await testExport();
     expect(result.status).toBe('ok');
-    expect(invokeMock).toHaveBeenCalledWith('test_export', undefined);
+    expect(invokeMock).toHaveBeenCalledWith('test_export', {});
   });
 
   it('parses a failed result with detail', async () => {

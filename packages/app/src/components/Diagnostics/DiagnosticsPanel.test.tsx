@@ -314,7 +314,7 @@ describe('DiagnosticsPanel', () => {
       expect(row.getAttribute('data-status')).toBe('green');
       expect(row.textContent).toContain('received span');
     });
-    expect(invokeMock).toHaveBeenCalledWith('test_export', undefined);
+    expect(invokeMock).toHaveBeenCalledWith('test_export', {});
   });
 
   it('shows red backend row when the test export reports failed', async () => {
