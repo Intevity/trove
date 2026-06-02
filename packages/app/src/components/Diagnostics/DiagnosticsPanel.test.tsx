@@ -44,7 +44,7 @@ function appState(opts?: {
   harnesses?: HarnessConfig[];
 }): AppState {
   return {
-    schemaVersion: 10,
+    schemaVersion: 11,
     backends:
       opts?.backends === undefined
         ? [

@@ -189,7 +189,7 @@ fn datadog_env_endpoint_uses_user_site() {
     let r = render(&backend);
     assert_eq!(
         env_value(&r, "TROVE_DATADOG_ENDPOINT_11111111"),
-        "https://api.datadoghq.eu/api/intake/otlp/v1",
+        "https://api.datadoghq.eu/api/intake/otlp",
     );
     assert_eq!(
         env_keys(&r),
@@ -208,7 +208,7 @@ fn datadog_default_site_routes_to_us_intake() {
     };
     assert_eq!(
         env_value(&render(&backend), "TROVE_DATADOG_ENDPOINT_11111111"),
-        "https://api.datadoghq.com/api/intake/otlp/v1",
+        "https://api.datadoghq.com/api/intake/otlp",
     );
 }
 

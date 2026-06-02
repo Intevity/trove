@@ -55,7 +55,7 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 10;
+pub const CURRENT_SCHEMA_VERSION: u32 = 11;
 
 /// Serde helper that defaults a `bool` field to `true`. Used for opt-out
 /// settings whose absence in a migrated document should be interpreted
@@ -463,7 +463,7 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         })?;
 
     match preamble.schema_version {
-        // v2..=v10 migration. Earlier sprints added autoUpdateEnabled,
+        // v2..=v11 migration. Earlier sprints added autoUpdateEnabled,
         // identity, and mappings — all use `#[serde(default)]` so older
         // documents deserialize cleanly. v7 (multi-platform refactor)
         // replaces the single `backend` slot with a `backends` list; the
@@ -476,9 +476,12 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         // platform can be paused without deletion — v9 documents that
         // omit the field default to `true` via the `default_true` serde
         // fallback on the struct, so no value-level shim is required.
+        // v11 removes stale `claude-desktop` harness entries written by
+        // the pre-fix `autoenable_claude_desktop_on_first_run` on
+        // Linux/Windows machines where Desktop is not installed.
         // We re-stamp schema_version on the returned struct so the
         // next save persists the current version to disk.
-        2..=10 => {
+        2..=11 => {
             // Field-shape migrations applied at the JSON-value level so
             // we don't need to keep parallel legacy deserializer types
             // around. Applied in chronological order so a v2 document
@@ -488,6 +491,8 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
             //   (2) v6 → v7: `backend: Backend | null` → `backends: [BackendInstance]`.
             //   (3) v8 → v9: wrapper-adapter `trovePatch.format` `"yaml"`
             //       → `"shell"` (the new `Format::Shell` variant).
+            //   (4) v10 → v11: remove phantom `claude-desktop` entries
+            //       whose `configPath` doesn't exist on disk.
             let mut value: serde_json::Value =
                 serde_json::from_slice(&bytes).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
@@ -495,6 +500,7 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
             migrate_signoz_region_to_endpoint(&mut value);
             migrate_backend_to_backends(&mut value);
             migrate_wrapper_format_yaml_to_shell(&mut value);
+            migrate_remove_phantom_claude_desktop(&mut value);
             let mut state: AppState =
                 serde_json::from_value(value).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
@@ -650,6 +656,34 @@ fn migrate_wrapper_format_yaml_to_shell(value: &mut serde_json::Value) {
             );
         }
     }
+}
+
+/// v10 → v11: remove any `claude-desktop` harness entries whose
+/// `configPath` does not exist on disk. These were written by the
+/// pre-fix `autoenable_claude_desktop_on_first_run` on Linux/Windows
+/// machines where Desktop is not installed (the function called
+/// `claude_desktop::apply()` unconditionally, which always succeeds and
+/// records a macOS-specific path). Safe on macOS — the real sessions
+/// root exists → entry is kept. No-op when the harnesses array is
+/// absent or already clean.
+fn migrate_remove_phantom_claude_desktop(v: &mut serde_json::Value) {
+    let Some(harnesses) = v.get_mut("harnesses").and_then(|h| h.as_array_mut()) else {
+        return;
+    };
+    harnesses.retain(|entry| {
+        let is_desktop = entry
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            == Some("claude-desktop");
+        if !is_desktop {
+            return true;
+        }
+        let path = entry
+            .get("configPath")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        std::path::Path::new(path).exists()
+    });
 }
 
 /// Heuristic for detecting shell rc paths in `configPath` strings. The
@@ -1110,7 +1144,7 @@ mod tests {
     fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 10);
+        assert_eq!(s.schema_version, 11);
         assert!(s.backends.is_empty());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
@@ -1493,6 +1527,136 @@ mod tests {
         );
     }
 
+    // ── migrate_remove_phantom_claude_desktop ─────────────────────────────
+
+    #[test]
+    fn migrate_remove_phantom_helper_strips_nonexistent_path() {
+        // An entry whose configPath points to a path that doesn't exist
+        // on the current machine is a phantom — the migration must remove
+        // it so the Overview FlowChart and health counter stay accurate.
+        let mut value = serde_json::json!({
+            "harnesses": [
+                {
+                    "id": "claude-desktop",
+                    "configPath": "/nonexistent/path/that/cannot/possibly/exist/abc123"
+                }
+            ]
+        });
+        migrate_remove_phantom_claude_desktop(&mut value);
+        assert!(
+            value["harnesses"].as_array().unwrap().is_empty(),
+            "phantom claude-desktop entry should have been removed"
+        );
+    }
+
+    #[test]
+    fn migrate_remove_phantom_helper_keeps_entry_when_path_exists() {
+        // When the configPath points to a real directory (macOS with Desktop
+        // installed, or a test-provided tempdir), the entry must be kept.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().into_owned();
+        let mut value = serde_json::json!({
+            "harnesses": [
+                {
+                    "id": "claude-desktop",
+                    "configPath": path
+                }
+            ]
+        });
+        migrate_remove_phantom_claude_desktop(&mut value);
+        assert_eq!(
+            value["harnesses"].as_array().unwrap().len(), 1,
+            "real claude-desktop entry should be preserved"
+        );
+    }
+
+    #[test]
+    fn migrate_remove_phantom_helper_leaves_other_harnesses_alone() {
+        // Non-claude-desktop entries must pass through regardless of whether
+        // their configPath exists, so we don't accidentally disturb other harnesses.
+        let mut value = serde_json::json!({
+            "harnesses": [
+                {
+                    "id": "claude-code",
+                    "configPath": "/nonexistent/path/that/cannot/possibly/exist/abc123"
+                },
+                {
+                    "id": "gemini-cli",
+                    "configPath": "/another/nonexistent/path"
+                }
+            ]
+        });
+        migrate_remove_phantom_claude_desktop(&mut value);
+        assert_eq!(
+            value["harnesses"].as_array().unwrap().len(), 2,
+            "non-claude-desktop harnesses must not be touched"
+        );
+    }
+
+    // ── v10 → v11 round-trip ──────────────────────────────────────────────
+
+    #[test]
+    fn v10_state_removes_phantom_claude_desktop_entry_on_migration() {
+        // A v10 state.json written by the pre-fix autoenable path on Linux
+        // or Windows contains a claude-desktop entry with a macOS configPath
+        // that doesn't exist on the machine.  On load the v11 migration must
+        // strip the entry and re-stamp the version; on re-save the stale row
+        // must be absent from disk so the Overview and health counter are
+        // immediately correct after the first post-upgrade launch.
+        let dir = tempfile::tempdir().unwrap();
+        let v10_doc = serde_json::json!({
+            "schemaVersion": 10,
+            "backends": [],
+            "harnesses": [
+                {
+                    "id": "claude-desktop",
+                    "enabled": true,
+                    "configPath": "/Users/dev/Library/Application Support/Claude/local-agent-mode-sessions",
+                    "lastPatchedAt": "2026-01-01T00:00:00Z",
+                    "trovePatch": {
+                        "managedBlockHash": "c".repeat(64),
+                        "fileHashAtLastWrite": "",
+                        "format": "json",
+                        "lastWrittenRegionPayload": r#"{"harness":"claude-desktop"}"#
+                    },
+                    "options": {
+                        "logUserPrompts": false,
+                        "customAttributes": {}
+                    }
+                }
+            ],
+            "autoUpdateEnabled": false,
+            "launchAtStartupEnabled": true,
+            "identity": { "name": "", "email": "" },
+            "telemetryObserved": {}
+        });
+        std::fs::write(
+            dir.path().join("state.json"),
+            serde_json::to_vec_pretty(&v10_doc).unwrap(),
+        )
+        .unwrap();
+
+        let state = load_from_dir(dir.path()).unwrap();
+        assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(
+            state.harnesses.is_empty(),
+            "phantom claude-desktop entry should be stripped by v11 migration"
+        );
+
+        // Persist so we can inspect the on-disk representation.
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+        assert!(on_disk.contains("\"schemaVersion\": 11"));
+        // The harnesses list must not contain a claude-desktop entry.
+        // Note: mappings.harnesses still carries a "claude-desktop" mapping
+        // key (backfilled for all known IDs), so we check for the absence
+        // of the HarnessConfig `id` field specifically, not the string globally.
+        assert!(
+            !on_disk.contains("\"id\": \"claude-desktop\""),
+            "stale claude-desktop HarnessConfig row must not be written back to disk"
+        );
+    }
+
     #[test]
     fn v7_state_migrates_to_v8_with_launch_at_startup_defaulting_true() {
         // Existing v7 documents predate the launch_at_startup opt-out.
@@ -1602,7 +1766,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 10"));
+        assert!(on_disk.contains("\"schemaVersion\": 11"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1659,7 +1823,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 10"));
+        assert!(on_disk.contains("\"schemaVersion\": 11"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1751,7 +1915,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 10"));
+        assert!(on_disk.contains("\"schemaVersion\": 11"));
         assert!(on_disk.contains("\"mappings\""));
     }
 
@@ -1929,7 +2093,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 10"));
+        assert!(on_disk.contains("\"schemaVersion\": 11"));
         assert!(on_disk.contains("\"backends\""));
         assert!(!on_disk.contains("\"backend\":"));
     }

@@ -91,7 +91,7 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
         // contributes the config-dir detection signal; the dashboard
         // shows the row but keeps its toggle disabled.
         HarnessId::JunieCli => paths.push(home.join(".junie")),
-        HarnessId::Droid => paths.push(home.join(".droid")),
+        HarnessId::Droid => paths.push(home.join(".factory").join("settings.json")),
         HarnessId::KimiCodeCli => paths.push(home.join(".kimi")),
         HarnessId::Devin => paths.push(home.join(".devin")),
         HarnessId::Forgecode => paths.push(home.join(".forge")),

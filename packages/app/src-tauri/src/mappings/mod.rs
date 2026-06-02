@@ -427,6 +427,16 @@ impl MappingState {
             {
                 changed = true;
             }
+            // Phase-2 upgrade: Droid gained a supplemental log watcher that
+            // emits per-call tokens + cost via HookRules. Configs persisted
+            // before that change only have SynthesizeFromNative rows; inject
+            // the missing HookRule rows so the watcher's observations route
+            // to Tier A metrics without requiring a manual mapping reset.
+            if harness.harness_id == HarnessId::Droid
+                && inject_missing_droid_watcher_hook_rules(&mut harness.sources)
+            {
+                changed = true;
+            }
         }
         if self.schema_version != MAPPING_SCHEMA_VERSION {
             self.schema_version = MAPPING_SCHEMA_VERSION;
@@ -462,6 +472,42 @@ impl MappingState {
             })
             .collect()
     }
+}
+
+/// Inject the Phase-2 log-watcher `HookRule`s for Droid into a persisted
+/// config that only has the Phase-1 `SynthesizeFromNative` rows. This
+/// happens when Trove is upgraded in-place: the four `droid.tokens.*` /
+/// `droid.cost` `when` keys were not in the schema before the log watcher
+/// shipped, so the `MetricsAccumulator` silently drops every observation
+/// (no matching rule → no bucket → `is_empty()` guard returns `None`).
+///
+/// Only adds rules whose `when` key is absent — user-customised rules are
+/// left untouched. Idempotent: returns `false` when all four are already
+/// present.
+fn inject_missing_droid_watcher_hook_rules(sources: &mut Vec<MappingSource>) -> bool {
+    const DEFAULTS: &[(&str, &str, &str, &str)] = &[
+        ("droid.tokens.input",      "tokens",   "direction",   "input"),
+        ("droid.tokens.output",     "tokens",   "direction",   "output"),
+        ("droid.tokens.cache_read", "tokens",   "direction",   "cacheRead"),
+        ("droid.cost",              "cost.usd", "cost.method", "estimated"),
+    ];
+    let mut changed = false;
+    for (when_key, metric, attr_k, attr_v) in DEFAULTS {
+        let already_present = sources.iter().any(|s| {
+            matches!(s, MappingSource::HookRule { when, .. } if when == *when_key)
+        });
+        if !already_present {
+            sources.push(MappingSource::HookRule {
+                when: (*when_key).to_string(),
+                emit: Some(HookEmit {
+                    metric: (*metric).to_string(),
+                    attributes: BTreeMap::from([((*attr_k).to_string(), (*attr_v).to_string())]),
+                }),
+            });
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Coerce legacy `error.kind` inject values to the current closed-enum

@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use crate::ipc::IpcError;
 
-use super::wrapper_common::{self, WrapperSpec};
+use super::wrapper_common::{self, LegacyProbe, WrapperSpec};
 use super::{ApplyOptions, PatchPreview, TrovePatch};
 
 /// Shell function names the adapter installs. `copilot` covers the new
@@ -73,7 +73,14 @@ pub fn preview(
     opts: &ApplyOptions,
     wrapper_path: &Path,
 ) -> Result<PatchPreview, IpcError> {
-    wrapper_common::preview_for_primary_shell_rc(home, &spec(wrapper_path.to_path_buf()), opts)
+    let s = spec(wrapper_path.to_path_buf());
+    let body = wrapper_common::build_managed_block(&s, opts);
+    wrapper_common::preview_for_primary_shell_rc(
+        home,
+        s.adapter_id,
+        &body,
+        Some(LegacyProbe::FunctionNames(s.function_names)),
+    )
 }
 
 pub fn apply(
@@ -81,11 +88,22 @@ pub fn apply(
     opts: &ApplyOptions,
     wrapper_path: &Path,
 ) -> Result<TrovePatch, IpcError> {
-    wrapper_common::apply_to_primary_shell_rc(home, &spec(wrapper_path.to_path_buf()), opts)
+    let s = spec(wrapper_path.to_path_buf());
+    let body = wrapper_common::build_managed_block(&s, opts);
+    wrapper_common::apply_to_primary_shell_rc(
+        home,
+        s.adapter_id,
+        &body,
+        Some(LegacyProbe::FunctionNames(s.function_names)),
+    )
 }
 
 pub fn revert(home: &Path) -> Result<(), IpcError> {
-    wrapper_common::revert_primary_shell_rc(home, "copilot-cli", FUNCTION_NAMES)
+    wrapper_common::revert_primary_shell_rc(
+        home,
+        "copilot-cli",
+        Some(LegacyProbe::FunctionNames(FUNCTION_NAMES)),
+    )
 }
 
 /// Parse one JSON-line emitted by the bundled `trove-copilot` wrapper

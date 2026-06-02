@@ -109,11 +109,33 @@ impl HarnessId {
         &[
             Self::ClaudeCode,
             Self::ClaudeDesktop,
+            Self::Droid,
             Self::GeminiCli,
             Self::CodexCli,
             Self::CodexDesktop,
             Self::QwenCode,
         ]
+    }
+
+    /// Returns the metric-name prefix used for OTLP filtering and resource
+    /// tagging in the collector when the harness's SDK ignores
+    /// `OTEL_RESOURCE_ATTRIBUTES` and `service.name` is too generic to
+    /// filter on. Returns `None` for harnesses where standard
+    /// `service.name` matching works.
+    ///
+    /// When `Some(prefix)` is returned, the collector's
+    /// `transform/harness-tag` processor uses `IsMatch(name, "^{prefix}\.")`
+    /// in a `metrics` OTTL context, and `filter/diag-*` uses
+    /// `not IsMatch(name, "^{prefix}\.")` in the `metrics.metric` context.
+    #[must_use]
+    pub fn metric_name_tag_prefix(self) -> Option<&'static str> {
+        match self {
+            // factory.ai's SDK hardcodes `service.name=cli` and ignores
+            // `OTEL_RESOURCE_ATTRIBUTES`, so we match on the `droid.*`
+            // metric-name namespace instead.
+            Self::Droid => Some("droid"),
+            _ => None,
+        }
     }
 
     /// Tier 2 harnesses — those that need a Trove-shipped hook or
@@ -196,6 +218,7 @@ mod tests {
             &[
                 HarnessId::ClaudeCode,
                 HarnessId::ClaudeDesktop,
+                HarnessId::Droid,
                 HarnessId::GeminiCli,
                 HarnessId::CodexCli,
                 HarnessId::CodexDesktop,
@@ -301,7 +324,6 @@ mod tests {
     fn detection_only_harnesses_have_no_adapter() {
         for id in [
             HarnessId::JunieCli,
-            HarnessId::Droid,
             HarnessId::KimiCodeCli,
             HarnessId::Devin,
             HarnessId::Forgecode,

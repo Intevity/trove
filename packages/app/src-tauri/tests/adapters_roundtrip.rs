@@ -13,7 +13,8 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 use trove_app::adapters::{
-    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, gemini_cli, opencode, qwen_code,
+    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, droid, gemini_cli, opencode,
+    qwen_code,
 };
 
 const CLAUDE_ORIGINAL: &str =
@@ -395,4 +396,94 @@ fn all_seven_supported_harnesses_apply_and_revert_byte_identical() {
     let opencode_after: Value =
         serde_json::from_str(&fs::read_to_string(&opencode_path).unwrap()).unwrap();
     assert!(opencode_after.get("_trove").is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Droid adapter round-trip tests
+// ---------------------------------------------------------------------------
+
+const DROID_ZSHRC_ORIGINAL: &str = "# ~/.zshrc\nexport PATH=\"$HOME/.local/bin:$PATH\"\n";
+const DROID_ZSHRC_LEGACY: &str = concat!(
+    "# ~/.zshrc\n",
+    "export PATH=\"$HOME/.local/bin:$PATH\"\n",
+    "\n",
+    "# trove:start\n",
+    "export OTEL_TELEMETRY_ENDPOINT=http://127.0.0.1:4318\n",
+    "export OTEL_RESOURCE_ATTRIBUTES=harness.id=droid,harness.name=Droid,service.name=droid\n",
+    "# trove:end\n",
+);
+
+/// Helper: write `content` to `home/.zshrc` (creating the file).
+fn write_zshrc(home: &Path, content: &str) {
+    fs::write(home.join(".zshrc"), content).unwrap();
+}
+
+#[test]
+fn droid_apply_then_revert_is_byte_identical() {
+    let home = tempdir().unwrap();
+    write_zshrc(home.path(), DROID_ZSHRC_ORIGINAL);
+
+    let metadata = droid::apply(home.path(), &ApplyOptions::default()).unwrap();
+    assert_eq!(metadata.managed_block_hash.len(), 64);
+    assert_eq!(metadata.file_hash_at_last_write.len(), 64);
+
+    let rc = fs::read_to_string(home.path().join(".zshrc")).unwrap();
+    assert!(rc.contains("# trove:droid:start"), "fence start must be present");
+    assert!(rc.contains("# trove:droid:end"), "fence end must be present");
+    assert!(
+        rc.contains("export OTEL_TELEMETRY_ENDPOINT=http://127.0.0.1:4318"),
+        "endpoint var must be present"
+    );
+    assert!(
+        !rc.contains("OTEL_RESOURCE_ATTRIBUTES"),
+        "OTEL_RESOURCE_ATTRIBUTES must not be written"
+    );
+    assert!(rc.contains("export PATH="), "user PATH export must be preserved");
+
+    droid::revert(home.path()).unwrap();
+    assert_eq!(
+        fs::read_to_string(home.path().join(".zshrc")).unwrap(),
+        DROID_ZSHRC_ORIGINAL,
+        "droid apply+revert must be byte-identical to original"
+    );
+}
+
+#[test]
+fn droid_migrates_legacy_fence_on_first_apply() {
+    let home = tempdir().unwrap();
+    write_zshrc(home.path(), DROID_ZSHRC_LEGACY);
+
+    droid::apply(home.path(), &ApplyOptions::default()).unwrap();
+
+    let rc = fs::read_to_string(home.path().join(".zshrc")).unwrap();
+    assert!(rc.contains("# trove:droid:start"), "namespaced fence must be present after migration");
+    assert!(!rc.contains("# trove:start\n"), "legacy fence start must be gone");
+    assert!(!rc.contains("# trove:end\n"), "legacy fence end must be gone");
+    assert!(!rc.contains("OTEL_RESOURCE_ATTRIBUTES"), "resource attrs must be dropped");
+    assert!(rc.contains("OTEL_TELEMETRY_ENDPOINT"), "endpoint var must be present");
+    assert!(rc.contains("export PATH="), "user PATH export must be preserved");
+}
+
+#[test]
+fn applying_droid_does_not_disturb_tier_1_config_files() {
+    let home = tempdir().unwrap();
+    write_zshrc(home.path(), DROID_ZSHRC_ORIGINAL);
+
+    let claude_path = claude_code::config_path(home.path());
+    let gemini_path = gemini_cli::config_path(home.path());
+    write(&claude_path, CLAUDE_ORIGINAL);
+    write(&gemini_path, GEMINI_ORIGINAL);
+
+    droid::apply(home.path(), &ApplyOptions::default()).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&claude_path).unwrap(),
+        CLAUDE_ORIGINAL,
+        "droid apply must not touch Claude Code config"
+    );
+    assert_eq!(
+        fs::read_to_string(&gemini_path).unwrap(),
+        GEMINI_ORIGINAL,
+        "droid apply must not touch Gemini config"
+    );
 }
