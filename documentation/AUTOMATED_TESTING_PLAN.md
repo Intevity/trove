@@ -210,19 +210,19 @@ UI/API → `docker compose down -v`.
 Operator toggles harness in Trove; Claude runs harness + verifies. One row
 in [`harness-platform-matrix.md`](harness-platform-matrix.md) per cell.
 
-|                     | grafana-local | openobserve-local | hyperdx-local | signoz-local | opensearch-local | elastic-local | sentry-local |
-| ------------------- | ------------- | ----------------- | ------------- | ------------ | ---------------- | ------------- | ------------ |
-| claude-code         | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
-| gemini-cli          | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
-| cursor-cli          | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
-| claude-desktop (op) | [ ]           | [x]               | [ ]           | [x]          | [ ]              | [ ]           | [ ] _(⊕)_    |
-| cursor-ide (op)     | [ ]           | [x]               | [ ]           | [x]          | [ ]              | [ ]           | [ ]          |
-| cline (op)          | [ ] _(⊛→◔)_   | [x] _(◔)_         | [ ] _(⊛→◔)_   | [x] _(◔)_    | [ ] _(⊛→◔)_      | [ ] _(⊛→◔)_   | [ ] _(⊛→◔)_  |
-| codex-cli           | [x]           | [x]               | [x]           | [x]          | [x] _(☆ spans)_  | [x]           | [x]          |
-| qwen-code           | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
-| opencode            | [ ] _(◊)_     | [x]               | [ ] _(◊)_     | [x]          | [ ] _(◊)_        | [ ] _(◊)_     | [ ] _(◊)_    |
-| aider               | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
-| copilot-cli         | [x]           | [x]               | [x]           | [x]          | [x]              | [x]           | [x]          |
+|                     | grafana-local    | openobserve-local | hyperdx-local    | signoz-local | opensearch-local | elastic-local    | sentry-local     |
+| ------------------- | ---------------- | ----------------- | ---------------- | ------------ | ---------------- | ---------------- | ---------------- |
+| claude-code         | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| gemini-cli          | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| cursor-cli          | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| claude-desktop (op) | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [ ] _(⊕)_        |
+| cursor-ide (op)     | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| cline (op)          | [x] _(◑)_        | [x] _(◔)_         | [x] _(◑)_        | [x] _(◔)_    | [x] _(◑)_        | [x] _(◑)_        | [x] _(◑)_        |
+| codex-cli           | [x]              | [x]               | [x]              | [x]          | [x] _(☆ spans)_  | [x]              | [x]              |
+| qwen-code           | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| opencode            | [x] _(◑ Q:FAIL)_ | [x]               | [x] _(◑ Q:FAIL)_ | [x]          | [x] _(◑ Q:FAIL)_ | [x] _(◑ Q:FAIL)_ | [x] _(◑ Q:FAIL)_ |
+| aider               | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| copilot-cli         | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
 
 ### Phase E — Cloud platform pairings
 
