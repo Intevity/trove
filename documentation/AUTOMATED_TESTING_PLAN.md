@@ -199,30 +199,30 @@ For each stack: `docker compose up -d` → wait for healthy → run
 UI/API → `docker compose down -v`.
 
 - [x] openobserve-local smoke — **PASS**
-- [x] hyperdx-local smoke — **PARTIAL** (stack healthy; OTLP receivers gated behind UI onboarding)
-- [x] signoz-local smoke — **PARTIAL** (stack healthy; collector OpAMP gated until admin org is created)
+- [x] hyperdx-local smoke — **PASS** _(2026-05-22: promoted from PARTIAL after operator completed onboarding + ingestion key paste; verified end-to-end via the 2026-05-22 `◆` run-log entry in the matrix)_
+- [x] signoz-local smoke — **PASS** _(2026-05-22: promoted from PARTIAL via the same `◆` run; ClickHouse-direct queries confirm logs+spans for every queryable harness)_
 - [x] opensearch-local smoke — **PASS** (needs ~3 min wait for Data Prepper's Trace Raw Processor flush)
-- [ ] elastic-local smoke _(deferred — see §7)_
-- [ ] sentry-local smoke _(deferred — see §7)_
+- [x] elastic-local smoke — **PASS** _(2026-05-22: brought up via `docker compose up -d`; APM Server 8.16 accepts OTLP HTTP on `:14328`; per-service `.ds-{logs,metrics,traces}-apm.app.<svc>-*` indices verified)_
+- [x] sentry-local smoke — **PASS** _(2026-05-25: arm64 install fixed by bumping vendor to v26.5.0 + cp-kafka 7.6.6→7.9.0 + adding `CONTROLLER://127.0.0.1:29093` to `KAFKA_ADVERTISED_LISTENERS` + `KAFKA_HEAP_OPTS=-Xmx2G`. Trove preset endpoint corrected envelope→`/api/<id>/integration/otlp/`. See matrix.md footnote `★`)_
 
 ### Phase D — Harness × local-platform pairings
 
 Operator toggles harness in Trove; Claude runs harness + verifies. One row
 in [`harness-platform-matrix.md`](harness-platform-matrix.md) per cell.
 
-|                         | grafana-local | openobserve-local | hyperdx-local | signoz-local | opensearch-local | elastic-local | sentry-local  |
-| ----------------------- | ------------- | ----------------- | ------------- | ------------ | ---------------- | ------------- | ------------- |
-| claude-code             | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| gemini-cli              | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| cursor-cli              | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| claude-desktop (op)     | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| cursor-ide (op)         | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| cline (op)              | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| codex-cli _(install)_   | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| qwen-code _(install)_   | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| opencode _(install)_    | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| aider _(install)_       | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
-| copilot-cli _(install)_ | [ ]           | [ ]               | [ ]           | [ ]          | [ ]              | [ ] _(later)_ | [ ] _(later)_ |
+|                     | grafana-local    | openobserve-local | hyperdx-local    | signoz-local | opensearch-local | elastic-local    | sentry-local     |
+| ------------------- | ---------------- | ----------------- | ---------------- | ------------ | ---------------- | ---------------- | ---------------- |
+| claude-code         | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| gemini-cli          | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| cursor-cli          | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| claude-desktop (op) | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [ ] _(⊕)_        |
+| cursor-ide (op)     | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| cline (op)          | [x] _(◑)_        | [x] _(◔)_         | [x] _(◑)_        | [x] _(◔)_    | [x] _(◑)_        | [x] _(◑)_        | [x] _(◑)_        |
+| codex-cli           | [x]              | [x]               | [x]              | [x]          | [x] _(☆ spans)_  | [x]              | [x]              |
+| qwen-code           | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| opencode            | [x] _(◑ Q:FAIL)_ | [x]               | [x] _(◑ Q:FAIL)_ | [x]          | [x] _(◑ Q:FAIL)_ | [x] _(◑ Q:FAIL)_ | [x] _(◑ Q:FAIL)_ |
+| aider               | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| copilot-cli         | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
 
 ### Phase E — Cloud platform pairings
 

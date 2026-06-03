@@ -7,6 +7,14 @@ export interface TestExportStepProps {
   busy: boolean;
   result: TestExportResult | null;
   backendKind?: BackendDraft['kind'] | undefined;
+  /** When true, show an explicit "Discard" button that removes the
+   *  add-mode pending entry from state.json before dismissing the
+   *  wizard. False in edit mode (we can't cleanly revert an edit
+   *  because the original secrets aren't recoverable from the
+   *  keychain) and false in add mode before Test has been clicked
+   *  (nothing to discard). Bug-H affordance from 2026-05-25. */
+  showCancel: boolean;
+  onCancel: () => void;
   onTest: () => void;
   onSave: () => void;
   onBack: () => void;
@@ -16,6 +24,8 @@ export function TestExportStep({
   busy,
   result,
   backendKind,
+  showCancel,
+  onCancel,
   onTest,
   onSave,
   onBack,
@@ -60,6 +70,17 @@ export function TestExportStep({
           </Button>
 
           <div className="flex items-center gap-3">
+            {showCancel ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                testid="test-export-cancel"
+                onClick={onCancel}
+                disabled={busy}
+              >
+                Discard
+              </Button>
+            ) : null}
             {showSaveAnyway ? (
               <Button variant="ghost" size="sm" testid="test-export-save-anyway" onClick={onSave}>
                 Save anyway

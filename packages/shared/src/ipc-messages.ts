@@ -105,9 +105,16 @@ export type QuitAppResponse = z.infer<typeof QuitAppResponse>;
 export const UninstallAppResponse = z.null();
 export type UninstallAppResponse = z.infer<typeof UninstallAppResponse>;
 
-/** `test_export` — no arguments. Sends a synthetic OTLP payload through
- *  the local collector and watches the collector log for an otelcol
- *  "successfully sent" line within ~5s. Returns the resolved status. */
+/** `test_export` — optional `backendId` scopes the collector-log scan
+ *  to lines that mention that backend's exporter component id, so
+ *  unrelated backends' retry loops don't false-trip the wizard test
+ *  (Bug-I fix from 2026-05-25). When omitted, falls back to the global
+ *  scan. Sends a synthetic OTLP payload through the local collector
+ *  and watches the collector log for an otelcol "successfully sent"
+ *  line within ~5s. Returns the resolved status. */
+export const TestExportArgs = z.object({ backendId: z.string().optional() });
+export type TestExportArgs = z.infer<typeof TestExportArgs>;
+
 export const TestExportResponse = TestExportResult;
 export type TestExportResponse = z.infer<typeof TestExportResponse>;
 

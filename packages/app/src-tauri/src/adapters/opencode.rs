@@ -5,9 +5,18 @@
 #![allow(clippy::doc_markdown)]
 
 //! OpenCode adapter — patches `~/.config/opencode/opencode.json` to
-//! register the upstream `@devtheops/opencode-plugin-otel` plugin.
-//! OpenCode's Bun-based runtime resolves and installs the package
-//! itself at next launch; Trove ships no vendored source.
+//! register the upstream `@devtheops/opencode-plugin-otel` plugin and
+//! then runs `npm install` in the config dir so the package is actually
+//! resolvable at next opencode launch.
+//!
+//! **Bug K (2026-05-26)**: the prior shape of this adapter assumed
+//! OpenCode would auto-install plugins referenced in `opencode.json` —
+//! an assumption taken from the plugin's README that doesn't hold in
+//! practice. OpenCode silently runs without the plugin if it can't be
+//! resolved from `node_modules/`. End-to-end OTLP delivery was broken
+//! for every fresh enable until a manual `npm install` ran in the
+//! config dir. Fixed: [`apply`] now invokes `npm install` after
+//! writing the config (best-effort; non-fatal if `npm` is missing).
 //!
 //! Why no vendoring (deviation from the original Sprint 7 plan): the
 //! upstream plugin pulls 14 OpenTelemetry / OpenCode SDK runtime
@@ -71,8 +80,101 @@ pub fn preview(home: &Path, opts: &ApplyOptions) -> Result<PatchPreview, IpcErro
 }
 
 /// Apply the patch. See [`common::apply`] for the safety contract.
+///
+/// After the config write, runs `npm install @devtheops/opencode-plugin-otel`
+/// in the config directory so the plugin is actually resolvable at next
+/// opencode launch (Bug-K fix). Best-effort: if `npm` isn't on PATH or
+/// the install fails, the apply still succeeds and the failure is logged
+/// — the user can complete the install manually.
+///
+/// Set `TROVE_SKIP_OPENCODE_NPM_INSTALL=1` to skip the npm step (used
+/// by the test suite to keep apply() fast and offline-clean).
 pub fn apply(home: &Path, opts: &ApplyOptions) -> Result<TrovePatch, IpcError> {
-    common::apply(&SPEC, home, opts)
+    let patch = common::apply(&SPEC, home, opts)?;
+    let config_dir = config_path(home)
+        .parent()
+        .map_or_else(|| home.to_path_buf(), Path::to_path_buf);
+    ensure_otel_plugin_installed(&config_dir);
+    Ok(patch)
+}
+
+/// Best-effort: ensure `@devtheops/opencode-plugin-otel` is present in
+/// `config_dir/node_modules/`. Idempotent (no-op if the package is
+/// already installed). Skipped entirely when
+/// `TROVE_SKIP_OPENCODE_NPM_INSTALL=1` (the test suite sets this to
+/// keep the apply tests fast and offline-clean) or when `npm` is not on
+/// PATH. Failures are logged at WARN and not propagated — the config
+/// write already succeeded and the user can run the same `npm install`
+/// manually as a fallback.
+fn ensure_otel_plugin_installed(config_dir: &Path) {
+    if std::env::var("TROVE_SKIP_OPENCODE_NPM_INSTALL").is_ok() {
+        return;
+    }
+    // Idempotent: if node_modules already has the package, skip the
+    // expensive npm round-trip. `<config_dir>/node_modules/@devtheops/opencode-plugin-otel/package.json`
+    // is the canonical "installed" marker.
+    let pkg_json = config_dir
+        .join("node_modules")
+        .join(OTEL_PLUGIN_PACKAGE)
+        .join("package.json");
+    if pkg_json.exists() {
+        tracing::debug!(
+            target: "opencode.adapter",
+            "opencode otel plugin already installed at {}; skipping npm install",
+            pkg_json.display()
+        );
+        return;
+    }
+    // Resolve `npm` via `probe_path` (PATH + Homebrew + nvm/volta/fnm
+    // fallbacks). A GUI-launched Trove inherits launchd's minimal PATH
+    // and can't find npm under `~/.nvm/...`, which is exactly where
+    // npm lives for users without a Homebrew node. Without this
+    // explicit resolution the bootstrap silently fails on every
+    // Finder/Spotlight/Dock launch.
+    let Some(npm) = crate::detect::probe_path("npm") else {
+        tracing::warn!(
+            target: "opencode.adapter",
+            "could not resolve `npm` on PATH or via Homebrew/nvm/volta/fnm \
+             fallbacks; opencode will run without the OTLP plugin. \
+             Install Node.js or run `cd {} && npm install {OTEL_PLUGIN_PACKAGE}` manually.",
+            config_dir.display()
+        );
+        return;
+    };
+    let status = std::process::Command::new(&npm)
+        .arg("install")
+        .arg("--silent")
+        .arg("--no-audit")
+        .arg("--no-fund")
+        .arg(OTEL_PLUGIN_PACKAGE)
+        .current_dir(config_dir)
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            tracing::info!(
+                target: "opencode.adapter",
+                "installed {OTEL_PLUGIN_PACKAGE} into {}",
+                config_dir.display()
+            );
+        }
+        Ok(s) => {
+            tracing::warn!(
+                target: "opencode.adapter",
+                "npm install {OTEL_PLUGIN_PACKAGE} exited with non-zero status ({s}); \
+                 opencode will run without the OTLP plugin. Run \
+                 `cd {} && npm install {OTEL_PLUGIN_PACKAGE}` manually to recover.",
+                config_dir.display()
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "opencode.adapter",
+                "could not invoke npm ({e}); opencode will run without the OTLP plugin. \
+                 Install npm or run `cd {} && npm install {OTEL_PLUGIN_PACKAGE}` manually.",
+                config_dir.display()
+            );
+        }
+    }
 }
 
 /// Remove the OpenCode managed leaves from the host file.
@@ -198,6 +300,18 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    /// Test-suite-wide guard: skip the `npm install` step in
+    /// [`ensure_otel_plugin_installed`] so apply() stays fast and
+    /// offline-clean. SAFETY: setting an env var is a process-level
+    /// mutation, but the cfg(test) module owns this binary and no other
+    /// tests in the crate read `TROVE_SKIP_OPENCODE_NPM_INSTALL`.
+    fn skip_npm() {
+        // SAFETY: the std::env mutation here is intentional — tests in
+        // this module rely on `apply()` skipping the npm bootstrap. The
+        // var is only ever read by [`ensure_otel_plugin_installed`].
+        unsafe { std::env::set_var("TROVE_SKIP_OPENCODE_NPM_INSTALL", "1") };
+    }
+
     fn read_config(home: &Path) -> String {
         fs::read_to_string(config_path(home)).unwrap()
     }
@@ -207,6 +321,7 @@ mod tests {
     #[test]
     fn fresh_install_creates_a_valid_opencode_json() {
         let home = tempdir().unwrap();
+        skip_npm();
         let patch = apply(home.path(), &ApplyOptions::default()).unwrap();
 
         let written = read_config(home.path());
@@ -238,6 +353,7 @@ mod tests {
         // output (sorted keys, fixed leaves) so the resulting file is
         // byte-identical even though a new backup is created.
         let home = tempdir().unwrap();
+        skip_npm();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let after_first = read_config(home.path());
 
@@ -251,6 +367,7 @@ mod tests {
     #[test]
     fn user_keys_outside_block_survive_apply() {
         let home = tempdir().unwrap();
+        skip_npm();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
@@ -276,6 +393,7 @@ mod tests {
         // with something else. Apply silently restores the canonical
         // value. Documented in `build_region`'s trade-off note.
         let home = tempdir().unwrap();
+        skip_npm();
         apply(home.path(), &ApplyOptions::default()).unwrap();
 
         let path = config_path(home.path());
@@ -302,6 +420,7 @@ mod tests {
     #[test]
     fn malformed_file_is_unparseable_error() {
         let home = tempdir().unwrap();
+        skip_npm();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "{not valid json").unwrap();
@@ -319,6 +438,7 @@ mod tests {
     #[test]
     fn missing_parent_dir_is_created_automatically() {
         let home = tempdir().unwrap();
+        skip_npm();
         assert!(!home.path().join(".config").join("opencode").exists());
         apply(home.path(), &ApplyOptions::default()).unwrap();
         assert!(home.path().join(".config").join("opencode").exists());
@@ -332,6 +452,7 @@ mod tests {
     fn readonly_parent_dir_yields_io_error() {
         use std::os::unix::fs::PermissionsExt;
         let home = tempdir().unwrap();
+        skip_npm();
         let parent = home.path().join(".config").join("opencode");
         fs::create_dir_all(&parent).unwrap();
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
@@ -349,6 +470,7 @@ mod tests {
     #[test]
     fn revert_restores_byte_identical_pre_apply_file() {
         let home = tempdir().unwrap();
+        skip_npm();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let original = "{\n  \"theme\": \"midnight\",\n  \"mcp\": {\n    \"someServer\": \"keepme\"\n  }\n}\n";
@@ -363,6 +485,7 @@ mod tests {
     #[test]
     fn revert_on_missing_file_is_noop() {
         let home = tempdir().unwrap();
+        skip_npm();
         revert(home.path()).unwrap();
         assert!(!config_path(home.path()).exists());
     }
@@ -370,6 +493,7 @@ mod tests {
     #[test]
     fn revert_when_no_trove_block_is_noop() {
         let home = tempdir().unwrap();
+        skip_npm();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let user_only = "{\"theme\":\"midnight\"}";
@@ -383,6 +507,7 @@ mod tests {
     #[test]
     fn apply_does_not_write_top_level_trove_key() {
         let home = tempdir().unwrap();
+        skip_npm();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let parsed: Value = serde_json::from_str(&read_config(home.path())).unwrap();
         assert!(parsed.get("_trove").is_none());
@@ -393,6 +518,7 @@ mod tests {
     #[test]
     fn revert_uses_build_region_managed_keys_when_no_trove_marker() {
         let home = tempdir().unwrap();
+        skip_npm();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         // Hand-write the canonical applied form (no `_trove`, has the
@@ -417,6 +543,7 @@ mod tests {
         // must remove it alongside the managed leaves so a clean
         // re-apply doesn't drag the deprecated marker forward.
         let home = tempdir().unwrap();
+        skip_npm();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
@@ -439,6 +566,7 @@ mod tests {
     #[test]
     fn preview_on_missing_file_returns_fresh_status() {
         let home = tempdir().unwrap();
+        skip_npm();
         let preview = preview(home.path(), &ApplyOptions::default()).unwrap();
         assert_eq!(preview.status, PreviewStatus::Fresh);
         assert_eq!(preview.format, Format::Json);
@@ -454,6 +582,7 @@ mod tests {
         // every re-preview. The diff is empty (before == after), which
         // the UI uses to suppress the apply-button affordance.
         let home = tempdir().unwrap();
+        skip_npm();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let preview = preview(home.path(), &ApplyOptions::default()).unwrap();
         assert_eq!(preview.status, PreviewStatus::Fresh);
@@ -466,6 +595,7 @@ mod tests {
         // `_trove`. The diff is non-empty (apply would overwrite the
         // edit) and the UI surfaces that to the user before they apply.
         let home = tempdir().unwrap();
+        skip_npm();
         apply(home.path(), &ApplyOptions::default()).unwrap();
         let path = config_path(home.path());
         let edited = read_config(home.path()).replace(
@@ -484,6 +614,7 @@ mod tests {
     #[test]
     fn revert_on_malformed_file_returns_unparseable_error() {
         let home = tempdir().unwrap();
+        skip_npm();
         let path = config_path(home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "{nope").unwrap();

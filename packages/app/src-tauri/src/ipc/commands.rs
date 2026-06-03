@@ -934,13 +934,34 @@ fn render_with_overlays(yaml: String, state: &AppState) -> String {
 /// loopback address the supervised collector binds, identical across
 /// every backend. Whether the export succeeds end-to-end depends on
 /// the user's saved backend (which the collector forwards to).
+///
+/// When `backend_id` is provided, the log-scan that detects exporter
+/// failures is scoped to lines that mention that backend's exporter
+/// component id (e.g. `otlphttp/sentry-3a0c9975`). Unrelated backends'
+/// retry loops no longer false-trip the test result (Bug-I fix from
+/// 2026-05-25). When omitted, falls back to the global scan.
 #[tauri::command]
-pub async fn test_export(app: tauri::AppHandle) -> Result<TestExportResult, IpcError> {
+pub async fn test_export(
+    app: tauri::AppHandle,
+    backend_id: Option<String>,
+) -> Result<TestExportResult, IpcError> {
     let log_path = crate::collector_log_path(&app).map_err(|e| boot_error_to_ipc(&e))?;
+    let exporter_id = match backend_id {
+        Some(id) => {
+            let state = app_state::load(&app)?;
+            state
+                .backends
+                .iter()
+                .find(|b| b.id == id)
+                .map(crate::collector::codegen::exporter_component_id_for)
+        }
+        None => None,
+    };
     let result = test_export_at(
         "http://127.0.0.1:4318/v1/traces",
         &log_path,
         DEFAULT_TEST_BUDGET,
+        exporter_id.as_deref(),
     )
     .await;
     Ok(result)
@@ -1837,6 +1858,7 @@ fn spawn_tier3_watcher(
     let handle = match id {
         HarnessId::Cline => Some(cline_watcher::spawn(
             cline::tasks_dir(home),
+            cline::cli_sessions_dir(home),
             options.clone(),
             mappings,
             cline_watcher::DEFAULT_POLL_INTERVAL,

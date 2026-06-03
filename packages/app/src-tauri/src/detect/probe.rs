@@ -5,22 +5,28 @@
 use std::path::PathBuf;
 
 /// Resolves `binary` against the process's `$PATH`, augmented with
-/// well-known Homebrew prefixes that macOS strips from GUI-launched
-/// apps. launchd inherits a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`),
-/// so a Trove launched from Finder / Spotlight / Dock would otherwise
-/// miss every CLI installed under `/opt/homebrew/bin` (Apple Silicon)
-/// or `/usr/local/bin` (Intel) — codex, claude, gemini, etc. Returns
-/// `None` if the binary isn't on the augmented path (the typical
-/// "harness not installed" case).
+/// well-known Homebrew prefixes (and the Node version managers — nvm,
+/// volta, fnm) that macOS strips from GUI-launched apps. launchd
+/// inherits a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so a
+/// Trove launched from Finder / Spotlight / Dock would otherwise miss
+/// every CLI installed under `/opt/homebrew/bin` (Apple Silicon),
+/// `/usr/local/bin` (Intel), `~/.nvm/.../bin/` (nvm-managed node),
+/// `~/.volta/bin/`, or `~/.local/share/fnm/.../bin/`. Returns `None`
+/// if the binary isn't on the augmented path (the typical "harness
+/// not installed" case).
+///
+/// The nvm/volta/fnm fallback follows the same resolution order the
+/// `cursor-otel-hook` shim uses (see
+/// `resources/hooks/cursor-otel-hook.cjs`) so users with a single
+/// node toolchain don't need to know which one is installed for
+/// Trove's npm-driven bootstraps (opencode plugin install today) to
+/// pick the right one.
 #[must_use]
 pub fn probe_path(binary: &str) -> Option<PathBuf> {
     if let Ok(found) = which::which(binary) {
         return Some(found);
     }
-    // Fall back to the well-known Homebrew prefixes. These are
-    // canonical locations the user's shell rc would normally export,
-    // but the GUI-launch case doesn't run shell rc.
-    for fallback_dir in homebrew_fallback_dirs() {
+    for fallback_dir in fallback_bin_dirs() {
         let candidate = fallback_dir.join(binary);
         if candidate.exists() {
             return Some(candidate);
@@ -33,17 +39,74 @@ pub fn probe_path(binary: &str) -> Option<PathBuf> {
 /// only; other platforms return an empty list and the standard
 /// `which::which` call is the only signal.
 #[cfg(target_os = "macos")]
-fn homebrew_fallback_dirs() -> Vec<PathBuf> {
-    vec![
+fn fallback_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/opt/homebrew/sbin"),
         PathBuf::from("/usr/local/bin"),
         PathBuf::from("/usr/local/sbin"),
-    ]
+    ];
+    // Node version managers — nvm/volta/fnm — are the most common
+    // way `npm` lands on user machines without a Homebrew node, and
+    // (unlike Homebrew) install under $HOME so they need a per-user
+    // resolution step. macOS-only because launchd PATH stripping is
+    // a Mac-specific behavior; on Linux GUI launches inherit the
+    // session env and these dirs are usually on PATH already.
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        // nvm: `~/.nvm/versions/node/<semver>/bin/`. There can be
+        // multiple installed versions; we walk them in mtime-desc
+        // order so the most recently installed wins (matches how
+        // `nvm use latest` behaves for the shell).
+        let nvm_root = home.join(".nvm").join("versions").join("node");
+        if let Ok(entries) = std::fs::read_dir(&nvm_root) {
+            let mut versions: Vec<_> = entries
+                .filter_map(Result::ok)
+                .filter(|e| e.path().is_dir())
+                .filter_map(|e| {
+                    e.metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .map(|t| (t, e.path()))
+                })
+                .collect();
+            versions.sort_by_key(|v| std::cmp::Reverse(v.0));
+            for (_, p) in versions {
+                dirs.push(p.join("bin"));
+            }
+        }
+        // volta: `~/.volta/bin/` (single dir; volta proxies binaries
+        // to the right toolchain version internally).
+        dirs.push(home.join(".volta").join("bin"));
+        // fnm: `~/.local/share/fnm/node-versions/<semver>/installation/bin/`.
+        // Same multi-version pattern as nvm; mtime-desc for the most
+        // recent install.
+        let fnm_root = home
+            .join(".local")
+            .join("share")
+            .join("fnm")
+            .join("node-versions");
+        if let Ok(entries) = std::fs::read_dir(&fnm_root) {
+            let mut versions: Vec<_> = entries
+                .filter_map(Result::ok)
+                .filter(|e| e.path().is_dir())
+                .filter_map(|e| {
+                    e.metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .map(|t| (t, e.path()))
+                })
+                .collect();
+            versions.sort_by_key(|v| std::cmp::Reverse(v.0));
+            for (_, p) in versions {
+                dirs.push(p.join("installation").join("bin"));
+            }
+        }
+    }
+    dirs
 }
 
 #[cfg(not(target_os = "macos"))]
-fn homebrew_fallback_dirs() -> Vec<PathBuf> {
+fn fallback_bin_dirs() -> Vec<PathBuf> {
     Vec::new()
 }
 
@@ -122,11 +185,23 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn homebrew_fallback_dirs_include_apple_silicon_and_intel_prefixes() {
-        let dirs = super::homebrew_fallback_dirs();
-        let joined: String = dirs.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(":");
+    fn fallback_bin_dirs_include_apple_silicon_and_intel_prefixes() {
+        let dirs = super::fallback_bin_dirs();
+        let joined: String = dirs
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":");
         assert!(joined.contains("/opt/homebrew/bin"), "{joined}");
         assert!(joined.contains("/usr/local/bin"), "{joined}");
+        // The volta dir is unconditional once HOME is set — tests
+        // running under a real-home macOS environment should see it
+        // even if the user hasn't installed volta. nvm + fnm dirs
+        // are conditional on the respective version-manager root
+        // existing, so we don't assert them here.
+        if std::env::var_os("HOME").is_some() {
+            assert!(joined.contains(".volta/bin"), "{joined}");
+        }
     }
 
     #[test]

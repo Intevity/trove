@@ -8,6 +8,8 @@ mod harnesses;
 mod paths;
 mod probe;
 
+pub(crate) use probe::probe_path;
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};

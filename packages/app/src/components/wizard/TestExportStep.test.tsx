@@ -7,6 +7,8 @@ describe('TestExportStep', () => {
   const baseProps = {
     busy: false,
     result: null,
+    showCancel: false,
+    onCancel: vi.fn(),
     onTest: vi.fn(),
     onSave: vi.fn(),
     onBack: vi.fn(),
@@ -85,10 +87,13 @@ describe('TestExportStep', () => {
     const onTest = vi.fn();
     const onSave = vi.fn();
     const onBack = vi.fn();
+    const onCancel = vi.fn();
     render(
       <TestExportStep
         busy={false}
         result={{ status: 'ok', detail: 'all good' }}
+        showCancel={false}
+        onCancel={onCancel}
         onTest={onTest}
         onSave={onSave}
         onBack={onBack}
@@ -100,5 +105,26 @@ describe('TestExportStep', () => {
     expect(onTest).toHaveBeenCalled();
     expect(onSave).toHaveBeenCalled();
     expect(onBack).toHaveBeenCalled();
+  });
+
+  it('hides the Discard button when showCancel is false', () => {
+    render(<TestExportStep {...baseProps} result={{ status: 'ok', detail: 'all good' }} />);
+    expect(screen.queryByTestId('test-export-cancel')).toBeNull();
+  });
+
+  it('shows Discard and invokes onCancel when showCancel is true (Bug-H affordance)', () => {
+    const onCancel = vi.fn();
+    render(
+      <TestExportStep
+        {...baseProps}
+        result={{ status: 'ok', detail: 'all good' }}
+        showCancel={true}
+        onCancel={onCancel}
+      />,
+    );
+    const discard = screen.getByTestId('test-export-cancel');
+    expect(discard).toBeDefined();
+    fireEvent.click(discard);
+    expect(onCancel).toHaveBeenCalled();
   });
 });

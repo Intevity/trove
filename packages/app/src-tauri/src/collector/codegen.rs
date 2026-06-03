@@ -203,6 +203,42 @@ fn env_suffix_for(id: &str) -> String {
     }
 }
 
+/// Compute the `OTel` collector exporter component id Trove emits for a
+/// given backend instance — mirrors the per-kind `name = format!(…)`
+/// blocks inside `render_exporter_block`. Used by the wizard's "Test
+/// export" path to scope the collector-log scan to lines that mention
+/// this exporter only (so unrelated backends' retry loops don't
+/// false-trip the test — see `test_export.rs`).
+///
+/// Keep this in sync with the literal exporter names in
+/// `render_exporter_block`; the round-trip is regression-locked by
+/// `exporter_component_id_for_matches_render_output` in this file's
+/// test module.
+#[must_use]
+pub fn exporter_component_id_for(instance: &BackendInstance) -> String {
+    let suffix = env_suffix_for(&instance.id);
+    match &instance.backend {
+        Backend::Signoz { .. } => format!("otlp/signoz-{suffix}"),
+        Backend::Honeycomb { .. } => format!("otlphttp/honeycomb-{suffix}"),
+        Backend::GrafanaCloud { .. } => format!("otlphttp/grafana-{suffix}"),
+        Backend::Datadog { .. } => format!("otlphttp/datadog-{suffix}"),
+        Backend::OtlpGeneric { protocol, .. } => match protocol {
+            OtlpProtocol::Grpc => format!("otlp/user-{suffix}"),
+            OtlpProtocol::Http => format!("otlphttp/user-{suffix}"),
+        },
+        Backend::OtelcolPassthrough { .. } => format!("otlphttp/passthrough-{suffix}"),
+        Backend::NewRelic { .. } => format!("otlphttp/new-relic-{suffix}"),
+        Backend::SplunkObservability { .. } => format!("otlphttp/splunk-{suffix}"),
+        Backend::Dynatrace { .. } => format!("otlphttp/dynatrace-{suffix}"),
+        Backend::Elastic { .. } => format!("otlphttp/elastic-{suffix}"),
+        Backend::Opensearch { .. } => format!("otlphttp/opensearch-{suffix}"),
+        Backend::Openobserve { .. } => format!("otlphttp/openobserve-{suffix}"),
+        Backend::Clickstack { .. } => format!("otlphttp/clickstack-{suffix}"),
+        Backend::Chronosphere { .. } => format!("otlphttp/chronosphere-{suffix}"),
+        Backend::Sentry { .. } => format!("otlphttp/sentry-{suffix}"),
+    }
+}
+
 /// Resolve an `OTel` collector component id (e.g. `otlphttp/openobserve-93eb10f1`)
 /// back to the [`BackendInstance::id`] it was derived from. Returns `None`
 /// for component ids that don't follow Trove's exporter naming scheme or
@@ -688,13 +724,35 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // ones; the codex-desktop arm in `native_service_name_candidates`
         // returns an empty slice for exactly this reason. Users with
         // shell env overrides may also see `codex-cli` or `codex`, so
-        // accept all three.
-        HarnessId::CodexCli => &["codex-app-server", "codex-cli", "codex"],
+        // accept all three. Codex 0.130's `codex exec` subcommand emits
+        // `service.name=codex_exec` (snake_case binary name) — added
+        // 2026-05-22 after a matrix run found codex exec spans landing
+        // untagged.
+        HarnessId::CodexCli => &["codex-app-server", "codex-cli", "codex", "codex_exec"],
         HarnessId::Opencode => &["opencode"],
         // Claude Desktop (Cowork) sends OTLP logs whose resource carries
         // `service.name=claude-cowork` or `claude-desktop`. Tag both so
         // future renames don't silently drop `harness.id` assignment.
         HarnessId::ClaudeDesktop => &["claude-desktop", "claude-cowork"],
+        // Wrapper-emitted OTLP already carries `harness.id` (the adapters
+        // set it directly when crafting the payload), but listing the
+        // service.name here lets `transform/harness-tag` re-stamp it
+        // defensively — important when a child process inherits another
+        // harness's `OTEL_RESOURCE_ATTRIBUTES` env (e.g. Claude Code
+        // exports `harness.id=claude-code` and codex inherits it). The
+        // transform's `set` is idempotent, so re-tagging from the
+        // wrapper's own `service.name` is always safe.
+        // Bug L (2026-05-27): the Cursor IDE hook path emits with
+        // `service.name=cursor` (the IDE's own product identifier),
+        // while cursor-cli's wrapper-emitted OTLP uses `cursor-cli`.
+        // Both map to the same harness (Trove doesn't distinguish IDE
+        // vs CLI in the matrix beyond row labelling). Listing both
+        // service.names here lets the harness-tag transform stamp
+        // `harness.id=cursor-cli` regardless of which path the record
+        // arrived from.
+        HarnessId::CursorCli => &["cursor-cli", "cursor"],
+        HarnessId::Aider => &["aider"],
+        HarnessId::CopilotCli => &["copilot-cli"],
         // Droid's SDK hardcodes `service.name=cli` which is too generic
         // to filter on. We return a placeholder non-empty slice so Droid
         // participates in the tag/diag pipeline loops (both gated by
@@ -703,14 +761,13 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // this service.name value. See `build_harness_tag_block` and
         // `apply_diag_pipelines` for the special-case handling.
         HarnessId::Droid => &["droid"],
-        // Hook/watcher harnesses tag `harness.id` themselves in their
-        // OTLP payload, and detection-only harnesses have no native OTEL
-        // emission — neither contributes service.name candidates.
+        // Detection-only harnesses and hook/watcher emitters tag
+        // `harness.id` themselves (or have no native OTEL emission of
+        // their own — cursor-ide hooks into Cursor's process; cline is
+        // a session-file watcher), so they contribute no service.name
+        // candidates — see the catch-all group below.
         HarnessId::CursorIde
-        | HarnessId::CursorCli
         | HarnessId::Cline
-        | HarnessId::Aider
-        | HarnessId::CopilotCli
         // codex-desktop shares ~/.codex/config.toml with codex-cli and
         // drives the same Rust backend, so it has no distinct native
         // service.name to claim — the existing codex-cli arm above
@@ -1738,7 +1795,12 @@ mod tests {
         // FlowChart depends on per-harness diag counts to animate the
         // active harness's lane only. Diag is emitted for every enabled
         // harness with native `service.name` candidates — Claude Code,
-        // Codex CLI, Gemini CLI, Qwen Code, OpenCode, and Claude Desktop.
+        // Codex CLI, Gemini CLI, Qwen Code, OpenCode, and Claude Desktop,
+        // plus the wrapper harnesses (cursor-cli, aider, copilot-cli)
+        // whose adapters emit OTLP with a known `service.name` and which
+        // were added to the candidate list 2026-05-22 for defensive
+        // re-tagging (so an inherited `OTEL_RESOURCE_ATTRIBUTES` env var
+        // can't mask the wrapper's true harness.id).
         // Each gets a `filter/diag-<suffix>` processor plus three
         // pipelines (traces, metrics, logs) that pipe into the shared
         // `debug/diag-noop` exporter.
@@ -1753,6 +1815,9 @@ mod tests {
             "qwen-code",
             "opencode",
             "claude-desktop",
+            "cursor-cli",
+            "aider",
+            "copilot-cli",
         ] {
             assert!(
                 out.contains(&format!("filter/diag-{suffix}:")),
@@ -1771,14 +1836,51 @@ mod tests {
                 "missing logs pipeline for {suffix}"
             );
         }
-        // Watcher-emitter harnesses have no `service.name` candidates
-        // so they are explicitly excluded.
-        for suffix in ["cursor-ide", "cursor-cli", "cline", "aider", "copilot-cli"] {
+        // Hook-only and detection-only harnesses have no native
+        // `service.name` emission of their own, so they are excluded.
+        for suffix in ["cursor-ide", "cline"] {
             assert!(
                 !out.contains(&format!("filter/diag-{suffix}:")),
-                "watcher harness {suffix} should not get a diag filter"
+                "hook-only harness {suffix} should not get a diag filter"
             );
         }
+
+        // Bug E regression lock — Codex 0.130's `codex exec` subcommand
+        // emits `service.name=codex_exec` (snake_case). It must be in
+        // codex-cli's candidate list so the transform/harness-tag rule
+        // stamps `harness.id=codex-cli` and the filter/diag-codex-cli
+        // pipeline retains the span. See the 2026-05-22 entry in
+        // documentation/harness-platform-matrix.md.
+        assert!(
+            out.contains("\"service.name\"] == \"codex_exec\""),
+            "codex_exec must appear in the harness-tag transform's matcher list"
+        );
+        assert!(
+            out.contains("\"service.name\"] != \"codex_exec\""),
+            "codex_exec must appear in the diag filter's drop clause for codex-cli"
+        );
+
+        // Bug G regression lock — wrapper harnesses (cursor-cli, aider,
+        // copilot-cli) carry their own `service.name`, so the
+        // harness-tag transform must include them as defensive
+        // re-tagging in case an inherited `OTEL_RESOURCE_ATTRIBUTES` env
+        // (e.g. Claude Code's) leaks through and mis-tags `harness.id`.
+        for wrapper in ["cursor-cli", "aider", "copilot-cli"] {
+            assert!(
+                out.contains(&format!("\"service.name\"] == \"{wrapper}\"")),
+                "{wrapper} must appear in the harness-tag transform's matcher list"
+            );
+        }
+
+        // Bug L regression lock — Cursor IDE hooks emit
+        // `service.name=cursor` (not `cursor-cli`). Without an explicit
+        // candidate the harness-tag transform stamps `harness.id=cursor`,
+        // which doesn't match the matrix's `cursor-cli` row. See the
+        // 2026-05-27 ◍ run-log entry for the live observation.
+        assert!(
+            out.contains("\"service.name\"] == \"cursor\""),
+            "Cursor IDE alias `cursor` must appear in the harness-tag transform's matcher list"
+        );
     }
 
     #[test]

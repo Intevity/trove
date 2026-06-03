@@ -49,20 +49,26 @@ struct TaskWatermark {
     last_emitted_index: usize,
 }
 
-/// Spawn a Cline watcher rooted at `tasks_dir`. Returns a handle whose
-/// `abort()` halts the loop. Errors during emission are logged at
-/// `tracing::warn!` and the loop continues — best-effort.
+/// Spawn a Cline watcher that polls both the VS Code extension's
+/// `tasks_dir` and the standalone CLI's `cli_sessions_dir` each tick.
+/// Either path may be absent on a fresh machine — the walker tolerates
+/// `NotFound`. Returns a handle whose `abort()` halts the loop. Errors
+/// during emission are logged at `tracing::warn!` and the loop
+/// continues — best-effort.
 #[must_use]
 pub fn spawn(
     tasks_dir: impl Into<PathBuf>,
+    cli_sessions_dir: impl Into<PathBuf>,
     opts: ApplyOptions,
     mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
 ) -> WatcherHandle {
     let tasks_dir = tasks_dir.into();
+    let cli_sessions_dir = cli_sessions_dir.into();
     let join = tokio::spawn(async move {
         run(
             tasks_dir,
+            cli_sessions_dir,
             opts,
             mappings,
             poll_interval,
@@ -81,6 +87,7 @@ pub fn spawn(
 /// most once per second per task, so the clone cost is negligible.
 pub async fn run<FLog, FutLog, FMetric, FutMetric>(
     tasks_dir: PathBuf,
+    cli_sessions_dir: PathBuf,
     opts: ApplyOptions,
     mappings: crate::mappings::SharedMappingState,
     poll_interval: Duration,
@@ -93,6 +100,7 @@ pub async fn run<FLog, FutLog, FMetric, FutMetric>(
     FutMetric: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>> + Send,
 {
     let mut watermarks: HashMap<String, TaskWatermark> = HashMap::new();
+    let mut cli_watermarks: HashMap<String, TaskWatermark> = HashMap::new();
     loop {
         // Snapshot the live mapping state at the top of each scan so
         // user edits via apply_mappings take effect on the next tick
@@ -101,7 +109,7 @@ pub async fn run<FLog, FutLog, FMetric, FutMetric>(
         if let Err(e) = scan_once(
             &tasks_dir,
             &opts,
-            mapping_snapshot,
+            mapping_snapshot.clone(),
             &mut watermarks,
             &emit_log,
             &emit_metric,
@@ -109,6 +117,23 @@ pub async fn run<FLog, FutLog, FMetric, FutMetric>(
         .await
         {
             tracing::warn!(error = %e, ?tasks_dir, "cline watcher tick errored");
+        }
+        // Cline CLI variant (npm-installed `cline` 3.x+) writes session
+        // state under `~/.cline/data/sessions/` instead of VS Code's
+        // globalStorage tree. Same harness id, same metric schema; we
+        // walk both each tick so the user gets coverage whichever
+        // interface they're using.
+        if let Err(e) = scan_cli_once(
+            &cli_sessions_dir,
+            &opts,
+            mapping_snapshot,
+            &mut cli_watermarks,
+            &emit_log,
+            &emit_metric,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, ?cli_sessions_dir, "cline-cli watcher tick errored");
         }
         tokio::time::sleep(poll_interval).await;
     }
@@ -366,6 +391,247 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
+// ---------------------------------------------------------------------------
+// Cline CLI variant (npm-installed `cline` 3.x+, separate from the VS Code
+// extension). Sessions land under `~/.cline/data/sessions/<sid>/<sid>.messages.json`
+// where the file is an *object* (`{version, updated_at, agent, sessionId,
+// messages[], system_prompt}`) rather than a JSON array. The walker below
+// mirrors `scan_once`'s shape but parses the wrapper object and counts new
+// `assistant` messages as `chat.turn` events. Same emission contract: the
+// log payload's body is intentionally empty (metrics-only policy), and the
+// metric payload reuses the shared `MetricsAccumulator` so the dashboard
+// and per-backend queries see one consistent stream regardless of which
+// interface produced it.
+// ---------------------------------------------------------------------------
+
+/// CLI-variant scan: walks `<sessions_dir>/<sid>/<sid>.messages.json`
+/// and emits a fresh log + metric payload whenever the file's content
+/// hash changes. `NotFound` on the sessions root is the common case on
+/// a machine without the standalone Cline CLI installed and is treated
+/// as a no-op tick.
+async fn scan_cli_once<FLog, FutLog, FMetric, FutMetric>(
+    cli_sessions_dir: &Path,
+    opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
+    watermarks: &mut HashMap<String, TaskWatermark>,
+    emit_log: &FLog,
+    emit_metric: &FMetric,
+) -> std::io::Result<()>
+where
+    FLog: Fn(Value) -> FutLog,
+    FutLog: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>>,
+    FMetric: Fn(Value) -> FutMetric,
+    FutMetric: std::future::Future<Output = Result<(), otlp_emit::OtlpEmitError>>,
+{
+    let mut entries = match tokio::fs::read_dir(cli_sessions_dir).await {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if !entry.file_type().await?.is_dir() {
+            continue;
+        }
+        let session_id = match path.file_name().and_then(|s| s.to_str()) {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+        // CLI 3.x layout: `<session_id>/<session_id>.messages.json`. Skip
+        // sessions where the file hasn't materialised yet (a brand-new
+        // session writes the dir first, the file moments later).
+        let msg_path = path.join(format!("{session_id}.messages.json"));
+        let content = match tokio::fs::read(&msg_path).await {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                tracing::warn!(error = %e, ?msg_path, "cline-cli watcher could not read");
+                continue;
+            }
+        };
+        let hash = sha256_hex(&content);
+        let previous = watermarks.get(&session_id).cloned().unwrap_or_default();
+        if previous.hash == hash {
+            continue;
+        }
+
+        let new_message_count = parse_cli_message_count(&content).unwrap_or(0);
+        watermarks.insert(
+            session_id.clone(),
+            TaskWatermark {
+                hash,
+                last_emitted_index: new_message_count,
+            },
+        );
+
+        if let Some(log_payload) = parse_cli_log_payload(&session_id, &content, opts) {
+            if let Err(e) = emit_log(log_payload).await {
+                tracing::warn!(error = %e, %session_id, "cline-cli watcher log emit failed");
+            }
+        }
+        if let Some(metric_payload) = parse_cli_metric_payload(
+            &session_id,
+            &content,
+            previous.last_emitted_index,
+            opts,
+            mappings.clone(),
+        ) {
+            if let Err(e) = emit_metric(metric_payload).await {
+                tracing::warn!(error = %e, %session_id, "cline-cli watcher metric emit failed");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Read the `messages` array length out of a Cline CLI session file's
+/// JSON. Returns `None` for unparseable input — same contract as
+/// `parsed_message_count` so the watcher can gracefully skip a session
+/// whose file is mid-write.
+fn parse_cli_message_count(messages_json_bytes: &[u8]) -> Option<usize> {
+    let doc: Value = serde_json::from_slice(messages_json_bytes).ok()?;
+    let arr = doc.get("messages")?.as_array()?;
+    Some(arr.len())
+}
+
+/// CLI variant of `parse_task_log_payload`. Same metrics-only policy:
+/// the body is intentionally empty; only metadata (session id +
+/// message count + custom attrs) lands in the record. Returns `None`
+/// only for unparseable input.
+#[must_use]
+pub fn parse_cli_log_payload(
+    session_id: &str,
+    messages_json_bytes: &[u8],
+    opts: &ApplyOptions,
+) -> Option<Value> {
+    let doc: Value = serde_json::from_slice(messages_json_bytes).ok()?;
+    let arr = doc.get("messages")?.as_array()?;
+    let message_count = arr.len();
+
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+
+    let mut attributes = vec![
+        json!({"key": "trove.source", "value": {"stringValue": "cline"}}),
+        // Same key as the VS Code extension parser uses, intentionally —
+        // `cline.task_id` keeps queries identical whether a row came from
+        // the extension's `<tasks_dir>/<task_id>/` or the CLI's
+        // `<sessions_dir>/<session_id>/`. The dashboards filter on this
+        // attr without caring which interface produced it.
+        json!({"key": "cline.task_id", "value": {"stringValue": session_id}}),
+        json!({"key": "cline.message_count", "value": {"intValue": message_count.to_string()}}),
+        json!({"key": "cline.variant", "value": {"stringValue": "cli"}}),
+    ];
+    for (k, v) in custom_attributes_iter(&opts.custom_attributes) {
+        attributes.push(json!({"key": k, "value": {"stringValue": v}}));
+    }
+
+    let body_value = json!({"stringValue": ""});
+
+    Some(json!({
+        "resourceLogs": [{
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": "cline"}},
+                    {"key": "harness.id", "value": {"stringValue": "cline"}},
+                    {"key": "harness.name", "value": {"stringValue": "Cline"}},
+                    {"key": "trove.source", "value": {"stringValue": "cline"}},
+                ]
+            },
+            "scopeLogs": [{
+                "scope": {"name": "trove.adapters.cline", "version": env!("CARGO_PKG_VERSION")},
+                "logRecords": [{
+                    "timeUnixNano": now_ns.to_string(),
+                    "severityText": "INFO",
+                    "body": body_value,
+                    "attributes": attributes,
+                }]
+            }]
+        }]
+    }))
+}
+
+/// CLI variant of `parse_task_metric_payload`. Each new `assistant`
+/// message becomes one `chat.turn` event in the Tier-A
+/// `trove.harness.events` counter. Token counts on the message
+/// (`metrics.{input,output,cacheRead,cacheWrite}Tokens`) feed
+/// `trove.harness.tokens` when the user's `MappingState` has a
+/// `synthesize-from-native` rule wired up for them; absence is fine
+/// (the accumulator silently skips unmapped observations).
+#[must_use]
+pub fn parse_cli_metric_payload(
+    session_id: &str,
+    messages_json_bytes: &[u8],
+    from_index: usize,
+    opts: &ApplyOptions,
+    mappings: std::sync::Arc<crate::mappings::MappingState>,
+) -> Option<Value> {
+    let doc: Value = serde_json::from_slice(messages_json_bytes).ok()?;
+    let arr = doc.get("messages")?.as_array()?;
+    if from_index >= arr.len() {
+        return None;
+    }
+    let new_slice = &arr[from_index..];
+
+    let mut acc = crate::mappings::runtime::MetricsAccumulator::new(
+        mappings,
+        crate::harness::HarnessId::Cline,
+    );
+
+    let mut session_attr = BTreeMap::new();
+    session_attr.insert("cline.task_id".to_string(), session_id.to_string());
+    session_attr.insert("cline.variant".to_string(), "cli".to_string());
+
+    for msg in new_slice {
+        // Only assistant turns count as a chat-turn observation —
+        // user messages don't trigger LLM work. We re-use the existing
+        // `say.text` `when` key (semantically: "the model emitted a
+        // text response") so the default Cline `MappingSource::HookRule`
+        // for `say.text → trove.harness.events{event.kind=chat.turn}`
+        // applies without a parallel CLI-specific rule. See
+        // `mappings/defaults.rs` `cline_defaults`.
+        let role = msg.get("role").and_then(Value::as_str).unwrap_or("");
+        if role != "assistant" {
+            continue;
+        }
+        acc.observe_count("say.text", 1, &session_attr);
+    }
+
+    if acc.is_empty() {
+        return None;
+    }
+
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos())
+        .to_string();
+    let metrics = acc.build(&now_ns, &now_ns);
+    if metrics.is_empty() {
+        return None;
+    }
+
+    let mut resource_attrs = vec![
+        json!({"key": "service.name", "value": {"stringValue": "cline"}}),
+        json!({"key": "harness.id", "value": {"stringValue": "cline"}}),
+        json!({"key": "harness.name", "value": {"stringValue": "Cline"}}),
+        json!({"key": "trove.source", "value": {"stringValue": "cline"}}),
+    ];
+    for (k, v) in custom_attributes_iter(&opts.custom_attributes) {
+        resource_attrs.push(json!({"key": k, "value": {"stringValue": v}}));
+    }
+
+    Some(json!({
+        "resourceMetrics": [{
+            "resource": {"attributes": resource_attrs},
+            "scopeMetrics": [{
+                "scope": {"name": "trove.adapters.cline", "version": env!("CARGO_PKG_VERSION")},
+                "metrics": metrics,
+            }]
+        }]
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     fn rules_arc() -> std::sync::Arc<crate::mappings::MappingState> {
@@ -385,6 +651,27 @@ mod tests {
         let payload = serde_json::Value::Array(messages.to_vec());
         std::fs::write(
             subdir.join("ui_messages.json"),
+            serde_json::to_vec(&payload).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// CLI-variant fixture writer. Mirrors what Cline 3.x writes:
+    /// `<sessions_dir>/<sid>/<sid>.messages.json` containing the wrapper
+    /// object `{version, updated_at, agent, sessionId, messages[]}`.
+    fn write_cli_session_messages(root: &Path, session_id: &str, messages: &[Value]) {
+        let subdir = root.join(session_id);
+        std::fs::create_dir_all(&subdir).unwrap();
+        let payload = serde_json::json!({
+            "version": 1,
+            "updated_at": "2026-05-27T14:28:12.179Z",
+            "agent": "lead",
+            "sessionId": session_id,
+            "messages": messages,
+            "system_prompt": "You are Cline.",
+        });
+        std::fs::write(
+            subdir.join(format!("{session_id}.messages.json")),
             serde_json::to_vec(&payload).unwrap(),
         )
         .unwrap();
@@ -498,6 +785,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             run(
                 tasks_dir.clone(),
+                PathBuf::from("/var/empty/trove-cline-cli-unused"),
                 ApplyOptions::default(),
                 rules_sub(),
                 Duration::from_millis(50),
@@ -590,6 +878,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             run(
                 tasks_dir,
+                PathBuf::from("/var/empty/trove-cline-cli-unused"),
                 ApplyOptions::default(),
                 rules_sub(),
                 Duration::from_millis(30),
@@ -648,6 +937,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             run(
                 tasks_dir,
+                PathBuf::from("/var/empty/trove-cline-cli-unused"),
                 ApplyOptions::default(),
                 rules_sub(),
                 Duration::from_millis(30),
@@ -840,6 +1130,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             run(
                 tasks_dir,
+                PathBuf::from("/var/empty/trove-cline-cli-unused"),
                 ApplyOptions::default(),
                 rules_sub(),
                 Duration::from_millis(50),
@@ -852,5 +1143,152 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
         handle.abort();
         assert_eq!(captured.lock().await.len(), 0);
+    }
+
+    // ----- Cline CLI variant (~/.cline/data/sessions/<sid>/...) -----
+
+    #[test]
+    fn cli_parser_returns_none_for_missing_messages_key() {
+        // The wrapper schema requires `.messages`; absence is treated as
+        // "not yet written" and skipped silently (not an error).
+        let r = parse_cli_log_payload("s1", b"{}", &ApplyOptions::default());
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn cli_parser_emits_canonical_otlp_log_with_variant_tag() {
+        // Distinct attribute keys vs the VS Code extension parser:
+        // - cline.variant=cli identifies the source
+        // - cline.task_id (same key) carries the session id so dashboard
+        //   queries don't care which interface produced the record.
+        let bytes = serde_json::to_vec(&json!({
+            "version": 1,
+            "updated_at": "2026-05-27T14:28:12.179Z",
+            "agent": "lead",
+            "sessionId": "1779892091721_fy1lw",
+            "messages": [
+                {"id": "msg_a", "role": "user", "content": [], "ts": 1},
+                {"id": "msg_b", "role": "assistant", "content": [], "ts": 2,
+                 "metrics": {"inputTokens": 100, "outputTokens": 50,
+                             "cacheReadTokens": 0, "cacheWriteTokens": 0}},
+            ],
+        }))
+        .unwrap();
+        let payload = parse_cli_log_payload(
+            "1779892091721_fy1lw",
+            &bytes,
+            &ApplyOptions::default(),
+        )
+        .unwrap();
+        let log = &payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+        let attrs: Vec<(String, String)> = log["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                (
+                    a["key"].as_str().unwrap().to_string(),
+                    a["value"]
+                        .as_object()
+                        .unwrap()
+                        .values()
+                        .next()
+                        .unwrap()
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            })
+            .collect();
+        assert!(attrs
+            .iter()
+            .any(|(k, v)| k == "cline.variant" && v == "cli"));
+        assert!(attrs
+            .iter()
+            .any(|(k, v)| k == "cline.task_id" && v == "1779892091721_fy1lw"));
+        // Metrics-only policy: body stays empty.
+        assert_eq!(log["body"]["stringValue"], "");
+    }
+
+    #[test]
+    fn cli_metric_payload_counts_only_assistant_messages_as_chat_turn() {
+        // One user + one assistant in the new slice → exactly one
+        // chat.turn observation. User-only turns don't trigger LLM work
+        // so they don't count.
+        let bytes = serde_json::to_vec(&json!({
+            "version": 1,
+            "updated_at": "2026-05-27T14:28:12.179Z",
+            "agent": "lead",
+            "sessionId": "s2",
+            "messages": [
+                {"id": "u1", "role": "user", "content": [], "ts": 1},
+                {"id": "a1", "role": "assistant", "content": [], "ts": 2},
+            ],
+        }))
+        .unwrap();
+        let payload = parse_cli_metric_payload("s2", &bytes, 0, &ApplyOptions::default(), rules_arc())
+            .expect("at least one chat.turn observation should land");
+        let metrics = &payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"];
+        let arr = metrics.as_array().expect("metrics array");
+        // Should emit at least the harness.events counter; the exact set
+        // depends on MappingState, but the array can't be empty.
+        assert!(!arr.is_empty(), "expected ≥1 metric, got {arr:?}");
+    }
+
+    #[tokio::test]
+    async fn cli_watcher_emits_on_new_session_file() {
+        // End-to-end: write a CLI-shape session, run the watcher one
+        // tick, assert the log emitter saw the payload.
+        let dir = tempdir().unwrap();
+        let sessions_dir = dir.path().to_path_buf();
+        write_cli_session_messages(
+            &sessions_dir,
+            "1779892091721_fy1lw",
+            &[
+                json!({"id":"u1","role":"user","content":[],"ts":1}),
+                json!({"id":"a1","role":"assistant","content":[],"ts":2}),
+            ],
+        );
+
+        let logs: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let logs_clone = logs.clone();
+        let emit_log = move |p: Value| {
+            let captured = logs_clone.clone();
+            async move {
+                captured.lock().await.push(p);
+                Ok::<_, otlp_emit::OtlpEmitError>(())
+            }
+        };
+        let emit_metric = |_p: Value| async { Ok::<_, otlp_emit::OtlpEmitError>(()) };
+
+        let dummy_tasks = tempdir().unwrap();
+        let dummy_tasks_path = dummy_tasks.path().to_path_buf();
+        let handle = tokio::spawn(async move {
+            run(
+                dummy_tasks_path,
+                sessions_dir,
+                ApplyOptions::default(),
+                rules_sub(),
+                Duration::from_millis(30),
+                emit_log,
+                emit_metric,
+            )
+            .await;
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline && logs.lock().await.is_empty() {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        handle.abort();
+        let captured = logs.lock().await;
+        assert!(!captured.is_empty(), "watcher should have emitted at least once");
+        // Verify the cli.variant tag is on the captured log.
+        let attrs = &captured[0]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"];
+        let json_str = serde_json::to_string(attrs).unwrap();
+        assert!(
+            json_str.contains("\"cline.variant\""),
+            "expected cli.variant attribute on captured log: {json_str}"
+        );
     }
 }

@@ -202,9 +202,18 @@ export async function uninstallApp(removeData: boolean): Promise<void> {
 /** Send a synthetic OTLP payload through the local collector and wait
  *  (up to ~5s) for the otelcol "successfully sent" log line. Drives the
  *  wizard's "Test export" button — `ok` enables Save, `failed`/`timeout`
- *  surface the underlying detail and unlock a "Save anyway" affordance. */
-export async function testExport(): Promise<TestExportResult> {
-  return invokeIpc(IpcCommandName.TestExport, undefined, TestExportResponse);
+ *  surface the underlying detail and unlock a "Save anyway" affordance.
+ *
+ *  Optional `backendId` scopes the collector-log scan to lines that
+ *  mention this backend's exporter component id, so unrelated backends'
+ *  retry loops don't false-trip the test (Bug-I fix from 2026-05-25).
+ *  Omit only when there is no specific backend in play. */
+export async function testExport(backendId?: string): Promise<TestExportResult> {
+  return invokeIpc(
+    IpcCommandName.TestExport,
+    backendId !== undefined ? { backendId } : {},
+    TestExportResponse,
+  );
 }
 
 /** Snapshot the collector supervisor's current run state plus the
