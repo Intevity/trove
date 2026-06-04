@@ -31,11 +31,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # Both macOS legs run on arm64 `macos-latest` (mirroring Sentinel):
+          # GitHub retired the Intel `macos-13` image in Dec 2025, so the x64
+          # leg cross-compiles via `--target x86_64-apple-darwin`. Rust ships
+          # the target std, Apple's toolchain links it natively, and
+          # build-collector.sh maps the triple to GOOS=darwin/GOARCH=amd64
+          # (CGO off) for the sidecar.
+          - os: macos-latest
             platform: macos-arm64
             rust_target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
-          - os: macos-13
+          - os: macos-latest
             platform: macos-x64
             rust_target: x86_64-apple-darwin
             args: --target x86_64-apple-darwin
@@ -162,6 +168,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: packages/app/src-tauri -> target
+          # Per-platform key: the two macOS legs share runner.os but build
+          # different targets, so without it they would clobber one cache.
+          key: ${{ matrix.platform }}
           shared-key: trove-rust-${{ runner.os }}-release
           # Save only on tag pushes; release builds run rarely so
           # cache hits are mostly opportunistic.
