@@ -44,7 +44,7 @@ export function AutoUpdate({ enabled, onToggle }: Props): JSX.Element {
           <div className="flex flex-col">
             <CardTitle>Updates</CardTitle>
             <span className="text-[11px] text-fg-tertiary dark:text-fg-tertiary-dark">
-              Trove checks GitHub Releases for new versions.
+              Trove checks its secure update channel for new versions.
             </span>
           </div>
         </div>
@@ -63,8 +63,8 @@ export function AutoUpdate({ enabled, onToggle }: Props): JSX.Element {
             Automatically check for updates
           </span>
           <span className="text-[12px] text-fg-tertiary dark:text-fg-tertiary-dark">
-            Off by default. Trove only contacts GitHub Releases when this is on, or when you click
-            the button below.
+            Off by default. Trove only checks for updates every four hours when this is on, or when
+            you click the button below.
           </span>
         </span>
       </label>

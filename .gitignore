@@ -173,3 +173,15 @@ playwright-report/
 # Misc
 *.tmp
 .aider*
+
+# Terraform — never commit state or real tfvars. The .example is committed, and the
+# .terraform.lock.hcl dependency lock SHOULD be committed (so it is not ignored).
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+terraform.tfvars
+*.auto.tfvars
+!*.tfvars.example

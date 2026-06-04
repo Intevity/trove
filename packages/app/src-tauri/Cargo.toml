@@ -29,6 +29,10 @@ tauri-plugin-shell = "2"
 # `plugins.updater.pubkey` and verifies the signed `latest.json`
 # manifest tauri-action publishes alongside each release.
 tauri-plugin-updater = "2"
+# Native "update available" toasts fired by the background update timer
+# and the tray-menu check (mirrors Sentinel's updater UX). Permission
+# `notification:default` is granted in capabilities/default.json.
+tauri-plugin-notification = "2"
 # Opt-OUT launch-at-startup. Default on; the Settings UI flips
 # `launchAtStartupEnabled` in state.json. The IPC command drives
 # enable()/disable() on the plugin's autolaunch manager, which writes
