@@ -89,7 +89,7 @@ export const BACKEND_LOGOS: Record<BackendKind, LogoFallback> = {
   openobserve: { bg: '#FFC107', mark: 'Oo' },
   clickstack: { bg: '#FAFF69', mark: 'Cs' },
   chronosphere: { bg: '#2D5BFF', mark: 'Cr' },
-  sentry: { bg: '#362D59', mark: 'Sn' },
+  sentry: { bg: '#6C5FC7', mark: 'Sn' },
 };
 
 interface ParsedBrandSvg {
