@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { AppState, HarnessId } from '@trove/shared';
 
@@ -12,6 +13,7 @@ import { AppHeader, type TabId } from './AppHeader.js';
 import { Footer } from './Footer.js';
 import { PatchPreviewModal } from './PatchPreviewModal.js';
 import { Toast } from './Toast.js';
+import { UpdateModal } from './UpdateModal.js';
 import { HarnessesTab } from './tabs/HarnessesTab.js';
 import { LogsTab } from './tabs/LogsTab.js';
 import { MappingsTab } from './tabs/MappingsTab.js';
@@ -50,6 +52,30 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
   // doesn't know which harness it patched, so we capture the id from
   // `previewing` at the moment `onApplied` fires and stash it here.
   const [toast, setToast] = useState<string | null>(null);
+  // "Update available" dialog. The Rust updater emits this after any
+  // check that finds an update (tray item, Settings button, or the
+  // background timer) and has already stashed the update for
+  // `install_update`. The window may be hidden when a background check
+  // fires; the state persists so the dialog greets the user the next
+  // time they open Trove.
+  const [pendingUpdate, setPendingUpdate] = useState<{
+    version: string;
+    currentVersion: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<{ version: string; currentVersion: string }>('update_available', (event) => {
+      setPendingUpdate(event.payload);
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const enabledHarnessIds = useMemo<ReadonlySet<HarnessId>>(
     () => new Set(appState.harnesses.filter((h) => h.enabled).map((h) => h.id)),
@@ -162,6 +188,14 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
       ) : null}
 
       {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
+
+      {pendingUpdate !== null && (
+        <UpdateModal
+          version={pendingUpdate.version}
+          currentVersion={pendingUpdate.currentVersion}
+          onClose={() => setPendingUpdate(null)}
+        />
+      )}
     </div>
   );
 }

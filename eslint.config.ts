@@ -42,6 +42,9 @@ export default tseslint.config(
         clearInterval: 'readonly',
         setImmediate: 'readonly',
         clearImmediate: 'readonly',
+        // Node 18+ global fetch — used by scripts/notary-poll.mjs to call
+        // Apple's notary REST API without pulling in a dependency.
+        fetch: 'readonly',
         module: 'readonly',
         require: 'readonly',
         __dirname: 'readonly',

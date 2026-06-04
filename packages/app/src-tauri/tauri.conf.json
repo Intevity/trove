@@ -32,7 +32,7 @@
     "updater": {
       "active": true,
       "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
-      "endpoints": ["https://github.com/Intevity/trove/releases/latest/download/latest.json"]
+      "endpoints": ["https://intevity-trove-updates.s3.us-east-1.amazonaws.com/stable/latest.json"]
     }
   },
   "bundle": {

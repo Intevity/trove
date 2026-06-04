@@ -51,6 +51,13 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let separator_a = PredefinedMenuItem::separator(app)?;
     let open_item = MenuItem::with_id(app, "open", "Open Trove", true, None::<&str>)?;
+    let check_updates_item = MenuItem::with_id(
+        app,
+        "check_updates",
+        "Check for updates…",
+        true,
+        None::<&str>,
+    )?;
     let synthetic_item = MenuItem::with_id(
         app,
         "synthetic_test",
@@ -66,6 +73,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             &status_item,
             &separator_a,
             &open_item,
+            &check_updates_item,
             &synthetic_item,
             &separator_b,
             &quit_item,
@@ -114,10 +122,23 @@ pub fn force_color<R: Runtime>(app: &AppHandle<R>, color: OverallHealth) {
 }
 
 #[allow(clippy::needless_pass_by_value)] // Tauri's on_menu_event callback takes MenuEvent by value.
-fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
+// Monomorphic on Wry (not `<R: Runtime>`): the `check_updates` arm calls
+// the `updater::check_for_updates` Tauri command, whose `AppHandle`
+// argument is Wry-typed — and the tray builder in `setup` is Wry anyway.
+fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id.as_ref() {
         "open" => show_main(app),
         "quit" => app.exit(0),
+        "check_updates" => {
+            // Same shared probe the Settings button uses: on a hit it
+            // shows the window + raises the modal; otherwise it fires a
+            // notification. Feedback is in-command, so the result (the
+            // Settings panel's metadata) is dropped here.
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = crate::updater::check_for_updates(handle).await;
+            });
+        }
         "synthetic_test" => {
             // Surface the click as an event the WebView listens to (or
             // ignores). The dashboard's own "Test Pipeline" button

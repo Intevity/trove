@@ -21,6 +21,7 @@ pub mod secrets;
 pub mod tier3_watchers;
 mod tray;
 mod tray_icon_render;
+pub mod updater;
 
 use std::path::PathBuf;
 
@@ -48,12 +49,16 @@ pub fn app_version() -> &'static str {
 
 /// Mounts the Tauri application. Called from `main.rs` (and from
 /// platform-specific entry points if we ever add mobile targets).
+// Registration glue: every subsystem adds a plugin/handler/setup line,
+// so the length cap fires on wiring, not logic. Keep logic out of here.
+#[allow(clippy::too_many_lines)]
 pub fn run() {
     init_tracing();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         // Launch-at-startup plugin: writes the LaunchAgent / Run registry
         // / .desktop autostart entry when enabled. The reconciler in
         // `ipc::commands::get_app_state` enforces the user's
@@ -81,7 +86,8 @@ pub fn run() {
             ipc::commands::test_export,
             ipc::commands::set_auto_update_enabled,
             ipc::commands::set_launch_at_startup_enabled,
-            ipc::commands::check_for_updates,
+            updater::check_for_updates,
+            updater::install_update,
             ipc::commands::set_identity_enabled,
             ipc::commands::set_identity_manual,
             ipc::commands::set_identity_auto,
@@ -177,6 +183,12 @@ pub fn run() {
             // so PR 2 can subscribe to the watch / broadcast channels
             // from inside `tray::setup` without a deferred lookup.
             tray::setup(app.handle())?;
+
+            // Auto-updater: stash slot consumed by the modal's Install
+            // button, plus the 4-hour background check timer (opt-in
+            // gated on `auto_update_enabled` inside `scheduled_check`).
+            app.manage(updater::PendingUpdate(Mutex::new(None)));
+            updater::spawn_update_timer(app.handle().clone());
 
             // Rehydrate supplementary watchers (Cline, Aider, Copilot-CLI,
             // Gemini) for every harness already in state.json. Without
