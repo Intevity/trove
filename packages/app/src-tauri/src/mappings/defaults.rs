@@ -758,9 +758,11 @@ fn copilot_cli_defaults() -> HarnessMapping {
 /// `crate::adapters::droid_watcher`):
 /// - `droid.tokens.input` → tokens(direction=input) — full-price new input tokens
 /// - `droid.tokens.output` → tokens(direction=output)
-/// - `droid.tokens.cache_read` → tokens(`direction=cacheRead`) — cache-read tokens
-/// - `droid.cost` → cost.usd(cost.method=estimated) — from contextCount + outputTokens;
-///   cacheReadInputTokens excluded (billed at a lower rate; ~10% underestimate)
+/// - `droid.tokens.cache_read` → tokens(direction=cacheRead) — cache-read tokens
+/// - `droid.tokens.thinking` → tokens(direction=thinking) — extended-thinking tokens
+/// - `droid.tokens.cache_write` → tokens(direction=cacheWrite) — cache-creation tokens
+/// - `droid.cost` → cost.usd(cost.method=estimated) — from contextCount + outputTokens
+///   + cacheReadInputTokens (billed at 0.1× input rate)
 ///
 /// **Excluded by default** (native OTLP):
 /// - `droid.mcp.tool_invocations` — overlap with `droid.tool.invocations`
@@ -827,6 +829,20 @@ fn droid_defaults() -> HarnessMapping {
                 emit: Some(HookEmit {
                     metric: TierAMetric::Tokens.id(),
                     attributes: attr("direction", "cacheRead"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "droid.tokens.thinking".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "thinking"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "droid.tokens.cache_write".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Tokens.id(),
+                    attributes: attr("direction", "cacheWrite"),
                 }),
             },
             MappingSource::HookRule {

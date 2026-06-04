@@ -26,7 +26,7 @@ const CLOSED_ENUM_ATTRS: Record<string, string[]> = {
     'session.start',
     'session.end',
   ],
-  direction: ['input', 'output', 'cacheRead'],
+  direction: ['input', 'output', 'cacheRead', 'thinking', 'cacheWrite'],
   'cost.method': ['exact', 'estimated'],
   'error.kind': ['rate_limit', 'auth', 'tool_failure', 'network', 'policy', 'unknown'],
 };
