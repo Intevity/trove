@@ -38,6 +38,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/trove-otelcol"],
     "resources": {
       "../../../resources/hooks/cursor-otel-hook.cjs": "resources/hooks/cursor-otel-hook.cjs",
