@@ -15,7 +15,9 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "build:app": "pnpm -F app tauri build",
+    "build:app": "node scripts/build-app.mjs",
+    "build:app:release": "pnpm -F app tauri build",
+    "install:app": "node scripts/build-app.mjs",
     "build:collector": "bash scripts/build-collector.sh",
     "bundle:sidecar": "jiti scripts/bundle-sidecar.ts",
     "prepare": "lefthook install"
