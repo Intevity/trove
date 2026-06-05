@@ -220,24 +220,39 @@ pnpm --filter @trove/app tauri:dev
 
 ### Useful scripts
 
-| Command                | What it does                                        |
-| ---------------------- | --------------------------------------------------- |
-| `pnpm dev`             | Run all package dev scripts in parallel             |
-| `pnpm build`           | Build every package (TypeScript)                    |
-| `pnpm build:app`       | Build the full Tauri app bundle                     |
-| `pnpm build:collector` | Rebuild the bundled OpenTelemetry Collector sidecar |
-| `pnpm test`            | Run vitest with coverage (≥ 95% gate)               |
-| `pnpm typecheck`       | Type-check every package                            |
-| `pnpm lint`            | ESLint across the workspace                         |
-| `pnpm format:check`    | Verify Prettier formatting                          |
+| Command                  | What it does                                               |
+| ------------------------ | ---------------------------------------------------------- |
+| `pnpm dev`               | Run all package dev scripts in parallel                    |
+| `pnpm build`             | Build every package (TypeScript)                           |
+| `pnpm build:app`         | Build your local changes unsigned and launch them (below)  |
+| `pnpm build:app:release` | Full signed `tauri build` (all targets, needs updater key) |
+| `pnpm build:collector`   | Rebuild the bundled OpenTelemetry Collector sidecar        |
+| `pnpm test`              | Run vitest with coverage (≥ 95% gate)                      |
+| `pnpm typecheck`         | Type-check every package                                   |
+| `pnpm lint`              | ESLint across the workspace                                |
+| `pnpm format:check`      | Verify Prettier formatting                                 |
 
-### Build the production bundle
+### Running a local build
 
 ```sh
 pnpm build:app
 ```
 
-Outputs in `packages/app/src-tauri/target/release/bundle/`:
+`pnpm build:app` is the **cross-platform** dev entrypoint
+(`scripts/build-app.mjs`): it detects the OS, builds **without the updater
+signing key** (no `~/.tauri/*.key` prompt, via `src-tauri/tauri.dev.conf.json`
+which sets `bundle.createUpdaterArtifacts: false`), then launches your
+changes. macOS installs to `/Applications/Trove.app` and opens it; Linux
+builds and runs an `.AppImage`; Windows builds and runs the NSIS
+`-setup.exe`. Preview without building: `node scripts/build-app.mjs --dry-run`
+(add `--platform=linux|win32|darwin`).
+
+Use `pnpm build:app:release` for the SIGNED release build (full
+`tauri build`, all targets, signed updater artifacts — prompts for the key
+password). CI does this via tauri-action; you rarely need it locally. Do
+NOT use `build:app:release` for the dev loop — it blocks on the key prompt.
+
+Release outputs land in `packages/app/src-tauri/target/release/bundle/`:
 
 | Platform | Output                      |
 | -------- | --------------------------- |
