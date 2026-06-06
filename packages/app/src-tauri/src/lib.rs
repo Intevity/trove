@@ -21,6 +21,8 @@ pub mod secrets;
 pub mod tier3_watchers;
 mod tray;
 mod tray_icon_render;
+#[cfg(windows)]
+mod tray_pin;
 pub mod updater;
 
 use std::path::PathBuf;
@@ -56,6 +58,13 @@ pub fn run() {
     init_tracing();
 
     let app = tauri::Builder::default()
+        // MUST be the first registered plugin (upstream requirement) so a
+        // second launch attempt exits before any other init runs. The
+        // callback fires in the already-running instance — surface its
+        // window so the relaunch isn't a silent no-op.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tray::show_main(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
@@ -183,6 +192,14 @@ pub fn run() {
             // so PR 2 can subscribe to the watch / broadcast channels
             // from inside `tray::setup` without a deferred lookup.
             tray::setup(app.handle())?;
+
+            // Windows 11: lift the tray icon out of the overflow flyout
+            // once per install (marker-gated, so a user who re-hides the
+            // icon afterwards keeps that choice). Must follow tray::setup —
+            // the registry subkey it flips only exists after the icon is
+            // registered with the shell.
+            #[cfg(windows)]
+            tray_pin::promote_once(app.handle());
 
             // Auto-updater: stash slot consumed by the modal's Install
             // button, plus the 4-hour background check timer (opt-in
