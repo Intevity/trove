@@ -136,12 +136,18 @@ fn run_git_config(key: &str) -> Option<String> {
     // the user has a remote credential helper wired into a stale
     // network mount this prevents the IPC handler from hanging.
     const BUDGET: Duration = Duration::from_millis(1_500);
-    let mut child = Command::new("git")
-        .args(["config", "--global", key])
+    let mut cmd = Command::new("git");
+    cmd.args(["config", "--global", key])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(std::process::Stdio::null());
+    // CREATE_NO_WINDOW — git is a console app; without this flag every
+    // identity probe from the GUI app flashes a console window.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let mut child = cmd.spawn().ok()?;
     let started = std::time::Instant::now();
     loop {
         if started.elapsed() > BUDGET {
