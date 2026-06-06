@@ -38,6 +38,12 @@ tauri-plugin-notification = "2"
 # enable()/disable() on the plugin's autolaunch manager, which writes
 # LaunchAgent / Run registry / .desktop autostart files behind one API.
 tauri-plugin-autostart = "2"
+# Single-instance guard. Without it Windows happily spawns a second
+# Trove (plus a duplicate tray icon) on every launch; macOS only masks
+# the problem via Launch Services. Registered FIRST in the builder so
+# the second process exits before any subsystem init runs; the callback
+# surfaces the existing instance's window instead.
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = [
     "macros",
@@ -104,6 +110,12 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # names can be scoped per-instance (avoiding collision when the same
 # kind is configured more than once).
 uuid = { version = "1", features = ["v4"] }
+
+# Windows 11 tray-icon promotion (`tray_pin.rs`): enumerate
+# `HKCU\Control Panel\NotifyIconSettings` and flip `IsPromoted` so the
+# tray icon lands on the taskbar instead of the overflow flyout.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 
 [dev-dependencies]
 proptest = "1"

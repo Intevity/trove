@@ -176,7 +176,9 @@ fn toggle_main<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-fn show_main<R: Runtime>(app: &AppHandle<R>) {
+// Also the landing point for tauri-plugin-single-instance: a second
+// launch attempt surfaces the existing instance's window via this.
+pub(crate) fn show_main<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
