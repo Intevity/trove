@@ -6,6 +6,8 @@
 //! [`tokio::sync::watch`] channel that Sprint 6 will surface to the UI.
 
 use std::collections::HashMap;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -22,6 +24,12 @@ use super::{health, logs};
 
 /// Default health endpoint exposed by the bundled smoke configuration.
 pub const DEFAULT_HEALTH_URL: &str = "http://127.0.0.1:13133/health";
+
+/// CREATE_NO_WINDOW — suppresses the console window Windows would
+/// otherwise allocate when a GUI-subsystem parent (this app) spawns a
+/// console-subsystem child (`trove-otelcol`, `tasklist`, `taskkill`).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Tunables for the supervisor task. Constructed once and held for the
 /// lifetime of the supervisor.
@@ -433,6 +441,13 @@ fn spawn_child(opts: &SupervisorOptions) -> std::io::Result<Child> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.kill_on_drop(true);
+    // CREATE_NO_WINDOW — trove-otelcol is a console-subsystem exe; the
+    // parent GUI app has no console, so without this flag Windows
+    // allocates a visible console window for the child. The flag only
+    // suppresses console allocation; the piped stdout/stderr feeding
+    // the log tee are unaffected.
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.spawn()
 }
 
@@ -633,6 +648,7 @@ fn find_processes_by_name(name: &str) -> Vec<u32> {
         let filter = format!("IMAGENAME eq {stem}.exe");
         if let Ok(out) = std::process::Command::new("tasklist")
             .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
             if out.status.success() {
@@ -694,6 +710,7 @@ fn process_command_name(pid: u32) -> Option<String> {
         // tasklist /FI "PID eq <pid>" /FO CSV /NH → "IMAGENAME","PID",…
         let out = std::process::Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .ok()?;
         if !out.status.success() {
@@ -748,6 +765,7 @@ fn send_terminate_signal(pid: u32) {
         // to run.
         let _ = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
 }
@@ -763,6 +781,7 @@ fn send_kill_signal(pid: u32) {
     {
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
 }

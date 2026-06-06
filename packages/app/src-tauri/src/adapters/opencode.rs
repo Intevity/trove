@@ -141,14 +141,21 @@ fn ensure_otel_plugin_installed(config_dir: &Path) {
         );
         return;
     };
-    let status = std::process::Command::new(&npm)
-        .arg("install")
+    let mut cmd = std::process::Command::new(&npm);
+    cmd.arg("install")
         .arg("--silent")
         .arg("--no-audit")
         .arg("--no-fund")
         .arg(OTEL_PLUGIN_PACKAGE)
-        .current_dir(config_dir)
-        .status();
+        .current_dir(config_dir);
+    // CREATE_NO_WINDOW — npm is a console app; without this flag the
+    // bootstrap flashes a console window when launched from the GUI app.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let status = cmd.status();
     match status {
         Ok(s) if s.success() => {
             tracing::info!(
