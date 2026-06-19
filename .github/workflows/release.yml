@@ -20,6 +20,12 @@ jobs:
   build-tauri:
     name: Build Tauri app (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
+    # Run in the `release` GitHub Environment so the Windows leg's Azure OIDC token carries
+    # the subject `repo:<owner>/<repo>:environment:release` — the federated credential behind
+    # AZURE_CLIENT_ID is scoped to exactly that. Harmless for the macOS/Linux legs: the
+    # environment has no protection rules and repo-level secrets/variables stay accessible.
+    # (Create it once with: gh api -X PUT repos/<owner>/<repo>/environments/release)
+    environment: release
     # macOS notarization is NOT awaited here: this leg signs the bundle and
     # submits to Apple's notary WITHOUT waiting (see the "Submit to notary"
     # step), then exits. The queue wait is paid on the 1x ubuntu
@@ -212,6 +218,79 @@ jobs:
           TROVE_TARGET_TRIPLE: ${{ matrix.rust_target }}
         run: pnpm bundle:sidecar
 
+      # Windows code signing is OIDC end to end — no stored client secret. azure/login
+      # exchanges the runner's OIDC token (subject scoped to the `release` environment
+      # above) for an Azure session; Microsoft's `sign` tool then signs via
+      # DefaultAzureCredential off that session. Skipped (leg builds unsigned, like a fork)
+      # whenever any of the six AZURE_* repo variables is unset.
+      - name: Azure login (OIDC) for code signing
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != '' && vars.AZURE_TENANT_ID != '' && vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_TS_ENDPOINT != '' && vars.AZURE_TS_ACCOUNT != '' && vars.AZURE_TS_PROFILE != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
+
+      # Install Microsoft's `sign` tool, detect the trusted-/artifact-signing subcommand
+      # (Microsoft is mid-rename), and inject bundle.windows.signCommand into tauri.conf.json
+      # IN CI ONLY (the committed config stays clean for local unsigned builds). The exported
+      # SIGN_TOOL_PATH / SIGN_SUBCOMMAND / AZURE_TS_* are reused by the sidecar signing step.
+      - name: Prepare Windows signing (Trusted/Artifact Signing)
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != '' && vars.AZURE_TENANT_ID != '' && vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_TS_ENDPOINT != '' && vars.AZURE_TS_ACCOUNT != '' && vars.AZURE_TS_PROFILE != ''
+        shell: bash
+        env:
+          AZURE_TS_ENDPOINT: ${{ vars.AZURE_TS_ENDPOINT }}
+          AZURE_TS_ACCOUNT: ${{ vars.AZURE_TS_ACCOUNT }}
+          AZURE_TS_PROFILE: ${{ vars.AZURE_TS_PROFILE }}
+        run: |
+          set -euo pipefail
+          dotnet tool install --global --prerelease sign
+          if [[ ! -f "$HOME/.dotnet/tools/sign.exe" ]]; then
+            echo "::error::sign tool not found at $HOME/.dotnet/tools/sign.exe after install" >&2
+            exit 1
+          fi
+          # Absolute path with forward slashes — Tauri runs signCommand as a raw process.
+          SIGN_EXE="$(cygpath -m "$HOME/.dotnet/tools/sign.exe")"
+          echo "sign tool: $SIGN_EXE"
+          # The trusted->artifact rename is mid-flight; detect which subcommand this build ships.
+          help="$("$SIGN_EXE" code --help 2>&1 || true)"
+          if printf '%s' "$help" | grep -q 'artifact-signing'; then
+            sub='artifact-signing'
+          else
+            sub='trusted-signing'
+          fi
+          echo "sign subcommand: $sub"
+          # Inject bundle.windows.signCommand — CI only; the committed tauri.conf.json stays clean.
+          SIGN_EXE="$SIGN_EXE" SUB="$sub" node -e '
+            const fs = require("fs");
+            const p = "packages/app/src-tauri/tauri.conf.json";
+            const j = JSON.parse(fs.readFileSync(p, "utf8"));
+            const sub = process.env.SUB;
+            j.bundle.windows = j.bundle.windows || {};
+            j.bundle.windows.signCommand = {
+              cmd: process.env.SIGN_EXE,
+              args: [
+                "code", sub,
+                "--" + sub + "-endpoint", process.env.AZURE_TS_ENDPOINT,
+                "--" + sub + "-account", process.env.AZURE_TS_ACCOUNT,
+                "--" + sub + "-certificate-profile", process.env.AZURE_TS_PROFILE,
+                "-d", "Trove",
+                "%1",
+              ],
+            };
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+            console.log("Patched signCommand:", JSON.stringify(j.bundle.windows.signCommand));
+          '
+          # Export for the sidecar signing step (the sidecar is signed before tauri build).
+          {
+            echo "AZURE_TS_ENDPOINT=$AZURE_TS_ENDPOINT"
+            echo "AZURE_TS_ACCOUNT=$AZURE_TS_ACCOUNT"
+            echo "AZURE_TS_PROFILE=$AZURE_TS_PROFILE"
+            echo "SIGN_TOOL_PATH=$SIGN_EXE"
+            echo "SIGN_SUBCOMMAND=$sub"
+          } >> "$GITHUB_ENV"
+
       # Prepare macOS signing: validate secrets, import the Developer ID cert into a
       # dedicated, unlocked, search-listed keychain, and stage the notarization key.
       # The cert must be resident BEFORE the build because the sidecar is codesigned
@@ -286,6 +365,27 @@ jobs:
             --sign "$APPLE_SIGNING_IDENTITY" "$bin"
           codesign --verify --strict --verbose=2 "$bin"
 
+      # Tauri does NOT sign externalBin (tauri-apps/tauri#11992), so the Go collector .exe
+      # must be Authenticode-signed BEFORE tauri build packs it into the NSIS/MSI installers —
+      # otherwise it ships unsigned inside an otherwise-signed installer. Uses the sign tool +
+      # OIDC session prepared above. Windows mirror of the macOS sidecar signing step.
+      - name: Sign sidecar binary (Windows Authenticode, before tauri build)
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != '' && vars.AZURE_TENANT_ID != '' && vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_TS_ENDPOINT != '' && vars.AZURE_TS_ACCOUNT != '' && vars.AZURE_TS_PROFILE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="packages/app/src-tauri/binaries/trove-otelcol-${{ matrix.rust_target }}.exe"
+          [[ -f "$bin" ]] || { echo "::error::Staged sidecar not found at $bin" >&2; exit 1; }
+          # SIGN_TOOL_PATH / SIGN_SUBCOMMAND / AZURE_TS_* were exported to $GITHUB_ENV by the
+          # "Prepare Windows signing" step. Argv array (no shell) — the spaced -d value and the
+          # path need no quoting. Fail loudly: a silent miss only surfaces as a SmartScreen/AV
+          # warning on a shipped installer, long after this expensive release build.
+          "$SIGN_TOOL_PATH" code "$SIGN_SUBCOMMAND" \
+            "--${SIGN_SUBCOMMAND}-endpoint" "$AZURE_TS_ENDPOINT" \
+            "--${SIGN_SUBCOMMAND}-account" "$AZURE_TS_ACCOUNT" \
+            "--${SIGN_SUBCOMMAND}-certificate-profile" "$AZURE_TS_PROFILE" \
+            -d "Trove" "$bin"
+
       # Signing mechanisms here:
       #   1. The Developer ID identity imported above signs the .app and the
       #      already-signed sidecar (Gatekeeper). Tauri signs via APPLE_SIGNING_IDENTITY
@@ -296,8 +396,10 @@ jobs:
       #      jobs (see notarize-wait below / notarize-finalize.yml).
       #   3. TAURI_SIGNING_PRIVATE_KEY → signs the auto-updater artifacts
       #      (.app.tar.gz.sig / latest.json), NOT the .app bundle.
-      #   4. WINDOWS_CERTIFICATE pair → Authenticode for the Windows leg; tauri-action
-      #      degrades to unsigned Windows bundles while the pair is unset.
+      #   4. Windows Authenticode → the "Prepare Windows signing" step injected a
+      #      bundle.windows.signCommand (Azure Trusted Signing via Microsoft's `sign` tool
+      #      over the OIDC session, no stored secret); tauri build invokes it to sign the
+      #      app .exe / NSIS -setup.exe / MSI. The leg builds unsigned when AZURE_* is unset.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -305,8 +407,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           projectPath: packages/app
           tagName: ${{ github.ref_name }}
@@ -316,11 +416,42 @@ jobs:
 
             macOS bundles are Developer ID-signed and notarized; the in-app
             updater is fed from the S3 channel (stable/latest.json). Windows
-            bundles are Authenticode-signed when the WINDOWS_CERTIFICATE
-            secrets are configured.
+            bundles are Authenticode-signed via Azure Trusted Signing when the
+            AZURE_* repo variables are configured.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Fail the release if any Windows artifact slipped through unsigned (e.g. a signCommand
+      # that silently no-op'd) — a miss otherwise only surfaces as a SmartScreen/AV warning on
+      # an already-published installer. Native Get-AuthenticodeSignature, no extra tooling.
+      - name: Verify Windows Authenticode signatures
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != '' && vars.AZURE_TENANT_ID != '' && vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_TS_ENDPOINT != '' && vars.AZURE_TS_ACCOUNT != '' && vars.AZURE_TS_PROFILE != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = "packages/app/src-tauri/target/release/bundle"
+          $targets = @()
+          $targets += Get-ChildItem -Path "$bundle/nsis" -Filter '*-setup.exe' -ErrorAction SilentlyContinue
+          $targets += Get-ChildItem -Path "$bundle/msi"  -Filter '*.msi'        -ErrorAction SilentlyContinue
+          $targets += Get-ChildItem -Path "packages/app/src-tauri/binaries" -Filter 'trove-otelcol-*.exe' -ErrorAction SilentlyContinue
+          if ($targets.Count -eq 0) {
+            Write-Error "No Windows artifacts (nsis *-setup.exe, msi *.msi, sidecar .exe) found to verify."
+          }
+          $unsigned = @()
+          foreach ($f in $targets) {
+            $sig = Get-AuthenticodeSignature -FilePath $f.FullName
+            Write-Host ("{0,-12} {1}" -f $sig.Status, $f.Name)
+            if ($sig.Status -eq 'NotSigned') {
+              $unsigned += $f.Name
+            } elseif ($sig.Status -ne 'Valid') {
+              Write-Warning ("{0}: Authenticode status '{1}' - {2}" -f $f.Name, $sig.Status, $sig.StatusMessage)
+            }
+          }
+          if ($unsigned.Count -gt 0) {
+            Write-Error ("Unsigned Windows artifact(s): {0}. Expected Azure Trusted Signing Authenticode signatures." -f ($unsigned -join ', '))
+          }
+          Write-Host "Windows Authenticode verification passed (no unsigned artifacts)."
 
       # Submit the signed .dmg to Apple's notary service WITHOUT waiting, then hand the
       # submission id to the notarize-wait job. tauri-action above signed the bundle but
