@@ -139,16 +139,33 @@ the committed pubkey; a mismatch surfaces as
 > triple is no longer used; notarization authenticates with the ASC API
 > key, which is account-level and can be shared with claude-sentinel.)
 
-### Windows Authenticode (optional)
+### Windows Authenticode (optional, OIDC end to end)
 
-| Secret                         | Purpose                                                 |
-| ------------------------------ | ------------------------------------------------------- |
-| `WINDOWS_CERTIFICATE`          | Base64-encoded `.pfx` Authenticode signing certificate. |
-| `WINDOWS_CERTIFICATE_PASSWORD` | Password for the `.pfx`.                                |
+Like the updater channel, **no client secret is stored**. When the six
+`AZURE_*` repo **variables** below are set, the release pipeline
+Authenticode-signs the Windows app `.exe`, NSIS `-setup.exe`, MSI, and
+the embedded `trove-otelcol` sidecar with **Azure Trusted Signing** (via
+Microsoft's `sign` tool); leave any unset and the Windows leg builds
+**unsigned** (exactly how a fork behaves). These live under
+Settings → Secrets and variables → Actions → **Variables** (not Secrets —
+they carry no secret material).
 
-Leave **both** unset (not empty) until provisioned; tauri-action then
-produces unsigned Windows bundles. Windows artifacts still carry
-minisign signatures, so Windows in-app updates work either way.
+| Variable                | Purpose                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `AZURE_CLIENT_ID`       | Entra app registration the release job authenticates as via OIDC (no secret).                     |
+| `AZURE_TENANT_ID`       | Entra tenant id.                                                                                  |
+| `AZURE_SUBSCRIPTION_ID` | Subscription that holds the signing account.                                                      |
+| `AZURE_TS_ENDPOINT`     | Signing account URI, e.g. `https://eus.codesigning.azure.net/` (region-specific).                 |
+| `AZURE_TS_ACCOUNT`      | Trusted Signing account name.                                                                     |
+| `AZURE_TS_PROFILE`      | Public Trust certificate profile name (set **last**, after portal identity validation completes). |
+
+The build job runs in a `release` GitHub Environment so its OIDC token
+subject is `repo:<owner>/<repo>:environment:release`; the Entra app
+registration behind `AZURE_CLIENT_ID` needs a **federated credential
+scoped to exactly that subject for this repo**. Create the environment
+once with `gh api -X PUT repos/<owner>/<repo>/environments/release`.
+Windows artifacts also carry minisign signatures, so in-app updates work
+whether or not Authenticode is configured.
 
 ### Generating the Apple secrets
 
@@ -263,8 +280,12 @@ curl -s "https://intevity-trove-updates.s3.us-east-1.amazonaws.com/stable/latest
 ### Windows — Authenticode
 
 Right-click the downloaded `.exe` → **Properties** → **Digital
-Signatures** → confirm the chain validates (only once the
-`WINDOWS_CERTIFICATE` pair is configured).
+Signatures** → confirm the chain validates (only once the `AZURE_*`
+variables are configured). On a Windows box you can also run
+`Get-AuthenticodeSignature .\Trove_<ver>_x64-setup.exe` (or
+`signtool verify /pa /v <file>`) — the signer should chain to the Azure
+Trusted Signing Public Trust certificate. The release workflow already
+gates on this via its "Verify Windows Authenticode signatures" step.
 
 ### In-app auto-updater loop
 
