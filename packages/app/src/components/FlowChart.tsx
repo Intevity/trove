@@ -7,7 +7,6 @@ import type {
   Backend,
   BackendInstance,
   CollectorRunState,
-  HarnessConfig,
   HarnessId,
   MetricsSnapshotWire,
 } from '@trove/shared';
@@ -16,8 +15,16 @@ import troveLogo from '../assets/trove-logo.svg';
 import { HARNESS_LABELS, NodeLogoSvg } from '../lib/logos.js';
 import { Card, CardHeader, CardTitle } from './ui/index.js';
 
+/** Minimal harness shape the chart renders: just an id (drives the
+ *  label, logo, and lane). Enabled `HarnessConfig`s satisfy this, as do
+ *  the passive forwarder sources (e.g. Sentinel) that OverviewTab injects
+ *  even though Trove doesn't manage them. */
+export interface FlowChartHarness {
+  id: HarnessId;
+}
+
 interface FlowChartProps {
-  harnesses: HarnessConfig[];
+  harnesses: readonly FlowChartHarness[];
   backends: BackendInstance[];
   metrics: MetricsSnapshotWire | null;
   state: CollectorRunState | null;

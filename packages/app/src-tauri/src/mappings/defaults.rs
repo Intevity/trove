@@ -56,6 +56,7 @@ pub fn default_state() -> MappingState {
             defaults_for(HarnessId::KimiCodeCli),
             defaults_for(HarnessId::Devin),
             defaults_for(HarnessId::Forgecode),
+            defaults_for(HarnessId::Sentinel),
         ],
     }
 }
@@ -95,7 +96,8 @@ pub fn defaults_for(id: HarnessId) -> HarnessMapping {
         HarnessId::JunieCli
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
-        | HarnessId::Forgecode => detection_only_defaults(id),
+        | HarnessId::Forgecode
+        | HarnessId::Sentinel => detection_only_defaults(id),
     }
 }
 
@@ -869,6 +871,7 @@ mod tests {
                 HarnessId::KimiCodeCli,
                 HarnessId::Devin,
                 HarnessId::Forgecode,
+                HarnessId::Sentinel,
             ]
         );
     }

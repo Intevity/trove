@@ -176,6 +176,7 @@ fn read_telemetry(id: HarnessId, path: &Path) -> TelemetryStatus {
         HarnessId::CodexCli | HarnessId::CodexDesktop => check_codex_telemetry(&text),
         HarnessId::CursorIde | HarnessId::CursorCli => check_cursor_telemetry(&text),
         HarnessId::Opencode => check_opencode_telemetry(&text),
+        HarnessId::Sentinel => check_sentinel_telemetry(&text),
         _ => TelemetryStatus::Unknown,
     }
 }
@@ -193,6 +194,42 @@ fn check_claude_telemetry(text: &str) -> TelemetryStatus {
         Some(serde_json::Value::Bool(true)) => TelemetryStatus::On,
         Some(_) | None => TelemetryStatus::Off,
     }
+}
+
+/// Sentinel's telemetry reaches Trove only when its OTEL forwarder is
+/// enabled *and* aimed at Trove's local collector. We read Sentinel's
+/// plain `settings.json` (its integrity HMAC lives in a separate `.sig`
+/// sidecar and is Sentinel's own concern — reading the JSON is harmless).
+/// `On` when forwarding to Trove, `Off` when forwarding is disabled or
+/// points elsewhere (Trove receives nothing in that case), `Unknown`
+/// when the file won't parse.
+fn check_sentinel_telemetry(text: &str) -> TelemetryStatus {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return TelemetryStatus::Unknown;
+    };
+    let forwarding = value
+        .get("otelForwardingEnabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !forwarding {
+        return TelemetryStatus::Off;
+    }
+    match value
+        .get("otelExporterEndpoint")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(url) if is_trove_collector_endpoint(url) => TelemetryStatus::On,
+        _ => TelemetryStatus::Off,
+    }
+}
+
+/// True when `url` points at Trove's local OTLP/HTTP receiver — a
+/// loopback host on port 4318. Scheme and path are irrelevant; we only
+/// need host+port to know Sentinel is forwarding to *this* collector.
+fn is_trove_collector_endpoint(url: &str) -> bool {
+    let u = url.trim();
+    let loopback = u.contains("127.0.0.1") || u.contains("localhost") || u.contains("::1");
+    loopback && u.contains(":4318")
 }
 
 /// Gemini CLI and Qwen Code use a `telemetry.enabled` boolean.
@@ -398,6 +435,57 @@ mod tests {
         assert_eq!(result.config_path.as_deref(), Some(cfg.as_path()));
         assert_eq!(result.detection_method, Some(DetectionMethod::ConfigDir));
         assert_eq!(result.telemetry, TelemetryStatus::Off);
+    }
+
+    #[test]
+    fn sentinel_detected_is_detection_only_and_reads_forwarding_telemetry() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".sentinel").join("settings.json");
+        // Forwarding enabled and aimed at Trove's collector → telemetry on.
+        write_settings(
+            &cfg,
+            r#"{"otelForwardingEnabled":true,"otelExporterEndpoint":"http://127.0.0.1:4318"}"#,
+        );
+
+        let result = detect(HarnessId::Sentinel, &detector_for(home.path()));
+        assert!(result.detected);
+        assert_eq!(result.config_path.as_deref(), Some(cfg.as_path()));
+        assert_eq!(result.detection_method, Some(DetectionMethod::ConfigDir));
+        // Trove never patches Sentinel's integrity-signed settings, so the
+        // row stays informational (no adapter) — but telemetry status is
+        // read straight from the forwarder config.
+        assert!(!result.adapter_available);
+        assert_eq!(result.telemetry, TelemetryStatus::On);
+    }
+
+    #[test]
+    fn sentinel_telemetry_off_when_forwarding_disabled_or_elsewhere() {
+        let home = tempdir().unwrap();
+        let cfg = home.path().join(".sentinel").join("settings.json");
+
+        write_settings(&cfg, r#"{"otelForwardingEnabled":false}"#);
+        assert_eq!(
+            detect(HarnessId::Sentinel, &detector_for(home.path())).telemetry,
+            TelemetryStatus::Off,
+        );
+
+        // Forwarding on, but to a non-Trove endpoint — Trove receives
+        // nothing, so it reads Off from Trove's vantage point.
+        write_settings(
+            &cfg,
+            r#"{"otelForwardingEnabled":true,"otelExporterEndpoint":"https://ingest.signoz.cloud:443"}"#,
+        );
+        assert_eq!(
+            detect(HarnessId::Sentinel, &detector_for(home.path())).telemetry,
+            TelemetryStatus::Off,
+        );
+    }
+
+    #[test]
+    fn sentinel_not_detected_when_nothing_present() {
+        let home = tempdir().unwrap();
+        let result = detect(HarnessId::Sentinel, &detector_for(home.path()));
+        assert!(!result.detected);
     }
 
     #[test]

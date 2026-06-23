@@ -214,9 +214,24 @@ pnpm install
 
 ### Run the dev app
 
+On a fresh clone, first compile the workspace packages and build + stage the
+bundled OTel Collector sidecar (the Tauri app spawns the sidecar, so it must
+exist before the app boots):
+
+```sh
+pnpm build                                   # compile workspace packages (@trove/shared, …)
+pnpm build:collector && pnpm bundle:sidecar  # build + stage the OTel Collector sidecar
+```
+
+Then launch the dev app:
+
 ```sh
 pnpm --filter @trove/app tauri:dev
 ```
+
+`build:collector && bundle:sidecar` is a one-time step per host (rerun only
+when the collector manifest changes); rerun `pnpm build` whenever a workspace
+package's TypeScript changes.
 
 ### Useful scripts
 
@@ -227,6 +242,7 @@ pnpm --filter @trove/app tauri:dev
 | `pnpm build:app`         | Build your local changes unsigned and launch them (below)  |
 | `pnpm build:app:release` | Full signed `tauri build` (all targets, needs updater key) |
 | `pnpm build:collector`   | Rebuild the bundled OpenTelemetry Collector sidecar        |
+| `pnpm bundle:sidecar`    | Stage the built collector binary into the app for bundling |
 | `pnpm test`              | Run vitest with coverage (≥ 95% gate)                      |
 | `pnpm typecheck`         | Type-check every package                                   |
 | `pnpm lint`              | ESLint across the workspace                                |

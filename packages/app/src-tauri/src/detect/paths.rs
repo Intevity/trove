@@ -95,6 +95,11 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
         HarnessId::KimiCodeCli => paths.push(home.join(".kimi")),
         HarnessId::Devin => paths.push(home.join(".devin")),
         HarnessId::Forgecode => paths.push(home.join(".forge")),
+        // Sentinel stores its (integrity-signed) config at
+        // ~/.sentinel/settings.json; its presence implies Sentinel has run
+        // at least once. Trove never patches this file — detection is the
+        // only signal it contributes.
+        HarnessId::Sentinel => paths.push(home.join(".sentinel").join("settings.json")),
         HarnessId::ClaudeDesktop | HarnessId::Aider | HarnessId::CopilotCli => {}
     }
     paths
@@ -155,6 +160,9 @@ pub fn app_bundle_path(harness: HarnessId, app_root: &Path) -> Option<PathBuf> {
         // OpenAI Codex desktop app ships as /Applications/Codex.app.
         // Codex CLI is detected via the `codex` binary on PATH instead.
         HarnessId::CodexDesktop => Some(app_root.join("Codex.app")),
+        // Sentinel ships as /Applications/Sentinel.app (productName
+        // "Sentinel", bundle id com.jeffwooden.claude-sentinel).
+        HarnessId::Sentinel => Some(app_root.join("Sentinel.app")),
         _ => None,
     }
 }
@@ -340,6 +348,26 @@ mod tests {
         assert_eq!(
             app_bundle_path(HarnessId::CodexDesktop, &root),
             Some(PathBuf::from("/tmp/Applications/Codex.app"))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sentinel_app_bundle_under_apps_root() {
+        let root = PathBuf::from("/tmp/Applications");
+        assert_eq!(
+            app_bundle_path(HarnessId::Sentinel, &root),
+            Some(PathBuf::from("/tmp/Applications/Sentinel.app"))
+        );
+    }
+
+    #[test]
+    fn sentinel_config_search_path_is_dot_sentinel_settings_json() {
+        let home = PathBuf::from("/home/dev");
+        let paths = config_search_paths(HarnessId::Sentinel, &home);
+        assert_eq!(
+            paths[0],
+            PathBuf::from("/home/dev/.sentinel/settings.json"),
         );
     }
 

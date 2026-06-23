@@ -20,12 +20,13 @@ Then:
 
 ```bash
 pnpm install
+pnpm build                           # compile the workspace packages the app imports
 pnpm build:collector                 # one-time per platform; produces resources/otelcol/dist/<triple>/trove-otelcol
 pnpm bundle:sidecar                  # stages the binary into packages/app/src-tauri/binaries/
 pnpm --filter @trove/app tauri:dev   # boots the desktop app
 ```
 
-`tauri:dev` will fail to spawn the sidecar until both `build:collector` and `bundle:sidecar` have run at least once on the current host.
+`pnpm build` compiles the workspace TypeScript packages (`@trove/shared`, `@trove/collector-presets`, …) that the app imports from their `dist/` — skip it on a fresh clone and `tauri:dev` fails to resolve them. `tauri:dev` will also fail to spawn the sidecar until both `build:collector` and `bundle:sidecar` have run at least once on the current host.
 
 The first `pnpm install` also installs the [`lefthook`](https://lefthook.dev/) git hooks via the `prepare` script. They run Prettier + ESLint on staged files at commit time and `pnpm typecheck && pnpm test` at push time.
 

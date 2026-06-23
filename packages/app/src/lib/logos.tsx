@@ -23,6 +23,7 @@ export const HARNESS_LABELS: Record<HarnessId, string> = {
   'kimi-code-cli': 'Kimi Code CLI',
   devin: 'Devin',
   forgecode: 'ForgeCode',
+  sentinel: 'Sentinel',
 };
 
 export interface LogoFallback {
@@ -52,6 +53,7 @@ export const HARNESS_LOGOS: Record<HarnessId, LogoFallback> = {
   'kimi-code-cli': { bg: '#1F2937', mark: 'K' },
   devin: { bg: '#0891B2', mark: 'Dv' },
   forgecode: { bg: '#B45309', mark: 'Fg' },
+  sentinel: { bg: '#4F46E5', mark: 'Sn' },
 };
 
 export type BackendKind = Backend['kind'];

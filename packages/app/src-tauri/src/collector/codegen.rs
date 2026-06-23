@@ -776,7 +776,11 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         | HarnessId::JunieCli
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
-        | HarnessId::Forgecode => &[],
+        | HarnessId::Forgecode
+        // Sentinel forwards an already-tagged stream (service.name is
+        // claude-code for the raw passthrough and sentinel for its own
+        // computed signals), so Trove claims no service.name on its behalf.
+        | HarnessId::Sentinel => &[],
     }
 }
 
@@ -808,6 +812,7 @@ pub fn harness_id_suffix(id: HarnessId) -> &'static str {
         HarnessId::KimiCodeCli => "kimi-code-cli",
         HarnessId::Devin => "devin",
         HarnessId::Forgecode => "forgecode",
+        HarnessId::Sentinel => "sentinel",
     }
 }
 

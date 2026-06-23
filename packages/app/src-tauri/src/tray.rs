@@ -28,7 +28,16 @@ use crate::tray_icon_render::{TintColor, tinted};
 /// retint task can update both. Wrapped in a Mutex because every field
 /// is touched from a single async task; the lock is uncontended.
 pub struct TrayHandle {
+    // `icon` and `status_item` are read only by `force_color`, which is
+    // reachable solely through the debug-gated `dev_set_tray_color` IPC.
+    // In release builds that caller is compiled out, so both fields are
+    // dead there — silence the lint rather than cfg-gating the fields,
+    // which would complicate the unconditional construction in `setup`.
+    // (The live retint task holds its own clones, so the tray stays alive
+    // regardless of these fields.)
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     icon: TrayIcon<Wry>,
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     status_item: MenuItem<Wry>,
     /// Background retint task. Aborted on shutdown via Drop.
     _retint_task: JoinHandle<()>,
@@ -111,6 +120,11 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// Force the tray to a specific colour, bypassing derivation. Returns
 /// the rendered colour so the caller (the dev-hatch IPC) can confirm
 /// the call landed.
+///
+/// Reachable only via the debug-gated `dev_set_tray_color` IPC, so it is
+/// dead code in release builds — allow it there rather than dropping it,
+/// matching the "compiled in every build" contract that command keeps.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub fn force_color<R: Runtime>(app: &AppHandle<R>, color: OverallHealth) {
     let Some(state) = app.try_state::<TrayState>() else {
         return;

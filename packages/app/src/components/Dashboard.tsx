@@ -132,6 +132,14 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
     [refresh, onAppStateRefresh],
   );
 
+  // Detection-only harnesses that are actively forwarding into Trove's
+  // collector (today: Sentinel) aren't "enabled" HarnessConfigs, but they
+  // ARE live sources — surface them in the flow chart so the pipeline
+  // reflects reality.
+  const passiveSources = harnesses
+    .filter((h) => h.detected && !h.adapterAvailable && h.telemetry === 'on')
+    .map((h) => ({ id: h.id }));
+
   return (
     <div data-testid="dashboard" className="flex h-full flex-col bg-canvas dark:bg-canvas-dark">
       <AppHeader health={health} activeTab={activeTab} onTabChange={setActiveTab} />
@@ -142,6 +150,7 @@ export function Dashboard({ appState, onOpenPlatforms, onAppStateRefresh }: Prop
             appState={appState}
             state={state}
             metrics={metrics}
+            passiveSources={passiveSources}
             onOpenPlatforms={() => {
               onOpenPlatforms();
               setActiveTab('platforms');

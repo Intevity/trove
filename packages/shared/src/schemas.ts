@@ -19,6 +19,7 @@ export const HarnessId = z.enum([
   'kimi-code-cli',
   'devin',
   'forgecode',
+  'sentinel',
 ]);
 export type HarnessId = z.infer<typeof HarnessId>;
 

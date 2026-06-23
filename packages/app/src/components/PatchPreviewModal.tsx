@@ -25,6 +25,7 @@ const HARNESS_LABELS: Record<HarnessId, string> = {
   'kimi-code-cli': 'Kimi Code CLI',
   devin: 'Devin',
   forgecode: 'ForgeCode',
+  sentinel: 'Sentinel',
 };
 
 export interface PatchPreviewModalProps {
