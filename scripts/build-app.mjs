@@ -39,6 +39,16 @@ const platformOverride = process.argv.find((a) => a.startsWith('--platform='))?.
 // targets (forcing win32 on macOS would just fail confusingly).
 const platform = dryRun && platformOverride ? platformOverride : process.platform;
 
+// Stamp this as a dev build so the Rust side disables the auto-updater
+// (option_env!("TROVE_BUILD_CHANNEL") in lib.rs). A build:app binary carries
+// newer code than the public feed but an equal-or-lower version string, so
+// the updater would otherwise offer a later-numbered but older-code release
+// as a bogus "upgrade". Every spawned child (install-app.sh, tauri build,
+// cargo) inherits this env, so the value reaches the compile. The signed
+// `build:app:release` / CI path never runs this script, so it stays unset
+// (channel "release") and ships with updates enabled.
+process.env.TROVE_BUILD_CHANNEL = 'dev';
+
 function fail(msg) {
   console.error(`✗ ${msg}`);
   process.exit(1);
