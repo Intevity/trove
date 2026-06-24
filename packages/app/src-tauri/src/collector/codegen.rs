@@ -924,6 +924,94 @@ pub fn apply_mapping_overlay(yaml: String, mappings: &MappingState) -> String {
     apply_cowork_logs_to_metrics(with_diag, &tag_harnesses)
 }
 
+/// Processor definitions injected by [`apply_idle_suppress_overlay`].
+/// Two-space indent so the keys slot under the top-level `processors:`
+/// map. `cumulativetodelta` keeps no `include`/`exclude`, so it converts
+/// every cumulative sum/histogram to delta; `max_staleness` bounds the
+/// per-stream state so dead sessions are eventually reclaimed.
+const IDLE_SUPPRESS_PROC_DEFS: &str = "\
+\x20\x20cumulativetodelta/idle-suppress:\n\
+\x20\x20\x20\x20max_staleness: 300s\n\
+\x20\x20filter/drop-idle:\n\
+\x20\x20\x20\x20error_mode: ignore\n\
+\x20\x20\x20\x20metrics:\n\
+\x20\x20\x20\x20\x20\x20datapoint:\n\
+\x20\x20\x20\x20\x20\x20\x20\x20- 'metric.type == METRIC_DATA_TYPE_SUM and value_int == 0 and value_double == 0.0'\n\
+\x20\x20\x20\x20\x20\x20\x20\x20- 'metric.type == METRIC_DATA_TYPE_HISTOGRAM and count == 0'\n\
+\x20\x20\x20\x20\x20\x20\x20\x20- 'metric.type == METRIC_DATA_TYPE_EXPONENTIAL_HISTOGRAM and count == 0'\n";
+
+/// Final collector overlay: collapse idle/long-lived native-OTel
+/// exporters to silence.
+///
+/// **Why**: an `OTel` metric SDK exports on a wall-clock timer with
+/// cumulative temporality, so a process that is alive but doing nothing
+/// (an orphaned `gemini --yolo`, an always-open Cursor session, a
+/// daemonized `codex app-server`) re-ships the same running totals every
+/// interval forever. Trove enables that native telemetry and the
+/// collector forwards everything it receives, so idle processes become a
+/// perpetual drip in the user's backend.
+///
+/// **How**: append `cumulativetodelta/idle-suppress` then
+/// `filter/drop-idle` to the **main `metrics` pipeline only**, after every
+/// other processor (identity, harness-tag, Tier A synthesis). Converting
+/// to delta turns an unchanged cumulative re-export into a zero-delta
+/// point, and the filter drops zero-valued sums and zero-count histograms
+/// — i.e. exactly the intervals with no new activity. Real activity
+/// produces non-zero deltas that pass through untouched.
+///
+/// Trove's own watcher (Tier A) metrics are emitted as *delta*
+/// (`mappings::runtime`), so `cumulativetodelta` ignores them and they are
+/// never at risk. Logs/traces and the `*/diag-*` pipelines are left alone,
+/// so the dashboard's per-harness counters and `metrics_tap` are
+/// unchanged. Applied last (after [`apply_mapping_overlay`]) in
+/// `prepare_collector_runtime`.
+#[must_use]
+pub fn apply_idle_suppress_overlay(yaml: String) -> String {
+    // Locate the *main* metrics pipeline. Its `receivers: [` line
+    // distinguishes it from the `metrics/diag-*:` pipelines (different key)
+    // and from the collector self-telemetry `metrics:` block (followed by
+    // `level:`, not `receivers:`). The receivers list content is *not*
+    // fixed — `apply_cowork_logs_to_metrics` may append the
+    // `signaltometrics/cowork` connector — so anchor only on the prefix and
+    // then find this pipeline's `processors:` line.
+    const PIPE_ANCHOR: &str = "\n    metrics:\n      receivers: [";
+    const PROC_ANCHOR: &str = "\n      processors: [";
+
+    // Idempotent: never inject twice.
+    if yaml.contains("cumulativetodelta/idle-suppress") {
+        return yaml;
+    }
+
+    let Some(pipe_start) = yaml.find(PIPE_ANCHOR) else {
+        return yaml;
+    };
+    let Some(rel_proc) = yaml[pipe_start..].find(PROC_ANCHOR) else {
+        return yaml;
+    };
+    let list_start = pipe_start + rel_proc + PROC_ANCHOR.len();
+    // The processor list is a single-line `[...]`; the first `]` after the
+    // opening closes it (processor names never contain brackets).
+    let Some(rel_close) = yaml[list_start..].find(']') else {
+        return yaml;
+    };
+    let close = list_start + rel_close;
+
+    let mut out = String::with_capacity(yaml.len() + IDLE_SUPPRESS_PROC_DEFS.len() + 64);
+    out.push_str(&yaml[..close]);
+    out.push_str(", cumulativetodelta/idle-suppress, filter/drop-idle");
+    out.push_str(&yaml[close..]);
+
+    // Inject the processor definitions at the head of the top-level
+    // `processors:` block (mirrors `apply_mapping_overlay`). The pipeline
+    // lists use `processors: [` (space + bracket), so this `processors:\n`
+    // anchor only matches the top-level block header.
+    out.replacen(
+        "processors:\n",
+        &format!("processors:\n{IDLE_SUPPRESS_PROC_DEFS}"),
+        1,
+    )
+}
+
 /// Harnesses we want diagnostic pipelines for. Originally just
 /// `ClaudeDesktop` (for the telemetry-pill overlay); now broadened to
 /// every native-OTel emitter so the dashboard `FlowChart` can derive
@@ -2074,6 +2162,73 @@ mod tests {
             ),
         );
         assert_eq!(final_yaml.matches(", resource/identity]").count(), 3);
+    }
+
+    // -----------------------------------------------------------------
+    // apply_idle_suppress_overlay (operates on the fully-overlaid YAML)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn idle_suppress_overlay_appends_to_metrics_pipeline_only() {
+        // Base render (no identity/mapping overlay): the metrics pipeline
+        // gains the two processors at the tail; logs and traces are left
+        // exactly as they were.
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_idle_suppress_overlay(yaml);
+
+        assert!(out.contains(
+            "processors: [batch, attributes/redact, resource/source, \
+             cumulativetodelta/idle-suppress, filter/drop-idle]"
+        ));
+        // logs + traces keep the untouched baseline list (2 occurrences).
+        assert_eq!(
+            out.matches("processors: [batch, attributes/redact, resource/source]")
+                .count(),
+            2,
+        );
+        // Processor definitions injected exactly once.
+        assert_eq!(out.matches("cumulativetodelta/idle-suppress:").count(), 1);
+        assert_eq!(out.matches("filter/drop-idle:").count(), 1);
+    }
+
+    #[test]
+    fn idle_suppress_overlay_runs_after_identity_and_mapping() {
+        // Full composition order, mirroring prepare_collector_runtime:
+        // render -> identity -> mapping -> idle-suppress. The two
+        // processors must land after `resource/identity` (and after the
+        // Tier A inserts), and only on the metrics pipeline.
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let with_identity = apply_identity_overlay(yaml, &resolved("Ada", "ada@example.com"));
+        let with_mappings = apply_mapping_overlay(with_identity, &crate::mappings::default_state());
+        let out = apply_idle_suppress_overlay(with_mappings);
+
+        // Exactly the metrics pipeline tail carries the suppression pair,
+        // immediately after identity tagging.
+        assert_eq!(
+            out.matches(", resource/identity, cumulativetodelta/idle-suppress, filter/drop-idle]")
+                .count(),
+            1,
+        );
+        // logs + traces still terminate at `resource/identity]` untouched.
+        assert_eq!(out.matches(", resource/identity]").count(), 2);
+        // Diag metrics pipelines are not touched.
+        assert!(out.contains(
+            "metrics/diag-gemini-cli:\n      receivers: [otlp]\n      processors: [filter/diag-gemini-cli]"
+        ));
+        assert!(!out.contains("filter/diag-gemini-cli, cumulativetodelta"));
+        // The collector self-telemetry `metrics:` block is left alone.
+        assert!(out.contains("    metrics:\n      level: basic"));
+        // Still valid YAML.
+        let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&out);
+        assert!(parsed.is_ok(), "invalid YAML: {:?}\n{out}", parsed.err());
+    }
+
+    #[test]
+    fn idle_suppress_overlay_is_idempotent() {
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let once = apply_idle_suppress_overlay(yaml);
+        let twice = apply_idle_suppress_overlay(once.clone());
+        assert_eq!(once, twice);
     }
 
     #[test]
