@@ -26,7 +26,7 @@
 //! production YAML is always assembled inline so multi-backend fan-out
 //! and per-instance env scoping work uniformly.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use thiserror::Error;
@@ -861,14 +861,23 @@ pub fn apply_mapping_overlay(yaml: String, mappings: &MappingState) -> String {
     }
 
     let tag_block = build_harness_tag_block(&tag_harnesses);
-    let tier_a_blocks: Vec<(String, String)> = synth_harnesses
-        .iter()
-        .filter_map(|h| {
-            let block = build_tier_a_block(h, mappings)?;
+    // A given (native metric → Tier A target) transform is one collector
+    // operation even when several harness mappings declare it — e.g.
+    // Sentinel forwards Claude Code's stream, so both the claude-code and
+    // sentinel mappings carry the same `claude_code.* → trove.harness.*`
+    // rows. Emitting it once per harness would `insert` the synthesized
+    // metric multiple times into the one metrics pipeline and double-count,
+    // so we de-duplicate across blocks. Declaration order makes the
+    // first-declared harness the canonical emitter; a block left empty
+    // after de-duplication is dropped.
+    let mut seen_transforms: HashSet<(String, String)> = HashSet::new();
+    let mut tier_a_blocks: Vec<(String, String)> = Vec::new();
+    for h in &synth_harnesses {
+        if let Some(block) = build_tier_a_block(h, mappings, &mut seen_transforms) {
             let name = format!("metricstransform/tierA-{}", harness_id_suffix(h.harness_id));
-            Some((name, block))
-        })
-        .collect();
+            tier_a_blocks.push((name, block));
+        }
+    }
 
     // Inject the processor definitions under the top-level `processors:`
     // map. The same verbatim anchor the identity overlay uses appears at
@@ -1373,7 +1382,11 @@ fn build_harness_tag_block(synth: &[&HarnessMapping]) -> String {
 /// id) to its full wire name. Rows whose `target_metric` doesn't resolve
 /// are skipped — validation catches these before apply, so this is a
 /// belt-and-suspenders guard against stale references slipping through.
-fn build_tier_a_block(harness: &HarnessMapping, state: &MappingState) -> Option<String> {
+fn build_tier_a_block(
+    harness: &HarnessMapping,
+    state: &MappingState,
+    seen: &mut HashSet<(String, String)>,
+) -> Option<String> {
     if !harness.enabled {
         return None;
     }
@@ -1394,6 +1407,15 @@ fn build_tier_a_block(harness: &HarnessMapping, state: &MappingState) -> Option<
             // a missing transform row is the least-bad failure mode.
             continue;
         };
+        // De-duplicate identical native→target transforms across harness
+        // blocks (see `apply_mapping_overlay`). Keyed on (source metric,
+        // synthesized name): the same native metric inserted to the same
+        // Tier A target twice would double-count, while *different* native
+        // metrics feeding one target (e.g. gemini + claude tokens) are
+        // each kept.
+        if !seen.insert((native_metric.clone(), def.name.clone())) {
+            continue;
+        }
         let _ = writeln!(transforms, "      - include: {native_metric}");
         let _ = writeln!(transforms, "        match_type: strict");
         let _ = writeln!(transforms, "        action: insert");
@@ -1793,6 +1815,35 @@ mod tests {
         assert!(out.contains("\"service.name\"] == \"claude-desktop\""));
         assert!(out.contains("\"service.name\"] == \"claude-cowork\""));
         assert!(!out.contains("metricstransform/tierA-"));
+    }
+
+    #[test]
+    fn mapping_overlay_dedups_shared_claude_code_transforms_across_harnesses() {
+        // Sentinel's default mapping carries the same `claude_code.* →
+        // Tier A` rows as Claude Code (it forwards Claude Code's stream).
+        // The overlay must emit each shared transform exactly once —
+        // otherwise the collector `insert`s `trove.harness.*` twice and
+        // double-counts.
+        let state = crate::mappings::default_state();
+        let yaml = rendered_yaml(&[signoz_instance("aaaaaaaa-1111-2222-3333-444455556666")]);
+        let out = apply_mapping_overlay(yaml, &state);
+
+        for native in [
+            "claude_code.session.count",
+            "claude_code.tool.decision.count",
+            "claude_code.token.usage",
+        ] {
+            assert_eq!(
+                out.matches(&format!("include: {native}")).count(),
+                1,
+                "duplicate Tier A transform for {native}"
+            );
+        }
+        // Claude Code is the canonical emitter (declared first); Sentinel's
+        // identical rows de-duplicate away entirely, so it gets no separate
+        // metricstransform block.
+        assert!(out.contains("metricstransform/tierA-claude-code:"));
+        assert!(!out.contains("metricstransform/tierA-sentinel:"));
     }
 
     #[test]

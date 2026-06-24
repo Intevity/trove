@@ -49,7 +49,12 @@ pub use validate::{validate, ValidationError};
 ///   builtin entries (`builtin: true`, read-only in the UI); users may
 ///   add custom counters/gauges/histograms with their own required
 ///   attribute lists.
-pub const MAPPING_SCHEMA_VERSION: u32 = 2;
+/// - v3: seeds Sentinel's custom catalog metrics (`sentinel.*`) into
+///   existing states. Fresh installs already carry them via
+///   [`crate::mappings::defaults::default_metric_catalog`]; the v2→v3
+///   migration backfills them once for users who upgraded from before the
+///   Sentinel harness shipped, without resurrecting any the user deleted.
+pub const MAPPING_SCHEMA_VERSION: u32 = 3;
 
 /// Builtin metric identifier on the wire — the short suffix (after
 /// `trove.harness.`) for the five ships-with metrics, or a user-chosen
@@ -438,6 +443,19 @@ impl MappingState {
                 changed = true;
             }
         }
+        // v2 -> v3: states written before the Sentinel harness shipped
+        // lack its custom catalog metrics (fresh installs get them via
+        // `default_metric_catalog`). Seed any that are absent, exactly
+        // once — gated on the pre-v3 on-disk version so a custom the user
+        // later deletes isn't resurrected on every subsequent launch.
+        if self.schema_version < 3 {
+            for def in crate::mappings::defaults::sentinel_custom_metrics() {
+                if !self.metrics.iter().any(|m| m.id == def.id) {
+                    self.metrics.push(def);
+                    changed = true;
+                }
+            }
+        }
         if self.schema_version != MAPPING_SCHEMA_VERSION {
             self.schema_version = MAPPING_SCHEMA_VERSION;
             changed = true;
@@ -748,7 +766,12 @@ mod tests {
         };
         assert!(state.migrate_to_current(), "first migration should report changes");
         assert_eq!(state.schema_version, MAPPING_SCHEMA_VERSION);
-        assert_eq!(state.metrics.len(), 5);
+        // A pre-v3 state also picks up the Sentinel custom catalog metrics
+        // via the v2->v3 seed, so the catalog is the 5 builtins plus them.
+        assert_eq!(
+            state.metrics.len(),
+            5 + crate::mappings::defaults::sentinel_custom_metrics().len()
+        );
         for builtin in TierAMetric::all() {
             assert!(state.metrics.iter().any(|m| m.id == builtin.id()));
         }
@@ -781,6 +804,52 @@ mod tests {
         for builtin in TierAMetric::all() {
             assert!(state.metrics.iter().any(|m| m.id == builtin.id()));
         }
+    }
+
+    #[test]
+    fn migrate_v2_to_v3_seeds_sentinel_customs_once() {
+        use crate::mappings::defaults::sentinel_custom_metrics;
+        // A v2 state with only the Tier A builtins — written before the
+        // Sentinel harness shipped. The v2->v3 migration backfills every
+        // Sentinel custom catalog metric.
+        let mut state = MappingState {
+            schema_version: 2,
+            metrics: TierAMetric::all().iter().map(|m| m.definition()).collect(),
+            harnesses: vec![],
+        };
+        assert!(state.migrate_to_current());
+        assert_eq!(state.schema_version, MAPPING_SCHEMA_VERSION);
+        for c in sentinel_custom_metrics() {
+            assert!(
+                state.metrics.iter().any(|m| m.id == c.id),
+                "expected sentinel custom {} to be seeded",
+                c.id
+            );
+        }
+    }
+
+    #[test]
+    fn migrate_does_not_resurrect_deleted_sentinel_custom() {
+        use crate::mappings::defaults::sentinel_custom_metrics;
+        // A current-version state from which the user deleted one Sentinel
+        // custom. Because the seed is gated on the pre-v3 on-disk version,
+        // re-migrating (the loader calls it unconditionally) must NOT bring
+        // the deleted metric back.
+        let mut metrics: Vec<TroveMetricDefinition> =
+            TierAMetric::all().iter().map(|m| m.definition()).collect();
+        metrics.extend(sentinel_custom_metrics());
+        let deleted_id = sentinel_custom_metrics()[0].id.clone();
+        metrics.retain(|m| m.id != deleted_id);
+        let mut state = MappingState {
+            schema_version: MAPPING_SCHEMA_VERSION,
+            metrics,
+            harnesses: vec![],
+        };
+        state.migrate_to_current();
+        assert!(
+            !state.metrics.iter().any(|m| m.id == deleted_id),
+            "a deleted sentinel custom must stay deleted at the current schema version"
+        );
     }
 
     #[test]
