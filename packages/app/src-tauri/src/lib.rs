@@ -549,10 +549,16 @@ fn prepare_collector_runtime(
                 // runs first so `resource/identity` ends up at the tail
                 // of every pipeline list (it tags the synthesized Tier
                 // A metrics too).
-                let yaml = collector::codegen::apply_mapping_overlay(
+                let yaml_with_mappings = collector::codegen::apply_mapping_overlay(
                     yaml_with_identity,
                     &state.mappings,
                 );
+                // Final overlay: convert cumulative metrics to delta and
+                // drop zero-delta (no-activity) points on the user-facing
+                // metrics pipeline, so idle/long-lived native-OTel harness
+                // processes stop drip-feeding unchanged totals to backends.
+                // Runs last so it sits after identity/harness-tag/Tier A.
+                let yaml = collector::codegen::apply_idle_suppress_overlay(yaml_with_mappings);
                 (yaml, env)
             }
             Err(e) => {

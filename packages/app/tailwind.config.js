@@ -18,6 +18,10 @@ export default {
         'ios-red': '#FF453A',
         'ios-orange': '#FF9F0A',
         'ios-gray': '#8E8E93',
+        // Used by the `beta` Pill tone to flag harnesses/platforms not yet
+        // fully validated in the harness × platform matrix. Distinct from
+        // `brand` (Recommended) and `ios-orange`/amber (coverage warnings).
+        'ios-purple': '#BF5AF2',
 
         // Trove brand teal — mirrored in `packages/app/src-tauri/src/
         // tray_icon_render.rs` as `TintColor::Brand` (the healthy-state

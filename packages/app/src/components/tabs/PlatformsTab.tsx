@@ -242,6 +242,11 @@ function PlatformRow({
                 Recommended
               </Pill>
             ) : null}
+            {preset.beta ? (
+              <Pill tone="beta" size="xs" testid="preset-beta-badge">
+                Beta
+              </Pill>
+            ) : null}
             {configured ? (
               <span className="flex items-center gap-1">
                 <StatusDot status="green" size="sm" />

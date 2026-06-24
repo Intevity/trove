@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 
 import type { DetectedHarness, HarnessId } from '@trove/shared';
 
-import { HARNESS_LABELS, HarnessLogo } from '../lib/logos.js';
+import { HARNESS_BETA, HARNESS_LABELS, HARNESS_ROW_META, HarnessLogo } from '../lib/logos.js';
 import { HARNESS_SETUP_GUIDES, HarnessSetupGuideModal } from './HarnessSetupGuide.js';
 import {
   Button,
@@ -322,6 +322,10 @@ function HarnessRow({
     ? 'text-[13px] font-medium text-fg-primary dark:text-fg-primary-dark'
     : 'text-[13px] font-medium text-fg-secondary dark:text-fg-secondary-dark';
 
+  const rowMeta = HARNESS_ROW_META[harness.id];
+  const title = rowMeta?.titleOverride ?? HARNESS_LABELS[harness.id];
+  const isBeta = HARNESS_BETA.has(harness.id);
+
   const dot: DotStatus = harness.detected ? 'green' : 'gray';
   const pillTone: PillTone =
     harness.telemetry === 'on' ? 'green' : harness.telemetry === 'off' ? 'neutral' : 'amber';
@@ -335,7 +339,25 @@ function HarnessRow({
       <div className="flex min-w-0 items-center gap-3">
         <HarnessLogo id={harness.id} dimmed={!harness.detected} />
         <div className="min-w-0">
-          <p className={labelClass}>{HARNESS_LABELS[harness.id]}</p>
+          <div className="flex items-center gap-2">
+            <p className={labelClass}>{title}</p>
+            {isBeta ? (
+              <Pill tone="beta" size="xs" testid={`harness-beta-${harness.id}`}>
+                Beta
+              </Pill>
+            ) : null}
+            {rowMeta?.learnMoreUrl ? (
+              <a
+                href={rowMeta.learnMoreUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="shrink-0 text-[11px] font-medium text-brand hover:underline"
+                data-testid={`harness-learn-more-${harness.id}`}
+              >
+                Learn More →
+              </a>
+            ) : null}
+          </div>
           <p className="truncate text-[11px] text-fg-tertiary dark:text-fg-tertiary-dark">
             {detectionLabel}
           </p>

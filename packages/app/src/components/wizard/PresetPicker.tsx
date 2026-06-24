@@ -53,6 +53,11 @@ export function PresetPicker({ onSelect }: PresetPickerProps): JSX.Element {
                       Recommended
                     </Pill>
                   ) : null}
+                  {preset.beta ? (
+                    <Pill tone="beta" size="xs" testid="preset-beta-badge">
+                      Beta
+                    </Pill>
+                  ) : null}
                 </span>
                 <span className="text-[12px] text-fg-secondary dark:text-fg-secondary-dark">
                   {preset.description}

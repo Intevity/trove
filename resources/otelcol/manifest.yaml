@@ -41,6 +41,12 @@ processors:
   # copy (action: insert) of each declared native metric.
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.151.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/metricstransformprocessor v0.151.0
+  # Idle-suppression overlay (apply_idle_suppress_overlay in codegen.rs):
+  # convert cumulative metric streams to delta so an idle/long-lived
+  # native-OTel harness process (e.g. an orphaned `gemini --yolo`) that
+  # keeps re-exporting unchanged cumulative totals collapses to zero-delta
+  # points, which the `filter` processor then drops before fan-out.
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/cumulativetodeltaprocessor v0.151.0
 
 connectors:
   # Bridges OTLP logs into OTLP metrics. Used to translate Claude

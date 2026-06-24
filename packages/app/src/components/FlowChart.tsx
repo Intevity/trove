@@ -137,6 +137,43 @@ function emptyLaneRates(): LaneRates {
   return { spans: 0, metrics: 0, logs: 0 };
 }
 
+/** Harnesses whose telemetry the collector attributes to a *sibling*
+ *  harness's diag lane, because they share a `service.name` / backend and
+ *  have no native identity of their own:
+ *   - Cursor IDE's hook emits `service.name=cursor`, which the
+ *     `cursor-cli` diag lane claims (see `native_service_name_candidates`).
+ *   - Codex Desktop drives the same `codex app-server` backend as the
+ *     Codex CLI, so both surface under `codex-cli`.
+ *  These ids never appear as keys in `diagObservations`; their real rate
+ *  lives under the sibling's key. Mapping them here keeps them out of the
+ *  aggregate fallback below — without it they light up whenever *anything*
+ *  is flowing (e.g. an active Claude Code session), which reads as "Cursor
+ *  is emitting" even when the IDE has been idle for weeks. */
+const DIAG_LANE_ALIAS: Partial<Record<HarnessId, HarnessId>> = {
+  'cursor-ide': 'cursor-cli',
+  'codex-desktop': 'codex-cli',
+};
+
+/** A harness's own attributable lane rate for activity display.
+ *
+ *  - Aliased harnesses (Cursor IDE, Codex Desktop) read their sibling's
+ *    diag lane, falling to zero — *not* the aggregate — when that lane is
+ *    idle. This is the fix for the "idle Cursor IDE looks active" bug.
+ *  - Harnesses with their own diag lane read it directly.
+ *  - Genuine no-attribution emitters (watcher/forwarder/detection harnesses
+ *    absent from `diagObservations`, e.g. Cline, Sentinel) fall back to the
+ *    aggregate so their lane still reflects "something is flowing" rather
+ *    than going permanently dark — the same convention as before. */
+export function resolveHarnessRate(
+  harnessId: HarnessId,
+  perHarnessRates: Record<string, LaneRates>,
+  aggregate: LaneRates,
+): LaneRates {
+  const aliased = DIAG_LANE_ALIAS[harnessId];
+  if (aliased) return perHarnessRates[aliased] ?? emptyLaneRates();
+  return perHarnessRates[harnessId] ?? aggregate;
+}
+
 function useReceivedRates(metrics: MetricsSnapshotWire | null): LaneRates {
   const prev = useRef<{ snap: MetricsSnapshotWire; at: number } | null>(null);
   const [rates, setRates] = useState<LaneRates>(emptyLaneRates);
@@ -265,9 +302,7 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
    *  "something is flowing" rather than going silent. */
   function laneRateForHarness(harnessId: HarnessId | null): LaneRates {
     if (!harnessId || harnessCluster) return rates;
-    const direct = perHarnessRates[harnessId];
-    if (direct) return direct;
-    return rates;
+    return resolveHarnessRate(harnessId, perHarnessRates, rates);
   }
 
   // Column widths. A clustered side uses CLUSTER_HW; an individual side
@@ -281,15 +316,15 @@ export function FlowChart({ harnesses, backends, metrics, state }: FlowChartProp
   const harnessHW = harnessCluster ? CLUSTER_HW : columnHalfWidth(harnessTitles, true);
   const platformHW = backendCluster ? CLUSTER_HW : columnHalfWidth(backendTitles, true);
 
-  /** Which harnesses are currently emitting telemetry. Diag-attributed
-   *  emitters use their own per-source rate; watcher-emitters (absent
-   *  from `diagObservations`) inherit the aggregate so they read as
-   *  active whenever the chart is flowing — same convention the lane
-   *  animations use today. */
+  /** Which harnesses are currently emitting telemetry. See
+   *  [`resolveHarnessRate`]: diag-attributed emitters (own lane or an
+   *  aliased sibling lane) use their real per-source rate, so an idle
+   *  Cursor IDE / Codex Desktop stays dark; only genuine no-attribution
+   *  emitters inherit the aggregate. */
   const harnessActiveKeys = new Set<string>();
   if (harnessCluster) {
     for (const h of harnesses) {
-      const r = perHarnessRates[h.id] ?? rates;
+      const r = resolveHarnessRate(h.id, perHarnessRates, rates);
       if (r.spans > 0 || r.metrics > 0 || r.logs > 0) harnessActiveKeys.add(h.id);
     }
   }
