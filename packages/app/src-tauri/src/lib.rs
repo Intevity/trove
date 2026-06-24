@@ -49,6 +49,33 @@ pub fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// The build channel, baked in at compile time. `pnpm build:app` exports
+/// `TROVE_BUILD_CHANNEL=dev` for the bundle compile; the signed release /
+/// CI path leaves it unset, so a shipped binary always reads `"release"`.
+/// (`build.rs` registers a `rerun-if-env-changed` so toggling the var
+/// forces a recompile rather than reusing a stale-channel object.)
+#[must_use]
+pub fn build_channel() -> &'static str {
+    option_env!("TROVE_BUILD_CHANNEL").unwrap_or("release")
+}
+
+/// Whether a channel string denotes a local dev build. Pure helper, split
+/// out so the gate is unit-testable without a compile-time env.
+#[must_use]
+fn is_dev_channel(channel: &str) -> bool {
+    channel != "release"
+}
+
+/// Whether this is a local dev build (`pnpm build:app`). Dev builds opt out
+/// of the auto-updater: they carry newer code than the public release feed
+/// but an equal-or-lower version string, so the updater would otherwise
+/// offer a later-numbered but older-code release as a bogus "upgrade" —
+/// and installing it would roll the code (and state schema) backwards.
+#[must_use]
+pub fn is_dev_build() -> bool {
+    is_dev_channel(build_channel())
+}
+
 /// Mounts the Tauri application. Called from `main.rs` (and from
 /// platform-specific entry points if we ever add mobile targets).
 // Registration glue: every subsystem adds a plugin/handler/setup line,
@@ -618,11 +645,28 @@ pub enum CollectorBootError {
 
 #[cfg(test)]
 mod tests {
-    use super::app_version;
+    use super::{app_version, build_channel, is_dev_build, is_dev_channel};
 
     #[test]
     fn app_version_matches_cargo_pkg_version() {
         assert_eq!(app_version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn is_dev_channel_flags_non_release_channels() {
+        // The updater gate: any non-"release" channel is a dev build and
+        // must NOT be offered updates; "release" stays update-enabled.
+        assert!(is_dev_channel("dev"));
+        assert!(is_dev_channel("local"));
+        assert!(!is_dev_channel("release"));
+    }
+
+    #[test]
+    fn is_dev_build_is_consistent_with_channel() {
+        // Whatever channel this test binary compiled with, the two helpers
+        // must agree — and a plain `cargo test` (no TROVE_BUILD_CHANNEL)
+        // compiles as the shipped "release" channel.
+        assert_eq!(is_dev_build(), is_dev_channel(build_channel()));
     }
 
     #[test]

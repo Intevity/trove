@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use super::{
     HarnessMapping, HookEmit, MappingSource, MappingState, TierAMetric, TroveMetricDefinition,
-    MAPPING_SCHEMA_VERSION,
+    TroveMetricKind, MAPPING_SCHEMA_VERSION,
 };
 use crate::harness::HarnessId;
 
@@ -56,6 +56,7 @@ pub fn default_state() -> MappingState {
             defaults_for(HarnessId::KimiCodeCli),
             defaults_for(HarnessId::Devin),
             defaults_for(HarnessId::Forgecode),
+            defaults_for(HarnessId::Sentinel),
         ],
     }
 }
@@ -66,10 +67,12 @@ pub fn default_state() -> MappingState {
 /// user append to this list with `builtin: false`.
 #[must_use]
 pub fn default_metric_catalog() -> Vec<TroveMetricDefinition> {
-    TierAMetric::all()
-        .iter()
-        .map(|m| m.definition())
-        .collect()
+    let mut catalog: Vec<TroveMetricDefinition> =
+        TierAMetric::all().iter().map(|m| m.definition()).collect();
+    // Sentinel's enriched signals ride alongside the five Tier A builtins
+    // as custom (builtin: false) catalog entries — see `sentinel_defaults`.
+    catalog.extend(sentinel_custom_metrics());
+    catalog
 }
 
 /// Default mapping for one harness. Use this when an individual harness
@@ -90,12 +93,12 @@ pub fn defaults_for(id: HarnessId) -> HarnessMapping {
         HarnessId::Aider => aider_defaults(),
         HarnessId::CopilotCli => copilot_cli_defaults(),
         HarnessId::Droid => droid_defaults(),
+        HarnessId::Sentinel => sentinel_defaults(),
         // Detection-only harnesses: empty source list. The dashboard
         // shows the row, but no codegen overlay or watcher attaches.
-        HarnessId::JunieCli
-        | HarnessId::KimiCodeCli
-        | HarnessId::Devin
-        | HarnessId::Forgecode => detection_only_defaults(id),
+        HarnessId::JunieCli | HarnessId::KimiCodeCli | HarnessId::Devin | HarnessId::Forgecode => {
+            detection_only_defaults(id)
+        }
     }
 }
 
@@ -129,39 +132,136 @@ fn attr(k: &str, v: &str) -> BTreeMap<String, String> {
 /// `event.kind`. `metricstransform action: insert` carries the source
 /// metric's attributes over, but none of Claude Code's counters expose
 /// a Tier A `event.kind` natively, so we inject the literal here.
+///
+/// Factored out because Sentinel forwards Claude Code's raw stream
+/// verbatim and reuses the exact same rows — see [`sentinel_defaults`].
+/// The collector de-duplicates identical native→Tier A transforms across
+/// harnesses (see `crate::collector::codegen::build_tier_a_block`), so
+/// carrying these rows in both mappings never double-counts.
+fn claude_code_native_sources() -> Vec<MappingSource> {
+    vec![
+        MappingSource::SynthesizeFromNative {
+            native_metric: "claude_code.session.count".into(),
+            target_metric: TierAMetric::Events.id(),
+            attribute_map: BTreeMap::new(),
+            inject_attributes: BTreeMap::from([("event.kind".into(), "chat.turn".into())]),
+        },
+        MappingSource::SynthesizeFromNative {
+            native_metric: "claude_code.tool.decision.count".into(),
+            target_metric: TierAMetric::Events.id(),
+            attribute_map: BTreeMap::new(),
+            inject_attributes: BTreeMap::from([("event.kind".into(), "tool.call".into())]),
+        },
+        MappingSource::SynthesizeFromNative {
+            native_metric: "claude_code.token.usage".into(),
+            target_metric: TierAMetric::Tokens.id(),
+            // Claude Code's native attribute is `type=input|output`;
+            // Tier A wants `direction`. The collector transform
+            // rewrites the attribute key inline.
+            attribute_map: BTreeMap::from([("type".into(), "direction".into())]),
+            inject_attributes: BTreeMap::new(),
+        },
+    ]
+}
+
 fn claude_code_defaults() -> HarnessMapping {
     HarnessMapping {
         harness_id: HarnessId::ClaudeCode,
         enabled: true,
-        sources: vec![
-            MappingSource::SynthesizeFromNative {
-                native_metric: "claude_code.session.count".into(),
-                target_metric: TierAMetric::Events.id(),
-                attribute_map: BTreeMap::new(),
-                inject_attributes: BTreeMap::from([
-                    ("event.kind".into(), "chat.turn".into()),
-                ]),
-            },
-            MappingSource::SynthesizeFromNative {
-                native_metric: "claude_code.tool.decision.count".into(),
-                target_metric: TierAMetric::Events.id(),
-                attribute_map: BTreeMap::new(),
-                inject_attributes: BTreeMap::from([
-                    ("event.kind".into(), "tool.call".into()),
-                ]),
-            },
-            MappingSource::SynthesizeFromNative {
-                native_metric: "claude_code.token.usage".into(),
-                target_metric: TierAMetric::Tokens.id(),
-                // Claude Code's native attribute is `type=input|output`;
-                // Tier A wants `direction`. The collector transform
-                // rewrites the attribute key inline.
-                attribute_map: BTreeMap::from([("type".into(), "direction".into())]),
-                inject_attributes: BTreeMap::new(),
-            },
-        ],
+        sources: claude_code_native_sources(),
         cost_overrides: BTreeMap::new(),
     }
+}
+
+/// Sentinel forwards Claude Code's raw OTLP stream
+/// (`service.name=claude-code`) and also emits its own enriched
+/// `sentinel.*` metrics (`service.name=sentinel`). Its default mapping
+/// therefore carries the same Tier A synthesis rows as Claude Code — so a
+/// Sentinel-only user still gets `events`/`tokens` even if the Claude Code
+/// mapping is disabled — while Sentinel's own metrics ride along as custom
+/// catalog entries ([`sentinel_custom_metrics`]) that pass through 1:1 (a
+/// synthesis row would `insert` a duplicate, same-named metric).
+///
+/// The collector de-duplicates the shared `claude_code.*` transforms
+/// across the claude-code and sentinel blocks, so the two coexist without
+/// double-counting; Claude Code is the canonical emitter by declaration
+/// order.
+fn sentinel_defaults() -> HarnessMapping {
+    HarnessMapping {
+        harness_id: HarnessId::Sentinel,
+        enabled: true,
+        sources: claude_code_native_sources(),
+        cost_overrides: BTreeMap::new(),
+    }
+}
+
+/// Sentinel's enriched, self-computed metrics. Registered as custom
+/// (`builtin: false`) catalog entries so they're first-class signals in
+/// Trove's metric catalog; they flow through the collector untouched (no
+/// synthesis row), keeping their native names and attributes. Names,
+/// kinds, and attribute keys mirror Sentinel's `OtelEmitter`.
+pub(crate) fn sentinel_custom_metrics() -> Vec<TroveMetricDefinition> {
+    use TroveMetricKind::{Counter, Gauge};
+    let def = |id: &str, kind: TroveMetricKind, attrs: &[&str], description: &str| {
+        TroveMetricDefinition {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind,
+            description: description.to_string(),
+            required_attributes: attrs.iter().map(|s| (*s).to_string()).collect(),
+            builtin: false,
+        }
+    };
+    vec![
+        def(
+            "sentinel.cache.tokens_by_ttl",
+            Gauge,
+            &["ttl", "operation"],
+            "Prompt-cache token volume over the rolling 5h window, by TTL bucket (5m/1h writes) and aggregate reads.",
+        ),
+        def(
+            "sentinel.account.usage.tokens",
+            Gauge,
+            &["account_id", "kind"],
+            "Per-account token usage in the rolling 5h window, split by kind (input/output/cache_read/cache_create).",
+        ),
+        def(
+            "sentinel.account.usage.cost_usd",
+            Gauge,
+            &["account_id"],
+            "Per-account estimated API cost over the rolling 5h window.",
+        ),
+        def(
+            "sentinel.account.switch.count",
+            Counter,
+            &["to_account"],
+            "Cumulative account switches since Sentinel started, by destination account.",
+        ),
+        def(
+            "sentinel.proxy.requests.count",
+            Counter,
+            &["account_id", "status_class"],
+            "Cumulative upstream Anthropic API requests proxied, by account and HTTP status class.",
+        ),
+        def(
+            "sentinel.proxy.errors.count",
+            Counter,
+            &["account_id", "error_kind"],
+            "Cumulative upstream proxy errors, by account and error kind.",
+        ),
+        def(
+            "sentinel.security.event.count",
+            Counter,
+            &["kind", "severity", "outcome"],
+            "Cumulative security-scanner detections, by kind, severity, and outcome.",
+        ),
+        def(
+            "sentinel.permission.decision.count",
+            Counter,
+            &["decision", "source"],
+            "Cumulative tool-permission decisions, by decision (allow/deny/ask) and source.",
+        ),
+    ]
 }
 
 /// Claude Desktop (formerly Claude Cowork) emits OTLP **logs**, not
@@ -869,6 +969,7 @@ mod tests {
                 HarnessId::KimiCodeCli,
                 HarnessId::Devin,
                 HarnessId::Forgecode,
+                HarnessId::Sentinel,
             ]
         );
     }
@@ -1101,7 +1202,7 @@ mod tests {
     #[test]
     fn default_metric_catalog_seeds_every_builtin() {
         let cat = default_metric_catalog();
-        assert_eq!(cat.len(), 5);
+        assert_eq!(cat.len(), 13);
         for builtin in TierAMetric::all() {
             let entry = cat
                 .iter()
@@ -1114,9 +1215,35 @@ mod tests {
     }
 
     #[test]
+    fn default_catalog_includes_sentinel_custom_metrics() {
+        let cat = default_metric_catalog();
+        let customs = sentinel_custom_metrics();
+        assert_eq!(customs.len(), 8);
+        for m in &customs {
+            let entry = cat
+                .iter()
+                .find(|c| c.id == m.id)
+                .unwrap_or_else(|| panic!("catalog missing sentinel metric {}", m.id));
+            assert!(
+                !entry.builtin,
+                "sentinel metrics are custom (builtin: false)"
+            );
+            assert!(entry.id.starts_with("sentinel."));
+        }
+    }
+
+    #[test]
     fn default_state_carries_catalog_at_current_version() {
         let s = default_state();
         assert_eq!(s.schema_version, MAPPING_SCHEMA_VERSION);
-        assert_eq!(s.metrics.len(), 5);
+        assert_eq!(s.metrics.len(), 13);
+    }
+
+    #[test]
+    fn sentinel_defaults_reuse_claude_code_tier_a_rows() {
+        // Self-contained: Sentinel carries the same native→Tier A rows as
+        // Claude Code so a Sentinel-only user still gets events/tokens.
+        assert_eq!(sentinel_defaults().sources, claude_code_defaults().sources);
+        assert!(sentinel_defaults().enabled);
     }
 }

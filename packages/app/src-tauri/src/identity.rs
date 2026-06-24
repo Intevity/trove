@@ -236,6 +236,7 @@ mod tests {
             HarnessId::KimiCodeCli,
             HarnessId::Devin,
             HarnessId::Forgecode,
+            HarnessId::Sentinel,
         ] {
             assert!(probe_harness(&detected(id)).is_none(), "harness {id:?} probe must be a stub for now");
         }

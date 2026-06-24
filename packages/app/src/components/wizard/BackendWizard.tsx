@@ -261,5 +261,7 @@ function describeIpcError(err: TroveIpcError): string {
     case 'updater-check-failed':
     case 'internal':
       return cause.reason;
+    case 'state-from-newer-version':
+      return `state.json (v${cause.found}) is newer than this build supports (max v${cause.expected})`;
   }
 }

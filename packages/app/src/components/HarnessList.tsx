@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Info, Search, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Info, Search, Sparkles, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import type { DetectedHarness, HarnessId } from '@trove/shared';
@@ -123,6 +123,14 @@ export function HarnessList({
   const hasQuery = query.trim().length > 0;
   const showSearch = !loading && harnesses.length > 0;
 
+  // Sentinel and Trove's Claude Code adapter both manage the OTEL env in
+  // ~/.claude/settings.json. When Sentinel is present and the Claude Code
+  // harness is also enabled, they clobber each other — warn the user to
+  // pick one owner (Sentinel forwards Claude Code → Sentinel → Trove).
+  const showSentinelConflict =
+    (enabledIds?.has('claude-code') ?? false) &&
+    harnesses.some((h) => h.id === 'sentinel' && h.detected);
+
   return (
     <Card as="section" padding="sm" testid="harness-list-section">
       <CardHeader>
@@ -157,6 +165,21 @@ export function HarnessList({
           </Button>
         ) : null}
       </CardHeader>
+
+      {showSentinelConflict ? (
+        <div
+          role="alert"
+          className="mb-2 flex items-start gap-2 rounded-md bg-amber-500/[0.08] p-2 text-[11px] text-fg-secondary dark:text-fg-secondary-dark"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <span>
+            Sentinel is installed and the Claude Code harness is enabled. Both manage{' '}
+            <code>~/.claude/settings.json</code>&apos;s OTEL settings and will overwrite each other.
+            With Sentinel forwarding to Trove, disable the Claude Code harness below — telemetry
+            flows Claude Code → Sentinel → Trove.
+          </span>
+        </div>
+      ) : null}
 
       {showSearch ? (
         <div className="relative mb-2">

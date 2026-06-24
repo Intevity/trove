@@ -258,7 +258,8 @@ where
         HarnessId::JunieCli
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
-        | HarnessId::Forgecode => Err(IpcError::HarnessNotImplemented { id: harness_id }),
+        | HarnessId::Forgecode
+        | HarnessId::Sentinel => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }
 }
 
@@ -333,7 +334,8 @@ pub async fn apply_patch(
         HarnessId::JunieCli
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
-        | HarnessId::Forgecode => Err(IpcError::HarnessNotImplemented { id: harness_id }),
+        | HarnessId::Forgecode
+        | HarnessId::Sentinel => Err(IpcError::HarnessNotImplemented { id: harness_id }),
     }?;
 
     // Sprint 9 PR 2/PR 3 — Tier 3 watchers. Each enabled tier-3
@@ -698,7 +700,8 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         HarnessId::JunieCli
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
-        | HarnessId::Forgecode => Ok(()),
+        | HarnessId::Forgecode
+        | HarnessId::Sentinel => Ok(()),
     }?;
 
     // Sprint 9 PR 2 — abort the Tier 3 watcher (if any) for this id.
@@ -1677,6 +1680,7 @@ pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         HarnessId::KimiCodeCli => home.join(".kimi"),
         HarnessId::Devin => home.join(".devin"),
         HarnessId::Forgecode => home.join(".forge"),
+        HarnessId::Sentinel => home.join(".sentinel"),
     }
 }
 
@@ -1894,7 +1898,8 @@ fn spawn_tier3_watcher(
         | HarnessId::JunieCli
         | HarnessId::KimiCodeCli
         | HarnessId::Devin
-        | HarnessId::Forgecode => None,
+        | HarnessId::Forgecode
+        | HarnessId::Sentinel => None,
     };
     let Some(handle) = handle else { return };
     if let Some(registry) = app.try_state::<TierThreeWatchers>() {

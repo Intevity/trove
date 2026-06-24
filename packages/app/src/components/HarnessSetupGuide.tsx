@@ -36,7 +36,42 @@ export interface SetupGuide {
   buttonLabel?: string;
 }
 
-export const HARNESS_SETUP_GUIDES: Partial<Record<HarnessId, SetupGuide>> = {};
+export const HARNESS_SETUP_GUIDES: Partial<Record<HarnessId, SetupGuide>> = {
+  // Sentinel is detection-only in Trove (it owns its own integrity-signed
+  // forwarder config, so there is nothing for Trove to patch). This guide
+  // is the row's actionable surface: it tells the user how to point
+  // Sentinel's forwarder at Trove's local collector.
+  sentinel: {
+    title: 'Forward Sentinel telemetry to Trove',
+    subtitle: 'Claude Code → Sentinel → Trove',
+    intro:
+      "Sentinel collects Claude Code's OTEL metrics and logs, enriches them with its own computed signals, and can forward everything to Trove's local collector. Trove then routes the combined stream to your chosen backend. Because Sentinel's settings are integrity-signed, the wiring lives inside Sentinel — there is nothing for Trove to patch here.",
+    requirementPills: ['Sentinel installed', 'Trove running'],
+    steps: [
+      {
+        title: 'Open Sentinel → Settings → Data',
+        body: 'Find the "External OTEL forwarding" section.',
+      },
+      {
+        title: 'Click "Forward to Trove"',
+        body: "This points Sentinel at Trove's local collector and turns on metrics + logs forwarding in one step. You can also paste the endpoint below manually. No ingestion key is needed for the local hop — Trove's receiver is loopback-only.",
+        copy: { label: 'OTLP/HTTP endpoint', value: 'http://127.0.0.1:4318' },
+      },
+      {
+        title: 'Keep the Claude Code harness here disabled',
+        body: "Sentinel manages ~/.claude/settings.json so Claude Code reports to Sentinel. If you also enable Trove's Claude Code harness, the two overwrite each other. Leave it off — Claude Code's telemetry reaches Trove through Sentinel.",
+      },
+      {
+        title: 'Add a backend in Trove',
+        body: 'Until a backend is configured, Trove receives the data but drops it. Add one (SigNoz, Honeycomb, Datadog, …) so the stream egresses. Filter by service.name=claude-code (raw) and service.name=sentinel (enriched).',
+      },
+    ],
+    docsUrl: 'https://github.com/Intevity/trove/blob/main/documentation/sentinel-integration.md',
+    docsLabel: 'Sentinel integration docs',
+    footnote:
+      'Sentinel forwards to one endpoint at a time; routing through Trove lets you fan out to multiple backends.',
+  },
+};
 
 export interface HarnessSetupGuideModalProps {
   guide: SetupGuide;

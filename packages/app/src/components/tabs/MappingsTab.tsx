@@ -205,20 +205,33 @@ export function MappingsTab({
     }
     return m;
   }, [detectedHarnesses]);
+  // Detection-only harnesses (no config-patching adapter — e.g. Sentinel,
+  // Junie, Devin) can't be auto-wired by Trove; their telemetry is forwarded
+  // in by the tool itself. We always surface them so the user can customize
+  // their mappings ahead of (or without) on-disk detection.
+  const adapterById = useMemo<Map<HarnessId, boolean>>(() => {
+    const m = new Map<HarnessId, boolean>();
+    for (const d of detectedHarnesses ?? []) {
+      m.set(d.id, d.adapterAvailable);
+    }
+    return m;
+  }, [detectedHarnesses]);
   const hasDetectionData = (detectedHarnesses?.length ?? 0) > 0;
 
   const { detectedList, notDetectedList } = useMemo(() => {
     const detected: HarnessMapping[] = [];
     const notDetected: HarnessMapping[] = [];
     for (const h of filteredHarnesses) {
-      if (!hasDetectionData || detectedById.get(h.harnessId) === true) {
+      const isDetected = detectedById.get(h.harnessId) === true;
+      const detectionOnly = adapterById.get(h.harnessId) === false;
+      if (!hasDetectionData || isDetected || detectionOnly) {
         detected.push(h);
       } else {
         notDetected.push(h);
       }
     }
     return { detectedList: detected, notDetectedList: notDetected };
-  }, [filteredHarnesses, hasDetectionData, detectedById]);
+  }, [filteredHarnesses, hasDetectionData, detectedById, adapterById]);
 
   // Shared row renderer so detected and not-detected lists both pull
   // from the same draft/persist plumbing. Returns null when no upstream

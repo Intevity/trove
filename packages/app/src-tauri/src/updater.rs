@@ -103,6 +103,13 @@ fn stash_and_emit(app: &AppHandle, update: Update) {
 /// `check_interval()` forever. Check failures are silent (offline, S3
 /// blip); the next tick retries.
 pub fn spawn_update_timer(app: AppHandle) {
+    // Dev builds (`pnpm build:app`) opt out of the auto-updater entirely:
+    // they carry newer code than the public feed but an equal-or-lower
+    // version string, so a later-numbered release would be offered as a
+    // bogus "upgrade" that rolls code/state backwards. No timer, no nag.
+    if crate::is_dev_build() {
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         let interval = check_interval();
         // Track the last version we fired a notification for, so a
@@ -151,6 +158,20 @@ async fn scheduled_check(app: &AppHandle, notified_version: &mut Option<String>)
 /// status text working unchanged.
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle) -> Result<UpdateMetadata, IpcError> {
+    // Dev builds never offer updates — see `spawn_update_timer`. Report
+    // "no update" with a clear notification rather than handing the user a
+    // downgrade-in-disguise from the public release feed.
+    if crate::is_dev_build() {
+        notify(
+            &app,
+            "You're on a dev build — auto-update is disabled.".to_string(),
+        );
+        return Ok(UpdateMetadata {
+            available: false,
+            version: None,
+            current: crate::app_version().to_string(),
+        });
+    }
     let updater = app
         .updater()
         .map_err(|e| IpcError::UpdaterCheckFailed { reason: e.to_string() })?;

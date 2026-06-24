@@ -41,6 +41,14 @@ pub enum HarnessId {
     Devin,
     /// `ForgeCode` CLI. Detection-only.
     Forgecode,
+    /// Claude Sentinel — a Claude Code companion that collects and
+    /// enriches Claude Code telemetry, then forwards it onward. It is a
+    /// telemetry *source* for Trove (Claude Code → Sentinel → Trove), but
+    /// detection-only here: Sentinel owns its own integrity-signed
+    /// forwarder config and points itself at Trove's collector, so there
+    /// is no host file for Trove to patch. The row is informational; the
+    /// wiring lives in Sentinel's own settings (its "Forward to Trove").
+    Sentinel,
 }
 
 impl HarnessId {
@@ -66,6 +74,7 @@ impl HarnessId {
             Self::KimiCodeCli => "Kimi Code CLI",
             Self::Devin => "Devin",
             Self::Forgecode => "ForgeCode",
+            Self::Sentinel => "Sentinel",
         }
     }
 
@@ -97,6 +106,7 @@ impl HarnessId {
             Self::KimiCodeCli,
             Self::Devin,
             Self::Forgecode,
+            Self::Sentinel,
         ]
     }
 
@@ -315,6 +325,7 @@ mod tests {
             HarnessId::KimiCodeCli,
             HarnessId::Devin,
             HarnessId::Forgecode,
+            HarnessId::Sentinel,
         ] {
             assert!(!id.label().is_empty(), "empty label for {id:?}");
         }
@@ -327,6 +338,7 @@ mod tests {
             HarnessId::KimiCodeCli,
             HarnessId::Devin,
             HarnessId::Forgecode,
+            HarnessId::Sentinel,
         ] {
             assert!(!id.has_adapter(), "{id:?} should be detection-only");
         }

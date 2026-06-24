@@ -26,7 +26,7 @@ const DEFAULT_IDENTITY = {
 };
 
 const EMPTY_MAPPINGS = {
-  schemaVersion: 2 as const,
+  schemaVersion: 3 as const,
   metrics: [],
   harnesses: [],
 };
@@ -186,6 +186,43 @@ describe('App', () => {
       expect(screen.getByTestId('backend-wizard')).toBeDefined();
     });
     expect(screen.getByTestId('preset-picker')).toBeDefined();
+  });
+
+  it('shows the recovery notice — never the wizard — when state.json is from a newer build', async () => {
+    invokeMock.mockImplementation((...args: unknown[]) => {
+      const [cmd] = args as [string];
+      if (cmd === 'get_app_state') {
+        return Promise.reject({
+          kind: 'state-from-newer-version',
+          found: 99,
+          expected: 11,
+          path: '/home/me/.config/trove/state.json',
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('state-recovery-notice')).toBeDefined();
+    });
+    // The whole point: a present-but-unreadable state.json must NOT look
+    // like a first run, so the wizard must be absent.
+    expect(screen.queryByTestId('backend-wizard')).toBeNull();
+  });
+
+  it('shows the recovery notice — never the wizard — on a generic state load error', async () => {
+    invokeMock.mockImplementation((...args: unknown[]) => {
+      const [cmd] = args as [string];
+      if (cmd === 'get_app_state') {
+        return Promise.reject({ kind: 'internal', reason: 'boom' });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('state-recovery-notice')).toBeDefined();
+    });
+    expect(screen.queryByTestId('backend-wizard')).toBeNull();
   });
 
   it('lists configured platforms on the Platforms tab', async () => {

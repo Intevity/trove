@@ -1,6 +1,6 @@
 import { ArrowRight } from 'lucide-react';
 
-import type { AppState, CollectorRunState, MetricsSnapshotWire } from '@trove/shared';
+import type { AppState, CollectorRunState, HarnessId, MetricsSnapshotWire } from '@trove/shared';
 
 import { DiagnosticsPanel } from '../Diagnostics/DiagnosticsPanel.js';
 import { FlowChart } from '../FlowChart.js';
@@ -13,9 +13,26 @@ interface Props {
   /** Jump to the Platforms tab. Used by the empty-state nudge that
    *  appears when no destinations are configured. */
   onOpenPlatforms: () => void;
+  /** Detected sources that forward into Trove's collector without being
+   *  managed harnesses (today: Sentinel when it's forwarding to Trove).
+   *  Merged into the flow chart alongside enabled harnesses so the
+   *  pipeline reflects every live source, not just the ones Trove patches. */
+  passiveSources?: readonly { id: HarnessId }[];
 }
 
-export function OverviewTab({ appState, state, metrics, onOpenPlatforms }: Props): JSX.Element {
+export function OverviewTab({
+  appState,
+  state,
+  metrics,
+  onOpenPlatforms,
+  passiveSources,
+}: Props): JSX.Element {
+  const enabledHarnesses = appState.harnesses.filter((h) => h.enabled).map((h) => ({ id: h.id }));
+  const enabledIds = new Set(enabledHarnesses.map((h) => h.id));
+  const flowHarnesses = [
+    ...enabledHarnesses,
+    ...(passiveSources ?? []).filter((s) => !enabledIds.has(s.id)),
+  ];
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
       <DiagnosticsPanel appState={appState} state={state} metrics={metrics} />
@@ -39,7 +56,7 @@ export function OverviewTab({ appState, state, metrics, onOpenPlatforms }: Props
       ) : null}
 
       <FlowChart
-        harnesses={appState.harnesses.filter((h) => h.enabled)}
+        harnesses={flowHarnesses}
         backends={appState.backends.filter((b) => b.enabled)}
         metrics={metrics}
         state={state}
