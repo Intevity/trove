@@ -487,6 +487,50 @@ describe('HarnessList', () => {
     expect(screen.queryByTestId('harness-badge-claude-code')).toBeNull();
   });
 
+  it('tags harnesses absent from the validation matrix with a Beta pill', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'sentinel',
+            detected: true,
+            detectionMethod: 'path-binary',
+            configPath: null,
+            adapterAvailable: false,
+          }),
+          row({ id: 'claude-code', detected: true }),
+        ]}
+        loading={false}
+      />,
+    );
+    // sentinel is absent from the harness × platform matrix → Beta.
+    expect(screen.getByTestId('harness-beta-sentinel')).toBeDefined();
+    // claude-code is fully validated → no Beta pill.
+    expect(screen.queryByTestId('harness-beta-claude-code')).toBeNull();
+  });
+
+  it('retitles the Sentinel row and links out to its repo', () => {
+    render(
+      <HarnessList
+        harnesses={[
+          row({
+            id: 'sentinel',
+            detected: true,
+            detectionMethod: 'path-binary',
+            configPath: null,
+            adapterAvailable: false,
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+    expect(screen.getByText('Sentinel - A Claude Code companion')).toBeDefined();
+    const link = screen.getByTestId('harness-learn-more-sentinel') as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('https://github.com/Intevity/sentinel');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('noreferrer noopener');
+  });
+
   it('renders no button for an adapterless harness with no setup guide', () => {
     render(
       <HarnessList

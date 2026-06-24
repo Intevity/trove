@@ -27,4 +27,19 @@ describe('PresetPicker', () => {
     fireEvent.click(screen.getByTestId('preset-honeycomb'));
     expect(onSelect).toHaveBeenCalledWith('honeycomb');
   });
+
+  it('tags platforms with no matrix validation as Beta, leaving validated ones unbadged', () => {
+    render(<PresetPicker onSelect={vi.fn()} />);
+    // Untested cloud-only vendors: honeycomb, datadog, new-relic,
+    // splunk-observability, dynatrace, chronosphere.
+    expect(screen.getAllByTestId('preset-beta-badge')).toHaveLength(6);
+    // SigNoz is fully validated (Recommended) and must never be Beta.
+    expect(
+      screen.getByTestId('preset-signoz').querySelector('[data-testid="preset-beta-badge"]'),
+    ).toBeNull();
+    // Honeycomb is untested → Beta.
+    expect(
+      screen.getByTestId('preset-honeycomb').querySelector('[data-testid="preset-beta-badge"]'),
+    ).not.toBeNull();
+  });
 });

@@ -25,6 +25,11 @@ export interface PresetMetadata {
   /** True for the wizard's default selection (SigNoz). The wizard
    *  surfaces this by sort order and a "Recommended" pill. */
   recommended: boolean;
+  /** True for destinations not yet fully validated in the harness ×
+   *  platform matrix (`documentation/harness-platform-matrix.md`) — every
+   *  cell is still untested. The wizard and Platforms tab surface this
+   *  with a "Beta" pill. */
+  beta?: boolean;
 }
 
 /** Ordered list shown by the wizard's preset picker. SigNoz first. */
@@ -42,6 +47,7 @@ export const PRESETS: readonly PresetMetadata[] = [
     description:
       'High-cardinality observability for distributed systems. Sends to https://api.honeycomb.io with your team API key.',
     recommended: false,
+    beta: true,
   },
   {
     kind: 'grafana-cloud',
@@ -56,6 +62,7 @@ export const PRESETS: readonly PresetMetadata[] = [
     description:
       'Sends to Datadog’s OTLP intake using a DD-API-KEY header. The site selector picks between datadoghq.com, datadoghq.eu, and other regional intakes.',
     recommended: false,
+    beta: true,
   },
   {
     kind: 'new-relic',
@@ -63,6 +70,7 @@ export const PRESETS: readonly PresetMetadata[] = [
     description:
       'Forwards to New Relic’s OTLP/HTTP intake using your license key in an `api-key` header. Pick US or EU to select the regional cluster.',
     recommended: false,
+    beta: true,
   },
   {
     kind: 'splunk-observability',
@@ -70,6 +78,7 @@ export const PRESETS: readonly PresetMetadata[] = [
     description:
       'OTLP/HTTP to Splunk Observability Cloud. The realm (e.g. us1, eu0) shapes the ingest hostname; the access token authenticates via the `X-SF-Token` header.',
     recommended: false,
+    beta: true,
   },
   {
     kind: 'dynatrace',
@@ -77,6 +86,7 @@ export const PRESETS: readonly PresetMetadata[] = [
     description:
       'OTLP/HTTP to a Dynatrace environment. Trove appends `/api/v2/otlp` to the environment URL and authenticates with `Authorization: Api-Token <token>`.',
     recommended: false,
+    beta: true,
   },
   {
     kind: 'elastic',
@@ -112,6 +122,7 @@ export const PRESETS: readonly PresetMetadata[] = [
     description:
       'OTLP/HTTP to your Chronosphere tenant. Trove builds `https://<tenant>.chronosphere.io/data/v1/otlp` and authenticates with the `API-Token` header.',
     recommended: false,
+    beta: true,
   },
   {
     kind: 'sentry',

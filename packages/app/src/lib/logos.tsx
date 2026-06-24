@@ -26,6 +26,31 @@ export const HARNESS_LABELS: Record<HarnessId, string> = {
   sentinel: 'Sentinel',
 };
 
+/** Harnesses not yet fully validated in the harness × platform matrix
+ *  (`documentation/harness-platform-matrix.md`) — they have no end-to-end
+ *  PASS recorded. The Harnesses list surfaces these with a "Beta" pill. */
+export const HARNESS_BETA: ReadonlySet<HarnessId> = new Set<HarnessId>([
+  'junie-cli',
+  'droid',
+  'kimi-code-cli',
+  'devin',
+  'forgecode',
+  'sentinel',
+]);
+
+/** Per-harness row overrides for the Harnesses list. `titleOverride`
+ *  replaces the {@link HARNESS_LABELS} title (kept short elsewhere — e.g.
+ *  FlowChart nodes — so only the row is affected); `learnMoreUrl` renders a
+ *  "Learn More" link next to the title. */
+export const HARNESS_ROW_META: Partial<
+  Record<HarnessId, { titleOverride?: string; learnMoreUrl?: string }>
+> = {
+  sentinel: {
+    titleOverride: 'Sentinel - A Claude Code companion',
+    learnMoreUrl: 'https://github.com/Intevity/sentinel',
+  },
+};
+
 export interface LogoFallback {
   /** Tile background. Brand-aligned where the vendor has a recognisable
    *  primary colour; otherwise a neutral that still reads on light + dark. */
