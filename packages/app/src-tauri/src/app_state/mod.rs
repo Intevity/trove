@@ -427,6 +427,19 @@ pub enum AppStateError {
     Parse { reason: String },
     #[error("unknown state.json schemaVersion {0}; expected {CURRENT_SCHEMA_VERSION}")]
     UnknownSchemaVersion(u32),
+    /// The on-disk `schemaVersion` is NEWER than this binary understands —
+    /// the user ran a later build (or copied state from one) and is now on
+    /// an older binary. The data on disk is intact and we deliberately
+    /// neither read nor rewrite it, so newer-only fields can't be lost to a
+    /// downgrade-save. The UI surfaces a data-safe recovery notice keyed on
+    /// the dedicated [`crate::ipc::IpcError::StateFromNewerVersion`] kind —
+    /// never the first-run wizard.
+    #[error("state.json schemaVersion {found} is newer than this build supports (max {expected})")]
+    NewerSchemaVersion {
+        found: u32,
+        expected: u32,
+        path: PathBuf,
+    },
 }
 
 /// Minimal preamble we read before a full parse, so [`load_from_dir`]
@@ -480,8 +493,11 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
         // the pre-fix `autoenable_claude_desktop_on_first_run` on
         // Linux/Windows machines where Desktop is not installed.
         // We re-stamp schema_version on the returned struct so the
-        // next save persists the current version to disk.
-        2..=11 => {
+        // next save persists the current version to disk. The arm tracks
+        // `CURRENT_SCHEMA_VERSION` via a guard (rather than a literal
+        // `2..=11` range) so a version bump only requires adding any new
+        // field-shape shim below — the upper bound moves on its own.
+        v if (2..=CURRENT_SCHEMA_VERSION).contains(&v) => {
             // Field-shape migrations applied at the JSON-value level so
             // we don't need to keep parallel legacy deserializer types
             // around. Applied in chronological order so a v2 document
@@ -529,10 +545,21 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
             }
             Ok(state)
         }
-        // v1 was never persisted in the wild — Sprint 4 bumped the shape
-        // mid-development, before state.json was ever written by Trove.
-        // Hitting this branch means the user hand-crafted a v1 file, which
-        // we treat as a real bug they should escalate.
+        // On-disk version is NEWER than this binary supports. This is the
+        // downgrade case (e.g. an "upgrade" that installed a release
+        // predating the running dev build, or state copied from a newer
+        // machine). The data is intact — refuse to read or rewrite it and
+        // surface a data-safe recovery notice rather than silently falling
+        // back to the wizard, which would look like total data loss.
+        v if v > CURRENT_SCHEMA_VERSION => Err(AppStateError::NewerSchemaVersion {
+            found: v,
+            expected: CURRENT_SCHEMA_VERSION,
+            path,
+        }),
+        // v0/v1 were never persisted in the wild — Sprint 4 bumped the
+        // shape mid-development, before state.json was ever written by
+        // Trove. Hitting this branch means the user hand-crafted a v0/v1
+        // file, which we treat as a real bug they should escalate.
         v => Err(AppStateError::UnknownSchemaVersion(v)),
     }
 }
@@ -1698,7 +1725,10 @@ mod tests {
     }
 
     #[test]
-    fn unknown_schema_version_surfaces_explicitly() {
+    fn newer_schema_version_surfaces_explicitly() {
+        // A state.json from a NEWER build must surface as a distinct,
+        // data-safe error (so the UI shows a recovery notice) — NOT as the
+        // generic unknown-version error, and never as a silent default.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         std::fs::write(
@@ -1708,9 +1738,16 @@ mod tests {
         .unwrap();
         let err = load_from_dir(dir.path()).unwrap_err();
         match err {
-            AppStateError::UnknownSchemaVersion(v) => assert_eq!(v, 99),
-            other => panic!("expected UnknownSchemaVersion, got {other:?}"),
+            AppStateError::NewerSchemaVersion {
+                found, expected, ..
+            } => {
+                assert_eq!(found, 99);
+                assert_eq!(expected, CURRENT_SCHEMA_VERSION);
+            }
+            other => panic!("expected NewerSchemaVersion, got {other:?}"),
         }
+        // The data file itself must be left untouched on disk.
+        assert!(path.exists(), "loader must not delete a newer state.json");
     }
 
     #[test]

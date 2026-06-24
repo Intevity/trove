@@ -20,6 +20,7 @@ import {
   HarnessMapping,
   IpcError,
   MappingSource,
+  MappingState,
   MetricsSnapshotWire,
   TierAMetric,
   OverallHealth,
@@ -314,7 +315,7 @@ describe('AppState', () => {
   };
 
   const emptyMappings = {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     metrics: [],
     harnesses: [],
   };
@@ -371,7 +372,7 @@ describe('AppState', () => {
       launchAtStartupEnabled: true,
       identity: defaultIdentity,
       mappings: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         metrics: [],
         harnesses: [
           {
@@ -513,6 +514,17 @@ describe('TierAMetric and MappingState', () => {
       sources: [],
     });
     expect(parsed.costOverrides).toEqual({});
+  });
+
+  it('MappingState accepts any inner schemaVersion the Rust loader emits', () => {
+    // The inner mapping schemaVersion is a forward-moving tag that never
+    // changes the wire shape. Pinning it to a literal once blanked the UI
+    // when the Rust side bumped it (v2 -> v3 for the Sentinel customs), so
+    // the schema must accept the current value and future bumps alike.
+    for (const schemaVersion of [2, 3, 4]) {
+      const parsed = MappingState.parse({ schemaVersion, metrics: [], harnesses: [] });
+      expect(parsed.schemaVersion).toBe(schemaVersion);
+    }
   });
 });
 

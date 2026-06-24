@@ -70,6 +70,21 @@ pub enum IpcError {
     #[error("updater check failed: {reason}")]
     UpdaterCheckFailed { reason: String },
 
+    /// `state.json` on disk was written by a NEWER Trove build than this
+    /// one. The data is intact — this binary refuses to read or overwrite
+    /// it (a downgrade-save could drop newer-only fields). The UI branches
+    /// on this `kind` to render a data-safe recovery notice (current build
+    /// version, the version that wrote the file, and its on-disk path)
+    /// instead of the first-run wizard.
+    #[error(
+        "state.json (v{found}) is newer than this build supports (max v{expected}); data at {path}"
+    )]
+    StateFromNewerVersion {
+        found: u32,
+        expected: u32,
+        path: String,
+    },
+
     /// Catch-all for unexpected failures the UI should treat as a bug.
     #[error("internal error: {reason}")]
     Internal { reason: String },
@@ -171,6 +186,15 @@ impl From<crate::app_state::AppStateError> for IpcError {
             crate::app_state::AppStateError::Io { path, source } => IpcError::Io {
                 path: path.display().to_string(),
                 reason: source.to_string(),
+            },
+            crate::app_state::AppStateError::NewerSchemaVersion {
+                found,
+                expected,
+                path,
+            } => IpcError::StateFromNewerVersion {
+                found,
+                expected,
+                path: path.display().to_string(),
             },
             other => IpcError::Internal {
                 reason: other.to_string(),

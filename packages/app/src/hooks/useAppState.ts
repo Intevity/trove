@@ -28,7 +28,20 @@ export function useAppState(): AppStateBinding {
       const state = await getAppState();
       setAppState(state);
     } catch (err) {
-      setError(err instanceof TroveIpcError ? err : null);
+      // Always surface *some* error so App.tsx renders the recovery
+      // notice rather than a blank screen. A structured `TroveIpcError`
+      // (e.g. state-from-newer-version) passes through verbatim; anything
+      // else — most notably a Zod parse failure from wire-format drift —
+      // is wrapped as `internal` so a present-but-unreadable state.json is
+      // never mistaken for a first run.
+      setError(
+        err instanceof TroveIpcError
+          ? err
+          : new TroveIpcError({
+              kind: 'internal',
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+      );
     } finally {
       setLoading(false);
     }

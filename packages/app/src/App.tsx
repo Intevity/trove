@@ -2,19 +2,35 @@ import { useCallback } from 'react';
 
 import { BackendWizard } from './components/wizard/BackendWizard.js';
 import { Dashboard } from './components/Dashboard.js';
+import { StateRecoveryNotice } from './components/StateRecoveryNotice.js';
 import { useAppState } from './hooks/useAppState.js';
 
 export function App(): JSX.Element {
-  const { appState, loading: appStateLoading, refresh: refreshAppState } = useAppState();
+  const {
+    appState,
+    loading: appStateLoading,
+    error: appStateError,
+    refresh: refreshAppState,
+  } = useAppState();
 
   const handleWizardComplete = useCallback(async () => {
     await refreshAppState();
   }, [refreshAppState]);
 
+  // A load *failure* (e.g. state.json written by a newer Trove build) is
+  // NOT a first run — the user's data is intact on disk. Render a
+  // data-safe recovery notice instead of the wizard, which would imply
+  // their configuration was wiped.
+  if (!appStateLoading && appStateError) {
+    return <StateRecoveryNotice error={appStateError} onRetry={() => void refreshAppState()} />;
+  }
+
   // First-run: the wizard takes over until the user has configured at
-  // least one platform. We wait for state.json to load so we don't
-  // flash the wizard for users who already have a destination saved.
-  const showWizard = !appStateLoading && (appState === null || appState.backends.length === 0);
+  // least one platform. We only treat a *successfully loaded* state with
+  // no destinations as first-run, so a failed load never flashes the
+  // wizard. We wait for state.json to load so we don't flash the wizard
+  // for users who already have a destination saved.
+  const showWizard = !appStateLoading && appState !== null && appState.backends.length === 0;
 
   if (showWizard) {
     return (

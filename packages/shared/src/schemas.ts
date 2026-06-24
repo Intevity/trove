@@ -392,14 +392,18 @@ export type HarnessMapping = z.infer<typeof HarnessMapping>;
 
 /** The whole mapping config, persisted under `AppState.mappings`. The
  *  inner `schemaVersion` is independent of the outer `AppState`
- *  schemaVersion — the inner one only moves when the mapping schema
- *  itself changes. Mirrors the Rust `MappingState`.
+ *  schemaVersion — the inner one only moves when the Rust mapping schema
+ *  bumps (e.g. v3 seeded Sentinel's custom catalog metrics). Mirrors the
+ *  Rust `MappingState`.
  *
- *  v2 introduces the user-customizable `metrics` catalog (sibling of
- *  `harnesses`). On-disk v1 documents are migrated forward by the Rust
- *  loader — the TS side only ever sees v2 over IPC. */
+ *  `schemaVersion` is intentionally `z.number()`, not a pinned literal:
+ *  the tag never changes the wire shape of `metrics`/`harnesses` (those
+ *  fields are validated on their own), so a Rust-side bump must not make
+ *  this whole `AppState` response fail to parse — that would blank the UI
+ *  for everyone until a coordinated frontend release. The Rust loader
+ *  always migrates on-disk documents forward before they reach IPC. */
 export const MappingState = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.number(),
   metrics: z.array(TroveMetricDefinition).default([]),
   harnesses: z.array(HarnessMapping),
 });
@@ -748,6 +752,14 @@ export const IpcError = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('updater-check-failed'),
     reason: z.string(),
+  }),
+  // state.json was written by a newer Trove build than this one. The data
+  // is safe on disk; the UI renders a recovery notice (never the wizard).
+  z.object({
+    kind: z.literal('state-from-newer-version'),
+    found: z.number(),
+    expected: z.number(),
+    path: z.string(),
   }),
   z.object({
     kind: z.literal('internal'),

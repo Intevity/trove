@@ -266,5 +266,7 @@ function describeIpcError(err: TroveIpcError): string {
       return `update check failed: ${cause.reason}`;
     case 'internal':
       return cause.reason;
+    case 'state-from-newer-version':
+      return `your saved data (v${cause.found}) is newer than this build supports (max v${cause.expected}); update Trove to continue.`;
   }
 }
