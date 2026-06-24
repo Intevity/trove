@@ -31,8 +31,13 @@ jobs:
     # step), then exits. The queue wait is paid on the 1x ubuntu
     # `notarize-wait` job and stapling happens on the short macOS job in
     # notarize-finalize.yml, so the 10x build leg never blocks on Apple.
-    # 30 min comfortably covers build + submit on every platform.
-    timeout-minutes: 30
+    # 45 min: a cold-cache `tauri build` on the slowest leg occasionally
+    # ran past the old 30 min cap, cancelling that leg and cascading to
+    # skip notarize-wait + finalize (v0.7.3 windows cache-save, v0.8.0
+    # linux build). The extra headroom lets the slow leg finish AND lets
+    # the rust-cache save complete, which warms the cache so subsequent
+    # release builds drop well under the cap.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
