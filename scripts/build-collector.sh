@@ -37,6 +37,41 @@ if [[ -z "$TRIPLE" ]]; then
   exit 1
 fi
 
+# --- Universal (fat) macOS binary -------------------------------------------
+# universal-apple-darwin is a tauri pseudo-triple, not a single GOOS/GOARCH.
+# Build the collector for BOTH macOS arches (re-invoking this script so the ocb
+# resolution/build path is reused verbatim), then `lipo` them into one fat
+# binary under the universal triple. bundle-sidecar.ts + Tauri's externalBin
+# then pick it up as trove-otelcol-universal-apple-darwin.
+
+if [[ "$TRIPLE" == "universal-apple-darwin" ]]; then
+  command -v lipo >/dev/null 2>&1 || {
+    echo "ERROR: lipo not found; the universal sidecar build requires the macOS toolchain." >&2
+    exit 1
+  }
+  echo "[build-collector] universal target -> building both macOS arches + lipo"
+  for sub in aarch64-apple-darwin x86_64-apple-darwin; do
+    # TROVE_TARGET_TRIPLE has highest precedence in the resolver above, so it
+    # wins over any inherited CARGO_BUILD_TARGET / TAURI_ENV_TARGET_TRIPLE.
+    TROVE_TARGET_TRIPLE="$sub" bash "${BASH_SOURCE[0]}"
+  done
+
+  UNIV_DIR="$DIST_ROOT/universal-apple-darwin"
+  UNIV_BIN="$UNIV_DIR/trove-otelcol"
+  mkdir -p "$UNIV_DIR"
+  lipo -create \
+    "$DIST_ROOT/aarch64-apple-darwin/trove-otelcol" \
+    "$DIST_ROOT/x86_64-apple-darwin/trove-otelcol" \
+    -output "$UNIV_BIN"
+  chmod +x "$UNIV_BIN"
+
+  echo "[build-collector] lipo -info     : $(lipo -info "$UNIV_BIN")"
+  SIZE_BYTES="$(wc -c < "$UNIV_BIN" | tr -d ' ')"
+  SIZE_MB="$(awk -v b="$SIZE_BYTES" 'BEGIN { printf "%.1f", b/1048576 }')"
+  echo "[build-collector] produced     : $UNIV_BIN (${SIZE_MB} MB, universal2)"
+  exit 0
+fi
+
 # --- Map Rust triple -> Go GOOS/GOARCH --------------------------------------
 
 case "$TRIPLE" in

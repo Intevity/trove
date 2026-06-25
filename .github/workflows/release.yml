@@ -42,20 +42,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Both macOS legs run on arm64 `macos-latest` (mirroring Sentinel):
-          # GitHub retired the Intel `macos-13` image in Dec 2025, so the x64
-          # leg cross-compiles via `--target x86_64-apple-darwin`. Rust ships
-          # the target std, Apple's toolchain links it natively, and
-          # build-collector.sh maps the triple to GOOS=darwin/GOARCH=amd64
-          # (CGO off) for the sidecar.
+          # ONE macOS leg builds a UNIVERSAL (arm64 + x86_64) bundle on arm64
+          # `macos-latest` (GitHub retired the Intel macos-13 image in Dec 2025).
+          # `--target universal-apple-darwin` makes `tauri build` compile both
+          # arches and lipo them into a single .dmg / .app.tar.gz that runs
+          # natively on Apple Silicon AND Intel — one 10x job and one notary
+          # submission instead of two, while still shipping Intel support. The Go
+          # sidecar is likewise built for both arches and lipo'd to match (see the
+          # universal-apple-darwin case in build-collector.sh). `rust_target` is the
+          # tauri --target / sidecar-name / sign target; the two REAL rustup std
+          # targets it needs are installed in the toolchain step below.
           - os: macos-latest
-            platform: macos-arm64
-            rust_target: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin
-          - os: macos-latest
-            platform: macos-x64
-            rust_target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
+            platform: macos-universal
+            rust_target: universal-apple-darwin
+            args: --target universal-apple-darwin
           - os: ubuntu-22.04
             platform: linux-x64
             rust_target: x86_64-unknown-linux-gnu
@@ -174,13 +174,17 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
+          # universal-apple-darwin is a tauri pseudo-triple, NOT a rustup target,
+          # so the universal macOS leg installs BOTH real apple std targets that
+          # `tauri build --target universal-apple-darwin` compiles + lipos. Every
+          # other leg installs its single matrix triple.
+          targets: ${{ matrix.platform == 'macos-universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.rust_target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: packages/app/src-tauri -> target
-          # Per-platform key: the two macOS legs share runner.os but build
-          # different targets, so without it they would clobber one cache.
+          # Per-platform key so each matrix leg keeps its own target/ cache
+          # (legs share runner.os but build different target triples).
           key: ${{ matrix.platform }}
           shared-key: trove-rust-${{ runner.os }}-release
           # Save only on tag pushes; release builds run rarely so
@@ -469,7 +473,10 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey.p8
-          ARCH: ${{ matrix.platform == 'macos-arm64' && 'aarch64' || 'x86_64' }}
+          # One universal macOS leg -> one .dmg -> one submission -> one
+          # notary-universal.json marker. notary-poll.mjs / notarize-poll.yml glob
+          # notary-*.json, so they pick it up unchanged.
+          ARCH: universal
         run: |
           set -euo pipefail
           dmg="$(find packages/app/src-tauri/target -path '*/release/bundle/dmg/*.dmg' -print -quit)"
