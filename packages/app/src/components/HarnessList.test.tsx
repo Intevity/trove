@@ -492,21 +492,30 @@ describe('HarnessList', () => {
       <HarnessList
         harnesses={[
           row({
-            id: 'sentinel',
+            id: 'junie-cli',
             detected: true,
             detectionMethod: 'path-binary',
             configPath: null,
             adapterAvailable: false,
           }),
           row({ id: 'claude-code', detected: true }),
+          row({
+            id: 'sentinel',
+            detected: true,
+            detectionMethod: 'path-binary',
+            configPath: null,
+            adapterAvailable: false,
+          }),
         ]}
         loading={false}
       />,
     );
-    // sentinel is absent from the harness × platform matrix → Beta.
-    expect(screen.getByTestId('harness-beta-sentinel')).toBeDefined();
+    // junie-cli is absent from the harness × platform matrix → Beta.
+    expect(screen.getByTestId('harness-beta-junie-cli')).toBeDefined();
     // claude-code is fully validated → no Beta pill.
     expect(screen.queryByTestId('harness-beta-claude-code')).toBeNull();
+    // sentinel was validated manually → no longer Beta.
+    expect(screen.queryByTestId('harness-beta-sentinel')).toBeNull();
   });
 
   it('retitles the Sentinel row and links out to its repo', () => {

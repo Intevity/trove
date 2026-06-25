@@ -35,7 +35,6 @@ export const HARNESS_BETA: ReadonlySet<HarnessId> = new Set<HarnessId>([
   'kimi-code-cli',
   'devin',
   'forgecode',
-  'sentinel',
 ]);
 
 /** Per-harness row overrides for the Harnesses list. `titleOverride`
