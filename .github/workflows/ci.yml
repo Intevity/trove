@@ -429,9 +429,16 @@ jobs:
       - name: Stage sidecar into Tauri binaries dir
         run: pnpm bundle:sidecar
 
-      # Full `tauri build` (unsigned, no release upload): exercises the bundler
-      # the tagged release relies on. No APPLE_*/AZURE_*/TAURI_SIGNING_* env, so
-      # it builds + bundles without signing or notarizing. --debug to reuse the
-      # warm debug cache; bundling behaviour is the same as release.
-      - name: Tauri build (bundle dry-run, unsigned)
-        run: pnpm --filter @trove/app exec tauri build --debug
+      # `tauri build` (unsigned, no release upload): exercises the Linux bundler
+      # the tagged release relies on — externalBin (trove-otelcol) packing +
+      # resource staging into real packages. No APPLE_*/AZURE_*/TAURI_SIGNING_*
+      # env, so it builds + bundles without signing or notarizing. --debug reuses
+      # the ci job's warm debug cache (bundling behaviour is profile-independent).
+      #
+      # Scoped to deb,rpm: those validate the externalBin/resource packing that an
+      # app or tauri.conf change can break. The AppImage bundler is intentionally
+      # excluded — it downloads + runs linuxdeploy headless, which is slow/flaky on
+      # CI (it hung past this job's timeout) and fails on its own tooling, not on
+      # our code. The release leg still builds AppImage via bundle.targets=all.
+      - name: Tauri build (bundle dry-run, unsigned — deb + rpm)
+        run: pnpm --filter @trove/app exec tauri build --debug --bundles deb,rpm
