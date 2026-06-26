@@ -431,21 +431,21 @@ jobs:
 
       # `tauri build` (unsigned, no release upload): exercises the Linux bundler
       # the tagged release relies on — externalBin (trove-otelcol) packing +
-      # resource staging into real packages. --debug reuses the ci job's warm
+      # resource staging into a real package. --debug reuses the ci job's warm
       # debug cache (bundling behaviour is profile-independent).
       #
-      # Three deliberate constraints keep this fast and non-interactive:
-      #   - `--bundles deb,rpm`: validates externalBin/resource packing. AppImage
-      #     is excluded — it downloads + runs linuxdeploy headless (slow/flaky on
-      #     CI) and breaks on its own tooling, not our code.
-      #   - `createUpdaterArtifacts:false`: tauri.conf.json turns it ON, which makes
-      #     the build SIGN the updater bundle; with no TAURI_SIGNING_PRIVATE_KEY the
-      #     signer blocks on stdin forever (it hung this job past its timeout). A
-      #     dry-run doesn't sign, so turn it off.
-      #   - `</dev/null`: belt-and-suspenders — any unexpected prompt gets EOF and
-      #     fails fast instead of hanging until the timeout.
-      # The release leg still builds AppImage + signed updater artifacts.
-      - name: Tauri build (bundle dry-run, unsigned — deb + rpm)
+      # Scoped to the .deb bundle, with three deliberate constraints, because the
+      # other Linux bundlers hang or are flaky specifically in this debug/CI dry-run
+      # (the release leg builds all of them fine in release profile via tauri-action):
+      #   - deb validates the externalBin/resource packing a code or tauri.conf
+      #     change can break, and bundles in ~10s.
+      #   - rpm is excluded: its xz compression of the large *debug* binary hangs CI
+      #     for >20 min. AppImage is excluded: it downloads + runs linuxdeploy
+      #     headless (slow/flaky on CI), failing on its own tooling, not our code.
+      #   - createUpdaterArtifacts:false + `</dev/null`: tauri.conf.json enables
+      #     updater artifacts, whose signer blocks on stdin with no signing key; we
+      #     don't sign in a dry-run, and any stray prompt EOFs instead of hanging.
+      - name: Tauri build (bundle dry-run, unsigned — deb)
         run: |
-          pnpm --filter @trove/app exec tauri build --debug --bundles deb,rpm \
+          pnpm --filter @trove/app exec tauri build --debug --bundles deb \
             --config '{"bundle":{"createUpdaterArtifacts":false}}' </dev/null
