@@ -38,13 +38,21 @@ function fail(msg) {
 
 // Map an artifact filename to its updater platform keys: the
 // bundle-suffixed key plus (for the bundle that bare lookups should get)
-// the bare {target}-{arch} fallback. Every leg in the release matrix is
-// x86_64 except macos-arm64, so the bundle extension pins the OS and only
-// the macOS tarballs need an arch sniff.
+// the bare {target}-{arch} fallback. Every non-macOS leg is x86_64, and the
+// single macOS leg ships a universal2 bundle, so the bundle extension pins the
+// OS and only the macOS tarball needs an arch sniff.
 function platformKeys(name) {
   if (name.endsWith('.app.tar.gz')) {
-    // Tauri names the macOS updater tarballs <product>_aarch64.app.tar.gz
-    // and <product>_x64.app.tar.gz (x64, NOT x86_64), so match both.
+    // Tauri names the macOS updater tarballs <product>_aarch64.app.tar.gz,
+    // <product>_x64.app.tar.gz (x64, NOT x86_64), or — for a universal2 build —
+    // <product>_universal.app.tar.gz. A universal tarball runs natively on BOTH
+    // arches, so it answers all four darwin keys (each existing arm64/Intel
+    // install resolves its own key to this one file); per-arch tarballs map to
+    // just their own. REQUIRED_KEYS is unchanged — one universal file satisfies
+    // both darwin entries, and the duplicate-key guard below still fires if a
+    // universal AND a per-arch tarball ever land in the same release.
+    if (name.includes('universal'))
+      return ['darwin-aarch64-app', 'darwin-aarch64', 'darwin-x86_64-app', 'darwin-x86_64'];
     if (name.includes('aarch64')) return ['darwin-aarch64-app', 'darwin-aarch64'];
     if (name.includes('x64') || name.includes('x86_64'))
       return ['darwin-x86_64-app', 'darwin-x86_64'];

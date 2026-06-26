@@ -332,3 +332,120 @@ jobs:
           path: resources/otelcol/dist/aarch64-apple-darwin/trove-otelcol
           retention-days: 7
           if-no-files-found: ignore
+
+  bundle-linux:
+    # WS3 (CI cost optimization): a 1x Linux dry-run of the release *bundling*
+    # step. The `ci` job above already compiles the Rust app on Linux (clippy
+    # --all-targets + cargo test --workspace), so compile breakage is caught
+    # there — but nothing exercises `tauri build`'s bundle generation
+    # (.deb/.rpm/.AppImage + externalBin packing + updater artifacts) until a
+    # tag, where a failure wastes 10x macOS minutes. This runs that bundle on a
+    # cheap Linux runner — unsigned, no release upload — so packaging breakage
+    # surfaces on the PR instead. `--debug` reuses the ci job's warm debug cache
+    # (the bundler's behaviour is profile-independent), so it's a relink, not a
+    # cold release recompile. Gated on the same sidecar/src-tauri paths-filter as
+    # sidecar-mac (UI/docs/shared-only PRs can't change what this exercises).
+    name: release bundle dry-run (ubuntu)
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      needs.changes.outputs.sidecar == 'true'
+    needs: changes
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Free disk space on runner
+        uses: jlumbroso/free-disk-space@main
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          tool-cache: false
+          swap-storage: false
+
+      - uses: actions/checkout@v4
+
+      # Tauri Linux bundle deps; fakeroot/dpkg are required for the .deb bundle
+      # (mirrors release.yml's linux leg so the dry-run packages what a tag does).
+      - name: Install Linux Tauri build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            fakeroot \
+            dpkg
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/app/src-tauri -> target
+          # Same shared-key (no distinct key) as the `ci` job, so this restores
+          # that job's main-saved Linux cache — PRs never save (save-if main).
+          shared-key: trove-rust-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Cache ocb module cache + installed binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/go/bin
+          key: trove-ocb-${{ runner.os }}-${{ hashFiles('resources/otelcol/manifest.yaml') }}
+          restore-keys: |
+            trove-ocb-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TS workspace libraries
+        run: pnpm --filter @trove/shared --filter @trove/collector-presets build
+
+      - name: Build trove-otelcol sidecar
+        run: pnpm build:collector
+
+      - name: Stage sidecar into Tauri binaries dir
+        run: pnpm bundle:sidecar
+
+      # `tauri build` (unsigned, no release upload): exercises the Linux bundler
+      # the tagged release relies on — externalBin (trove-otelcol) packing +
+      # resource staging into a real package. --debug reuses the ci job's warm
+      # debug cache (bundling behaviour is profile-independent).
+      #
+      # Scoped to the .deb bundle, with three deliberate constraints, because the
+      # other Linux bundlers hang or are flaky specifically in this debug/CI dry-run
+      # (the release leg builds all of them fine in release profile via tauri-action):
+      #   - deb validates the externalBin/resource packing a code or tauri.conf
+      #     change can break, and bundles in ~10s.
+      #   - rpm is excluded: its xz compression of the large *debug* binary hangs CI
+      #     for >20 min. AppImage is excluded: it downloads + runs linuxdeploy
+      #     headless (slow/flaky on CI), failing on its own tooling, not our code.
+      #   - createUpdaterArtifacts:false + `</dev/null`: tauri.conf.json enables
+      #     updater artifacts, whose signer blocks on stdin with no signing key; we
+      #     don't sign in a dry-run, and any stray prompt EOFs instead of hanging.
+      - name: Tauri build (bundle dry-run, unsigned — deb)
+        run: |
+          pnpm --filter @trove/app exec tauri build --debug --bundles deb \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}' </dev/null
