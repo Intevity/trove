@@ -41,6 +41,23 @@ jobs:
           set -euo pipefail
           echo "ready=false" >> "$GITHUB_OUTPUT"
 
+          # Backstop: a draft that has carried notary markers for this long has not
+          # finalized for reasons the poll can't fix on its own (Apple stuck, or a
+          # finalize that keeps failing). Stop looping rather than burn minutes forever.
+          # The inline notarize-wait already covers 90 min and Apple's slow tail is
+          # hours, so 24h is safely past any legitimate delay.
+          MAX_PENDING_HOURS=24
+
+          # Remove a draft's pending-notarization markers so this scheduled poll stops
+          # treating it as pending (the draft + its artifacts stay for inspection).
+          clear_markers() {
+            local t="$1"
+            for a in $(gh release view "$t" --repo "$GITHUB_REPOSITORY" --json assets \
+                        --jq '.assets[].name | select(startswith("notary-") and endswith(".json"))'); do
+              gh release delete-asset "$t" "$a" --yes --repo "$GITHUB_REPOSITORY" || true
+            done
+          }
+
           # A release "awaiting notarization" is a DRAFT carrying notary-*.json marker
           # assets (written by the build leg). Find the first such draft.
           tag=""
@@ -68,15 +85,39 @@ jobs:
           code=$?
           set -e
           case "$code" in
-            0) echo "ready=true" >> "$GITHUB_OUTPUT"
-               echo "All submissions Accepted -> finalizing $tag." ;;
-            2) echo "Still pending -> will recheck on the next scheduled tick." ;;
+            0) # Apple Accepted every submission. Before finalizing, confirm the draft
+               # actually carries a COMPLETE updater artifact set — otherwise finalize
+               # (and its 10x macOS staple job) would run on every tick only to die in
+               # assemble-latest-json, looping forever. This name-only check downloads
+               # nothing and reuses assemble-latest-json's own REQUIRED_KEYS.
+               names="$(mktemp)"
+               gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+                 --jq '.assets[].name' > "$names"
+               set +e
+               node scripts/assemble-latest-json.mjs --check-names "$names"
+               complete=$?
+               set -e
+               if [ "$complete" -eq 0 ]; then
+                 echo "ready=true" >> "$GITHUB_OUTPUT"
+                 echo "All submissions Accepted and the artifact set is complete -> finalizing $tag."
+               else
+                 echo "::error::$tag is Accepted by Apple but is missing required updater artifacts (see above) — it can never finalize (likely a timed-out / partial build). Clearing its notary markers to stop the scheduled poll from looping; the draft stays for inspection. Investigate and re-release."
+                 clear_markers "$tag"
+                 exit 1
+               fi ;;
+            2) # Still in Apple's queue. Keep deferring to the next tick UNLESS the draft
+               # has been pending past the backstop, in which case stop looping.
+               created="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json createdAt --jq '.createdAt')"
+               age_h=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 3600 ))
+               if [ "$age_h" -ge "$MAX_PENDING_HOURS" ]; then
+                 echo "::error::$tag has been awaiting notarization for ${age_h}h (>= ${MAX_PENDING_HOURS}h) — treating as stuck. Clearing its notary markers to stop the poll loop; the draft stays for inspection. Check the Apple submission and re-release if needed."
+                 clear_markers "$tag"
+                 exit 1
+               fi
+               echo "Still pending (${age_h}h old) -> will recheck on the next scheduled tick." ;;
             *) # Invalid/Rejected: remove the markers so we stop looping, and fail loudly once.
                echo "::error::Notarization Invalid for $tag. Removing pending markers (the draft remains for inspection); investigate and re-release."
-               for a in $(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
-                           --jq '.assets[].name | select(startswith("notary-") and endswith(".json"))'); do
-                 gh release delete-asset "$tag" "$a" --yes --repo "$GITHUB_REPOSITORY" || true
-               done
+               clear_markers "$tag"
                exit 1 ;;
           esac
 
