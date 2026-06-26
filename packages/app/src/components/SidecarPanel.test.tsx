@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CollectorRunState, MetricsSnapshotWire } from '@trove/shared';
@@ -160,5 +160,33 @@ describe('SidecarPanel', () => {
     await waitFor(() => {
       expect((button as HTMLButtonElement).disabled).toBe(false);
     });
+  });
+
+  it('headline Received/Sent numerals sum all signal types, not just spans', () => {
+    // Spans-less traffic: metrics + logs only (e.g. Sentinel forwarding to
+    // SigNoz without traces). The pre-fix headline read `.spans` and so
+    // rendered 0 here even though metrics/logs were flowing. Pin the
+    // headline to the cross-signal total.
+    const metrics = snapshot({
+      received: { spans: 0, metricPoints: 175, logRecords: 149 },
+      sent: { spans: 0, metricPoints: 448, logRecords: 294 },
+    });
+    render(<SidecarPanel state={RUNNING} metrics={metrics} backends={[]} />);
+
+    const received = screen.getByTestId('counts-received');
+    const sent = screen.getByTestId('counts-sent');
+
+    // Headline numeral = total across traces + metrics + logs.
+    expect(within(received).getByText('324')).toBeTruthy(); // 0 + 175 + 149
+    expect(within(sent).getByText('742')).toBeTruthy(); // 0 + 448 + 294
+
+    // Per-signal spans breakdown is still its own (zero) value, and the
+    // metric/log counts remain visible in the subtext.
+    expect(screen.getByTestId('counts-received-spans').textContent).toBe('0');
+    expect(screen.getByTestId('counts-sent-spans').textContent).toBe('0');
+    expect(received.textContent).toContain('175');
+    expect(received.textContent).toContain('149');
+    expect(sent.textContent).toContain('448');
+    expect(sent.textContent).toContain('294');
   });
 });

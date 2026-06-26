@@ -8,7 +8,7 @@ import type {
   TestExportResult,
 } from '@trove/shared';
 
-import { formatCount, formatLastSignalAt } from '../lib/format.js';
+import { formatCount, formatLastSignalAt, signalTotal } from '../lib/format.js';
 import { TroveIpcError, testExport } from '../lib/ipc.js';
 import {
   Button,
@@ -89,7 +89,7 @@ export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
         <StatTile
           testid="counts-received"
           label="Received"
-          value={formatCount(metrics?.received.spans ?? 0)}
+          value={formatCount(signalTotal(metrics?.received))}
         >
           <span data-testid="counts-received-spans">
             {formatCount(metrics?.received.spans ?? 0)}
@@ -104,7 +104,7 @@ export function SidecarPanel({ state, metrics, backends }: Props): JSX.Element {
           </span>{' '}
           logs
         </StatTile>
-        <StatTile testid="counts-sent" label="Sent" value={formatCount(metrics?.sent.spans ?? 0)}>
+        <StatTile testid="counts-sent" label="Sent" value={formatCount(signalTotal(metrics?.sent))}>
           <span data-testid="counts-sent-spans">{formatCount(metrics?.sent.spans ?? 0)}</span> spans
           ·{' '}
           <span data-testid="counts-sent-metrics">
