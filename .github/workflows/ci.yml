@@ -431,14 +431,21 @@ jobs:
 
       # `tauri build` (unsigned, no release upload): exercises the Linux bundler
       # the tagged release relies on — externalBin (trove-otelcol) packing +
-      # resource staging into real packages. No APPLE_*/AZURE_*/TAURI_SIGNING_*
-      # env, so it builds + bundles without signing or notarizing. --debug reuses
-      # the ci job's warm debug cache (bundling behaviour is profile-independent).
+      # resource staging into real packages. --debug reuses the ci job's warm
+      # debug cache (bundling behaviour is profile-independent).
       #
-      # Scoped to deb,rpm: those validate the externalBin/resource packing that an
-      # app or tauri.conf change can break. The AppImage bundler is intentionally
-      # excluded — it downloads + runs linuxdeploy headless, which is slow/flaky on
-      # CI (it hung past this job's timeout) and fails on its own tooling, not on
-      # our code. The release leg still builds AppImage via bundle.targets=all.
+      # Three deliberate constraints keep this fast and non-interactive:
+      #   - `--bundles deb,rpm`: validates externalBin/resource packing. AppImage
+      #     is excluded — it downloads + runs linuxdeploy headless (slow/flaky on
+      #     CI) and breaks on its own tooling, not our code.
+      #   - `createUpdaterArtifacts:false`: tauri.conf.json turns it ON, which makes
+      #     the build SIGN the updater bundle; with no TAURI_SIGNING_PRIVATE_KEY the
+      #     signer blocks on stdin forever (it hung this job past its timeout). A
+      #     dry-run doesn't sign, so turn it off.
+      #   - `</dev/null`: belt-and-suspenders — any unexpected prompt gets EOF and
+      #     fails fast instead of hanging until the timeout.
+      # The release leg still builds AppImage + signed updater artifacts.
       - name: Tauri build (bundle dry-run, unsigned — deb + rpm)
-        run: pnpm --filter @trove/app exec tauri build --debug --bundles deb,rpm
+        run: |
+          pnpm --filter @trove/app exec tauri build --debug --bundles deb,rpm \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}' </dev/null
