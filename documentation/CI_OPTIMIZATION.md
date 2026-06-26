@@ -6,29 +6,37 @@ prose below is kept as the design record.
 
 ## Implementation status
 
-- **WS2 — universal macOS binary: done.** `release.yml`'s two macOS legs
-  (`macos-arm64` + `macos-x64`) collapsed into one `macos-universal` leg
-  (`--target universal-apple-darwin`); the toolchain step installs both real
-  apple std targets; `build-collector.sh` gained a `universal-apple-darwin` case
-  that builds both Go arches and `lipo`s them; `bundle-sidecar.ts` needed no
-  change; the notary marker is now `notary-universal.json`; and
-  `assemble-latest-json.mjs` maps the one universal tarball to all four darwin
-  keys (`REQUIRED_KEYS` unchanged). `notary-staple.sh` was already arch-agnostic.
-  Local smoke confirmed the sidecar is a fat `universal2` Mach-O (x86_64 + arm64).
-- **WS3 — done, rescoped.** A literal "Linux `cargo check` dry-run" would be
+- **WS2 — universal macOS binary: done** (initial PR #71, sidecar-staging
+  correction in a follow-up). `release.yml`'s two macOS legs (`macos-arm64` +
+  `macos-x64`) collapsed into one `macos-universal` leg
+  (`--target universal-apple-darwin`); the toolchain step installs both real apple
+  std targets; `build-collector.sh` gained a `universal-apple-darwin` case that
+  builds both Go arches and `lipo`s them; the notary marker is now
+  `notary-universal.json`; and `assemble-latest-json.mjs` maps the one universal
+  tarball to all four darwin keys (`REQUIRED_KEYS` unchanged). `notary-staple.sh`
+  was already arch-agnostic.
+- **Tauri needs THREE sidecars for a universal build** (discovered via the pre-tag
+  gate; this corrected the initial WS2, which staged only the universal one and
+  would have failed the first real tag). Tauri does **not** lipo externalBin
+  sidecars itself: tauri-build's externalBin existence check during each per-arch
+  `cargo build` wants `trove-otelcol-{aarch64,x86_64}-apple-darwin`, and the macOS
+  bundler then **copies** the lipo'd `trove-otelcol-universal-apple-darwin` into
+  the `.app`. So `bundle-sidecar.ts`'s universal mode stages **all three** (the
+  sign step still signs the universal one — that's the one bundled).
+- **WS3 — done, rescoped twice.** A literal "Linux `cargo check` dry-run" is
   redundant: `ci.yml`'s `ci` job already compiles the Rust app on Linux every PR
   (`clippy --all-targets -D warnings` + `cargo test --workspace`). The only
-  uncovered release step is _bundling_, so WS3 instead adds a PR-only, 1× Linux
-  `bundle-linux` job that runs `tauri build --debug` (full bundler, unsigned, no
-  release) gated on the existing src-tauri/sidecar paths-filter — catching
-  `.deb`/`.rpm`/`.AppImage` + externalBin packaging breakage before a tag spends
-  10× macOS minutes.
-- **Pre-tag gate (still required before the first universal release):** run
-  `rustup target add x86_64-apple-darwin` then
-  `pnpm -F app tauri build --target universal-apple-darwin` locally with the
-  lipo'd sidecar staged, and confirm the bundled app binary AND the inner
-  sidecar are both fat (`file` / `lipo -info`). This validates the #1 risk —
-  Tauri picking up `trove-otelcol-universal-apple-darwin` as the externalBin.
+  uncovered release step is _bundling_, so WS3 adds a PR-only, 1× Linux
+  `bundle-linux` job running `tauri build --debug --bundles deb` (gated on the
+  existing src-tauri/sidecar paths-filter) to catch externalBin/resource packaging
+  breakage. Scoped to **deb** because the other Linux bundlers each hang headless
+  in this debug/CI dry-run (AppImage's linuxdeploy download/run; rpm's xz
+  compression of the large debug binary; the updater signer blocking on stdin with
+  no key) — none of which affect the real release leg.
+- **Pre-tag gate — done.** Verified locally with both rust targets installed and
+  all three sidecars staged: `tauri build --target universal-apple-darwin` (with
+  `tauri.dev.conf.json` to skip updater signing) produces a `.app` whose **app
+  binary and bundled sidecar are both fat** (`x86_64 arm64`).
 - **Related fix (separate PR):** the scheduled `notarize-poll` loop that burned
   10× macOS minutes on an un-finalizable stuck draft was fixed independently
   (completeness pre-flight + 24h age backstop in the `discover` job).

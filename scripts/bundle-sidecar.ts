@@ -51,8 +51,7 @@ function resolveTriple(): string {
   }
 }
 
-function main(): void {
-  const triple = resolveTriple();
+function stage(triple: string): void {
   const ext = triple.includes('windows') ? '.exe' : '';
   const sourceBin = join(DIST_ROOT, triple, `trove-otelcol${ext}`);
   const targetBin = join(BINARIES_DIR, `trove-otelcol-${triple}${ext}`);
@@ -68,9 +67,26 @@ function main(): void {
   copyFileSync(sourceBin, targetBin);
 
   const sizeMb = (statSync(targetBin).size / 1024 / 1024).toFixed(1);
-  console.log(`[bundle-sidecar] triple : ${triple}`);
-  console.log(`[bundle-sidecar] from   : ${sourceBin}`);
-  console.log(`[bundle-sidecar] to     : ${targetBin} (${sizeMb} MB)`);
+  console.log(`[bundle-sidecar] ${sourceBin} -> ${targetBin} (${sizeMb} MB)`);
+}
+
+function main(): void {
+  const triple = resolveTriple();
+
+  // A universal-apple-darwin build needs THREE staged sidecars, because Tauri does
+  // not lipo externalBin sidecars itself:
+  //   - tauri-build's externalBin existence check during each per-arch `cargo build`
+  //     wants the per-arch names (trove-otelcol-{aarch64,x86_64}-apple-darwin), and
+  //   - the macOS bundler then COPIES the lipo'd trove-otelcol-universal-apple-darwin
+  //     into the .app.
+  // build-collector.sh's universal case produces all three under DIST_ROOT, so stage
+  // all three. Every other (single-arch) build stages just its own triple.
+  const triples =
+    triple === 'universal-apple-darwin'
+      ? ['aarch64-apple-darwin', 'x86_64-apple-darwin', 'universal-apple-darwin']
+      : [triple];
+
+  for (const t of triples) stage(t);
 }
 
 main();
