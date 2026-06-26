@@ -10,7 +10,7 @@ import type {
   TestExportResult,
 } from '@trove/shared';
 
-import { formatCount } from '../../lib/format.js';
+import { formatCount, signalTotal } from '../../lib/format.js';
 import { RECENT_SIGNAL_WINDOW_MS } from '../../lib/health.js';
 import { TroveIpcError, testExport } from '../../lib/ipc.js';
 import { Button, Card, CardHeader, CardTitle } from '../ui/index.js';
@@ -384,9 +384,7 @@ export function deriveBackendRow(
       fixTargetTestid: null,
     };
   }
-  const sentTotal = metrics
-    ? metrics.sent.spans + metrics.sent.metricPoints + metrics.sent.logRecords
-    : 0;
+  const sentTotal = signalTotal(metrics?.sent);
   // Auto-green when the exporter has successfully delivered ≥1 record
   // since the collector started. This supersedes a stale failed
   // result, because live successful exports are stronger evidence
