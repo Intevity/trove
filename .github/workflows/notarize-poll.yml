@@ -16,6 +16,7 @@ on:
 permissions:
   contents: write
   id-token: write # the reusable finalize workflow's S3 publish assumes the AWS role via OIDC
+  actions: write # this workflow disables its own schedule once nothing is pending (see discover)
 
 jobs:
   discover:
@@ -70,7 +71,14 @@ jobs:
                      --jq '.[] | select(.isDraft) | .tagName')
 
           if [ -z "$tag" ]; then
-            echo "No draft releases awaiting notarization."
+            # Nothing pending -> go dormant. release.yml's notarize-wait re-enables this
+            # schedule (gh workflow enable) the moment a release defers, so the poll only
+            # exists while Apple is genuinely mid-notarization — no perpetual idle ticks.
+            # Disable ONLY here (not after clear_markers / finalize): those resolve on a
+            # later tick that re-scans, finds nothing, and lands in this branch — which also
+            # keeps the rare two-drafts-pending case correct (stay enabled until ALL clear).
+            echo "No draft releases awaiting notarization — disabling the scheduled poll until a release defers."
+            gh workflow disable notarize-poll.yml --repo "$GITHUB_REPOSITORY" || true
             exit 0
           fi
           echo "Pending release: $tag"

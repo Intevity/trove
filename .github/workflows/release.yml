@@ -521,6 +521,12 @@ jobs:
     needs: [build-tauri]
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Explicit block (replaces the inherited top-level set): contents:write because draft
+    # `gh release download` needs push-level access, and actions:write so the deferred
+    # branch can `gh workflow enable` the scheduled notarize-poll workflow.
+    permissions:
+      contents: write
+      actions: write
     outputs:
       state: ${{ steps.poll.outputs.state }}
     env:
@@ -553,7 +559,10 @@ jobs:
             0) echo "state=accepted" >> "$GITHUB_OUTPUT"
                echo "Accepted within the inline window." ;;
             2) echo "state=deferred" >> "$GITHUB_OUTPUT"
-               echo "::notice::Notarization still pending; the scheduled notarize-poll workflow will finalize this release when Apple completes." ;;
+               # The scheduled poll disables itself while idle, so wake it for this draft.
+               # It rechecks Apple each tick and finalizes once Accepted, then goes dormant again.
+               echo "::notice::Notarization still pending; enabling the scheduled notarize-poll workflow to finalize this release when Apple completes."
+               gh workflow enable notarize-poll.yml --repo "$GITHUB_REPOSITORY" || true ;;
             *) echo "state=failed" >> "$GITHUB_OUTPUT"
                echo "::error::Notarization failed (Invalid/Rejected or fatal error)."
                exit 1 ;;
