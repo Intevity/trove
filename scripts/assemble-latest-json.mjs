@@ -79,6 +79,44 @@ const REQUIRED_KEYS = [
   'windows-x86_64-msi',
 ];
 
+// Name-only completeness check (used by the scheduled notarize-poll workflow).
+// Verify a draft release carries a COMPLETE updater artifact set WITHOUT
+// downloading anything, so the poller can refuse to finalize — and never spin up
+// the 10x macOS staple job — for a release that can never produce a manifest
+// (e.g. a timed-out build missing its Linux bundles). Reuses platformKeys() +
+// REQUIRED_KEYS + the .sig-companion rule, so this can never drift from the real
+// (content-mode) assemble below.
+//
+//   node scripts/assemble-latest-json.mjs --check-names <file-of-asset-names>
+//
+// <file-of-asset-names> holds the draft's asset names, one per line (e.g. from
+// `gh release view <tag> --json assets --jq '.assets[].name'`). Non-updater
+// assets (.dmg, .sig, latest.json, notary-*.json) map to no key and are skipped.
+//
+// Exit codes:
+//   0  every REQUIRED_KEYS platform present (with its .sig) -> safe to finalize
+//   1  a required platform or a .sig companion is missing   -> never finalizes
+if (process.argv[2] === '--check-names') {
+  const namesFile = process.argv[3];
+  if (!namesFile) fail('usage: assemble-latest-json.mjs --check-names <file-of-asset-names>');
+  const names = readFileSync(namesFile, 'utf8')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const have = new Set(names);
+  const present = {};
+  for (const name of names) {
+    const keys = platformKeys(name);
+    if (!keys) continue; // not an updater artifact (.dmg/.sig/latest.json/notary-*.json)
+    if (!have.has(`${name}.sig`)) fail(`missing signature companion ${name}.sig`);
+    for (const key of keys) present[key] = name;
+  }
+  const missing = REQUIRED_KEYS.filter((k) => !present[k]);
+  if (missing.length) fail(`release is missing updater artifacts for: ${missing.join(', ')}`);
+  console.log('Release artifact set is complete for all required platforms.');
+  process.exit(0);
+}
+
 const [dir, version] = process.argv.slice(2);
 if (!dir || !version) fail('usage: assemble-latest-json.mjs <dir> <version>');
 
