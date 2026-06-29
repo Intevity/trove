@@ -1,0 +1,218 @@
+---
+title: Architecture
+description: How Trove's Rust Tauri core, React/TypeScript UI, and bundled OpenTelemetry Collector sidecar fit together — detection, atomic config patching, keychain secrets, sidecar supervision, IPC, and state.json.
+sidebar:
+  order: 1
+---
+
+import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+Trove is a [Tauri 2](https://v2.tauri.app/) desktop tray app. It has three
+runtime pieces that talk across two boundaries: a **React/TypeScript UI**
+running in a WebView, a **Rust core** running natively, and a **bundled
+OpenTelemetry Collector** running as a child process (a Tauri *sidecar*).
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                       Trove Tray App (Tauri 2)                     │
+│                                                                    │
+│  ┌─────────────────────┐         ┌────────────────────────────┐   │
+│  │  WebView (TS/React) │ <────►  │   Tauri Core (Rust)        │   │
+│  │  - Dashboard tabs   │  IPC    │  - Harness detection       │   │
+│  │  - Mappings editor  │         │  - Config patching (atomic)│   │
+│  │  - Logs tail        │         │  - Keychain (OS secrets)   │   │
+│  └─────────────────────┘         │  - Sidecar supervision     │   │
+│                                  └──────────┬─────────────────┘   │
+│                                             │ spawn / monitor      │
+│                                  ┌──────────▼─────────────────┐   │
+│                                  │  trove-otelcol (sidecar)   │   │
+│                                  │  custom ocb-built binary   │   │
+│                                  │  OTLP receiver + processors│   │
+│                                  │  + per-backend exporters   │   │
+│                                  └──────────┬─────────────────┘   │
+│                                             │                      │
+└──────────────────────────────────────────────┼───────────────────┘
+                                               │ OTLP
+                                               ▼
+                               ┌───────────────────────────┐
+                               │  Your chosen backend       │
+                               │  SigNoz / Honeycomb /      │
+                               │  Grafana / Datadog / OTLP  │
+                               └───────────────────────────┘
+```
+
+<Aside type="tip">
+The collector binds **only** to `127.0.0.1`. Harnesses POST to a loopback
+port; the collector forwards to the single endpoint you configured. No part
+of this pipeline talks to a Trove- or Intevity-controlled server.
+</Aside>
+
+## The Rust core
+
+The Rust core (under `packages/app/src-tauri/src/`) owns everything that
+touches the operating system. It is the trusted boundary: the WebView can
+only ask it to do things through typed IPC commands.
+
+### Harness detection
+
+Detection (`detect/`) probes the machine for the AI coding harnesses Trove
+supports — by looking for binaries on `PATH`, known config files, or
+application bundles. Each detected tool becomes a `DetectedHarness` with an
+`adapter_available` flag that drives the Enable / Disable button in the UI.
+There's no parallel hard-coded list on the TypeScript side; the UI renders
+whatever the core reports.
+
+### Config patching (atomic and reversible)
+
+When you enable a harness, the core writes a **sentinel-bracketed managed
+region** into that harness's own config file. The safety contract
+(`safety/`) is the heart of Trove's trust story, and it is identical for
+every adapter:
+
+- **Atomic write** — temp file, fsync, rename. A crash mid-write never
+  leaves a half-patched config.
+- **Backup** — the file is backed up before the first edit, with old
+  backups pruned to a bounded count.
+- **Sentinel brackets** — the region Trove wrote is fenced by sentinel
+  comments so `revert` can find and remove *exactly* what was added,
+  byte-for-byte.
+- **Idempotent** — re-applying the same options is a no-op.
+- **Cleanly revertible** — `revert` restores the pre-apply state
+  byte-identically.
+- **Refuses to clobber** — if you hand-edit inside the managed block,
+  Trove refuses rather than silently overwriting.
+
+The shared `adapters::common` module enforces all of this; an individual
+adapter only declares *where* to patch and *what* to write. See
+[Contributing](/trove/docs/developers/contributing/) for how to add one.
+
+### Keychain (OS secrets)
+
+Backend credentials (API keys, ingest tokens) are stored in the OS keychain
+via `secrets/` — macOS Keychain, Windows Credential Manager, or the Linux
+Secret Service. They are **never** written in plaintext to disk, and they
+live in exactly one place: the collector config Trove generates. Rotating a
+key is a single edit, not an archaeology project across a dozen harness
+config files.
+
+### Sidecar supervision
+
+The core spawns and supervises the collector child for the app's lifetime
+(`collector/`). The supervisor is a small state machine:
+
+```
+Idle → Starting → Running → (Crashed → Starting) → Stopping → Stopped
+                              Failed { reason }   (terminal)
+```
+
+Key behaviors:
+
+- **Health probe.** After spawning, the supervisor polls
+  `http://127.0.0.1:13133/health` (the collector's `health_check`
+  extension) every 100 ms until it returns 200 or the deadline passes.
+- **Restart policy.** Initial backoff is 500 ms, doubling to a max of 5 s.
+  A run that survives at least 30 s resets the backoff. Restart count is
+  monotonic.
+- **Failed is terminal.** Unrecoverable spawn errors (binary missing,
+  permission denied) put the supervisor in `Failed { reason }`, surfaced to
+  the UI rather than retried forever.
+- **Clean shutdown.** On app exit the supervisor flips a oneshot, calls
+  `start_kill()`, and waits up to 5 s for graceful exit before `SIGKILL`.
+  On Unix, `SIGINT`/`SIGTERM` are bridged to `app.exit(0)` so external
+  kills follow the same path and the child never orphans onto PID 1.
+
+## The Collector sidecar
+
+Trove ships a **custom** OpenTelemetry Collector binary built with the
+[OpenTelemetry Collector Builder (ocb)](https://opentelemetry.io/docs/collector/extend/ocb/),
+pinned to a single upstream version. The build manifest enumerates exactly
+the components Trove needs and nothing more:
+
+| Kind       | Components                                                                       |
+| ---------- | ------------------------------------------------------------------------------- |
+| Receivers  | `otlpreceiver` (gRPC :4317 + HTTP :4318)                                         |
+| Exporters  | `otlpexporter`, `otlphttpexporter`, `datadogexporter`, `debugexporter`          |
+| Processors | `batchprocessor`, `attributesprocessor`, `resourceprocessor`, `filterprocessor` |
+| Extensions | `healthcheckextension`, `pprofextension`                                         |
+
+### Why a local Collector instead of direct OTLP
+
+Pointing each harness straight at your backend works at small scale but has
+real problems that a single local collector solves:
+
+- **Credential sprawl** — direct OTLP scatters your API key across every
+  harness config and shell rc file. With Trove the credential lives once.
+- **No buffering** — if the backend is down, direct-from-source telemetry is
+  silently dropped. The collector batches and buffers.
+- **No normalization** — every harness uses its own metric namespace. The
+  collector synthesizes a unified [Tier A schema](/trove/docs/reference/tier-a-metrics/).
+- **No PII gate** — a single redaction processor is far safer than auditing
+  prompt-logging flags per harness.
+- **Cardinality control** — bounded in one place rather than per tool.
+
+### Tier A synthesis
+
+For native-OTel harnesses (Claude Code, Codex CLI, Gemini CLI, Qwen Code,
+OpenCode), Trove injects a `metricstransform/tierA-<harness>` processor on
+every collector reload. It uses `action: insert`, so the native Tier B
+metric stays on the wire untouched — synthesis is **additive**. Hook- and
+watcher-based harnesses (Cursor, Cline, Aider, Copilot CLI) emit Tier A
+inline from their drivers instead.
+
+## IPC
+
+The WebView and the Rust core communicate over Tauri's typed IPC. Command
+shapes are defined in `packages/shared` (`ipc-messages.ts`) so both sides
+share one source of truth. The UI never touches the filesystem, keychain,
+or collector directly — it asks the core, and the core enforces the safety
+contract before acting.
+
+## state.json
+
+Trove keeps a **single, versioned `state.json`** as its source of truth for
+which harnesses are enabled, which backend is configured, and the active
+mapping overlay. It carries a `schemaVersion`; migrations are handled in
+code on load.
+
+<Aside type="caution">
+Never hand-edit `state.json`'s `schemaVersion` to fit a stale binary. A
+schema bump is a code change that requires a full `tauri build` and
+reinstall — there are no exceptions.
+</Aside>
+
+### File system layout
+
+| What                             | macOS                                               | Linux (XDG)                          | Windows                                   |
+| -------------------------------- | --------------------------------------------------- | ------------------------------------ | ----------------------------------------- |
+| Bundled binary                   | `<App>/Contents/MacOS/trove-otelcol`                | `<bundle>/trove-otelcol`             | `<bundle>\trove-otelcol.exe`              |
+| `collector.yaml`                 | `~/Library/Application Support/com.intevity.trove/` | `~/.config/com.intevity.trove/`      | `%APPDATA%\com.intevity.trove\`           |
+| `collector.log` (+ `.1` rotated) | `~/Library/Logs/com.intevity.trove/`                | `~/.local/state/com.intevity.trove/` | `%LOCALAPPDATA%\com.intevity.trove\Logs\` |
+
+`collector.yaml` is code-generated from your backend choice. `collector.log`
+is size-capped at 10 MiB with a single rotation to `collector.log.1`; the
+dashboard's [Logs tab](/trove/docs/features/logs/) streams its tail.
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Project structure"
+    href="/trove/docs/developers/project-structure/"
+    description="The pnpm monorepo layout — app, shared, collector-presets, site."
+  />
+  <LinkCard
+    title="Building from source"
+    href="/trove/docs/developers/building/"
+    description="Prereqs, pnpm install, and the build:app / build:collector loop."
+  />
+  <LinkCard
+    title="Contributing"
+    href="/trove/docs/developers/contributing/"
+    description="Add a harness adapter or a backend preset."
+  />
+  <LinkCard
+    title="Tier A metrics"
+    href="/trove/docs/reference/tier-a-metrics/"
+    description="The normalized cross-harness metric schema."
+  />
+</CardGrid>

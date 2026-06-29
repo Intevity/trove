@@ -1,0 +1,75 @@
+---
+title: Settings
+description: Every setting in the Trove Settings tab — auto-update, manual update checks, and identity tagging — plus where state.json lives on each platform.
+sidebar:
+  order: 4
+---
+
+import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+The **Settings** tab holds Trove's app-level preferences. There aren't many — Trove is opinionated about defaults — but each one matters.
+
+<Aside type="note">Screenshot coming soon.</Aside>
+
+## Auto-update
+
+Trove can keep itself current using Tauri's built-in updater.
+
+- **Auto-update (toggle).** When enabled, Trove periodically checks the GitHub Releases feed and applies signed updates in the background. Updates are cryptographically verified before they are applied.
+- **Check for updates (button).** Triggers an immediate check, regardless of the auto-update toggle. Use this when you want the latest build right now.
+
+<Aside type="caution">
+Development builds produced by `pnpm build:app` ship **unsigned** and have auto-update disabled by design. If an installed copy reports it can't find updates, confirm it's a release build (from the [Releases page](https://github.com/Intevity/trove/releases)) and not a local dev build before treating it as a bug.
+</Aside>
+
+## Identity tagging
+
+Identity tagging stamps two resource attributes onto every signal Trove forwards, so your backend can attribute activity to a person:
+
+- **`user.name`** — a display name (for example, `Jane Doe`).
+- **`user.email`** — an email address (for example, `jane@example.com`).
+
+These attributes power the per-user views that engineering leads and finance care about — comparing harness usage across a team, and detecting **dead seats** (paid licenses with zero turns over a window). They are entirely optional and travel **only** to the backend you configured, alongside the rest of your telemetry.
+
+<Aside type="tip">
+Leave identity tagging blank if you want telemetry attributed by `harness.id` alone. You can set or change it at any time; new values apply to telemetry forwarded after you save.
+</Aside>
+
+## Where Trove stores its state
+
+Trove keeps all of its persistent state in a **single versioned JSON file**, `state.json`. It captures which harnesses and backends are enabled and what each patch wrote — never secrets, which live in the [OS keychain](/trove/docs/reference/privacy-security/). The schema is versioned and migrated in place across app versions, and the file never reaches outside your config directory.
+
+`state.json` lives in the same per-platform config directory as the generated `collector.yaml`:
+
+| Platform | Config directory |
+| --- | --- |
+| macOS | `~/Library/Application Support/com.intevity.trove/` |
+| Linux (XDG) | `~/.config/com.intevity.trove/` |
+| Windows | `%APPDATA%\com.intevity.trove\` |
+
+The bundled collector also writes a rotating log there (or under the platform's log directory) that feeds the **Logs** tab:
+
+| Platform | Collector log |
+| --- | --- |
+| macOS | `~/Library/Logs/com.intevity.trove/collector.log` |
+| Linux | `~/.local/state/com.intevity.trove/collector.log` |
+| Windows | `%LOCALAPPDATA%\com.intevity.trove\Logs\collector.log` |
+
+`collector.log` is size-capped at 10 MiB with a single rotation to `collector.log.1`.
+
+<Aside type="caution">
+Don't hand-edit `state.json` to fit a stale binary — in particular, never bump its `schemaVersion` by hand. A schema change must come from a rebuilt app; editing the file to match a mismatched version corrupts state.
+</Aside>
+
+<CardGrid>
+  <LinkCard
+    title="Privacy & security"
+    href="/trove/docs/reference/privacy-security/"
+    description="What identity tags travel with, and where credentials are stored."
+  />
+  <LinkCard
+    title="Troubleshooting"
+    href="/trove/docs/reference/troubleshooting/"
+    description="Fixes for detection, data-flow, health-pill, and collector issues."
+  />
+</CardGrid>

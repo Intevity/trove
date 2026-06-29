@@ -1,0 +1,75 @@
+---
+title: The Logs tab
+description: The Logs tab streams the live tail of the bundled collector's log file straight into the Trove UI, so you can diagnose a red health pill or a missing harness without leaving the app.
+sidebar:
+  order: 5
+---
+
+import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+The **Logs** tab is Trove's debugging window. It streams the live tail of the
+bundled [OpenTelemetry Collector](/trove/docs/features/the-collector/)'s log file
+directly into the UI, so when something looks off — a backend's health pill goes
+red, or a harness you enabled isn't showing up — you can read the collector's own
+account of what's happening without hunting through files on disk.
+
+<Aside type="note">Screenshot coming soon.</Aside>
+
+## What you're looking at
+
+The collector writes to a single rotating log file that Trove owns. The Logs tab
+tails that file live, so new lines appear as the collector emits them. This is the
+raw collector output — receiver startup, exporter sends and retries, config
+reloads, and any errors — not a Trove-curated summary.
+
+The log file is size-capped (10 MiB) with a single rotation to a `.1` file, so it
+never grows without bound. It lives in your platform's standard logs directory:
+
+| Platform | Location |
+| --- | --- |
+| macOS | `~/Library/Logs/com.intevity.trove/collector.log` |
+| Linux | `~/.local/state/com.intevity.trove/collector.log` |
+| Windows | `%LOCALAPPDATA%\com.intevity.trove\Logs\collector.log` |
+
+## What to look for
+
+The Logs tab is most useful when paired with a symptom from another tab:
+
+- **A red or amber health pill on the [Platforms tab](/trove/docs/features/platforms/).**
+  Look for exporter error lines naming that backend's component — a TLS handshake
+  failure, a refused connection, or an auth rejection usually points straight at a
+  wrong endpoint or a stale credential.
+- **An enabled harness that never lights up on [Overview](/trove/docs/features/overview/).**
+  Check whether the collector logged an accepted OTLP batch for that harness. No
+  receipt means the signal isn't reaching the collector (a harness-side config
+  issue); a receipt with no downstream delivery points at an exporter.
+- **A collector that won't stay up.** A crash loop shows the supervisor's restart
+  attempts; the line just before each exit typically names the cause (a missing
+  binary, a port already in use, or a malformed config after a mapping edit).
+
+<Aside type="tip">
+Exporter errors for a backend whose container or service is simply *down* are
+expected and harmless — bring the destination back up and the retries succeed.
+The lines worth acting on are the ones that persist after the destination is
+known-healthy.
+</Aside>
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Platforms"
+    href="/trove/docs/features/platforms/"
+    description="Match a log error to the backend health pill that flagged it."
+  />
+  <LinkCard
+    title="The collector"
+    href="/trove/docs/features/the-collector/"
+    description="Understand the sidecar whose output you're reading."
+  />
+  <LinkCard
+    title="Overview"
+    href="/trove/docs/features/overview/"
+    description="The collector and sidecar diagnostics summary."
+  />
+</CardGrid>

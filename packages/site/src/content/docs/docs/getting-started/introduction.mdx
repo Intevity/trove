@@ -1,0 +1,72 @@
+---
+title: Introduction
+description: What Trove is, the telemetry problem it solves across your AI coding tools, and how it keeps every signal local, reversible, and yours.
+sidebar:
+  order: 1
+---
+
+import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+**One tray app. Every AI coding tool on your machine. Unified OpenTelemetry, flowing to your observability backend; never ours.**
+
+Trove is an open-source desktop tray app, by Intevity, for macOS, Windows, and Linux. It auto-detects the AI coding harnesses installed on your machine, patches each one's telemetry config to emit OpenTelemetry (OTLP), normalizes those signals through a bundled OpenTelemetry Collector, and forwards a single unified stream to the observability backend you already own. It is built on Tauri 2, React 18, and TypeScript, MIT licensed, and currently at version 0.5.0.
+
+## The problem
+
+AI coding tools have a telemetry problem. Every vendor invented its own dialect, every install hides the wiring in a different config file, and the data either stays trapped in a proprietary dashboard or gets handed to the vendor as a side effect of using their CLI.
+
+If half your team is on Claude Code, the other half is on Cursor plus GitHub Copilot CLI, and the platform team trialed Codex last week, you are left with four separate vendor dashboards — or four blanks. There is no single place to compare token usage, cost per turn, error rates, or which paid seats are even being used.
+
+## The solution
+
+Trove turns that scattered, per-vendor mess into one normalized stream you control. The flow is always the same four steps:
+
+1. **Auto-detect.** On launch, Trove sweeps the standard install paths and surfaces every supported harness it finds on disk.
+2. **Patch.** When you enable a harness, Trove writes a small, reversible managed region into that tool's config so it emits OTLP to a local endpoint.
+3. **Normalize.** A bundled OpenTelemetry Collector sidecar receives every harness's signals on `127.0.0.1`, tags them by `harness.id`, and maps them onto a consistent cross-vendor schema (the Tier A metrics).
+4. **Fan out.** The collector forwards one unified stream to whichever observability backend you configured — SigNoz, Honeycomb, Datadog, Grafana Cloud, New Relic, your own self-hosted collector, or any generic OTLP endpoint.
+
+The result: every span, metric, and log your team generates lands in a backend you control, typed consistently, attributed by harness, and auditable end to end.
+
+### Native OTel where it exists, best-effort where it doesn't
+
+Some harnesses already speak OpenTelemetry. Claude Code, Gemini CLI, Codex, Qwen Code, OpenCode, and Cursor IDE emit OTLP natively — Trove just flips the right flags and routes them through. Harnesses that do not emit OTel natively (such as Cline, Aider, and GitHub Copilot CLI) get **best-effort coverage**: Trove installs lightweight watchers (filesystem monitors) and shell-rc wrappers that derive equivalent OTLP records from their on-disk logs. The derived records answer the same queries as their native peers.
+
+<Aside type="tip">
+See the full list and coverage tier for each of the 17 supported harnesses on the [Harnesses reference](/trove/docs/reference/harnesses/).
+</Aside>
+
+## The trust stance
+
+Trove is built so that adopting it never means trusting a new vendor with your data. Four pillars:
+
+- **Localhost-only.** The bundled collector listens on `127.0.0.1` and forwards exclusively to the endpoint you set. No telemetry, no analytics, no crash reporting — Trove never phones home.
+- **Credentials in your OS keychain.** Backend tokens, API keys, and ingest secrets live in the macOS Keychain, Windows Credential Manager, or Linux Secret Service. Never in plaintext JSON, never in env files, never in logs.
+- **Reversible, auditable patches.** Every config change Trove makes is wrapped in a sentinel-bracketed managed region. Diff it, audit it, and revert it byte-for-byte with one click. What was written is captured in a single versioned `state.json`.
+- **MIT-licensed and fully open source.** Every line — the Rust core, the React UI, the custom OpenTelemetry Collector build, and every harness adapter — is auditable.
+
+<Aside type="note">
+Trove forwards telemetry only toward the backend you configured. It has no SaaS layer and no Trove-controlled endpoint that could change its mind about pricing or data-sharing policies next quarter.
+</Aside>
+
+## Who Trove is for
+
+- **Engineering leads** get one pane of glass across mixed-harness teams — every signal carries a `harness.id` resource attribute, so tools are directly comparable in one query.
+- **Finance, ops, and platform owners** get cross-vendor cost normalization and dead-seat detection: which paid licenses generate zero activity, by user, by week, by tool.
+- **Security and IT** get localhost-only networking, keychain credential storage, reversible auditable changes, and a fully open-source codebase.
+- **Individual developers** get one place to see all their AI tool usage, with the data staying on their own machine.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Install Trove"
+    description="Download for your OS and run the first-launch setup wizard."
+    href="/trove/docs/getting-started/installation/"
+  />
+  <LinkCard
+    title="Quick start"
+    description="From zero to flowing telemetry in about five minutes."
+    href="/trove/docs/getting-started/quick-start/"
+  />
+</CardGrid>

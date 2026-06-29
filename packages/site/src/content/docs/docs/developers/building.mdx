@@ -1,0 +1,178 @@
+---
+title: Building from source
+description: Prerequisites and the full build flow for Trove — Node 24, pnpm 10, the Rust/Tauri toolchain, Go for the collector, and the pnpm build, build:app, and build:collector commands.
+sidebar:
+  order: 3
+---
+
+import { Steps, Aside, Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+
+Trove is open source under the MIT license. This page gets you from a fresh
+clone to a running desktop build.
+
+## Prerequisites
+
+| Tool       | Version  | Why                                                                  |
+| ---------- | -------- | ------------------------------------------------------------------- |
+| **Node.js** | ≥ 24     | Runs the workspace tooling. Use `nvm use` — `.nvmrc` pins it.        |
+| **pnpm**    | ≥ 10     | The workspace package manager. Install via Corepack.                 |
+| **Rust**    | stable   | Compiles the Tauri core. Install with `rustfmt` and `clippy`.        |
+| **Go**      | ≥ 1.23   | Only needed to build the collector sidecar (`pnpm build:collector`). |
+
+You'll also need the platform-specific Tauri system dependencies — see the
+[Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/) for
+macOS, Windows, and Linux.
+
+<Aside type="tip">
+Enable pnpm through Corepack so the version matches the workspace:
+
+```bash
+corepack enable && corepack prepare pnpm@latest --activate
+```
+</Aside>
+
+## Clone and bootstrap
+
+<Steps>
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/Intevity/trove.git
+   cd trove
+   ```
+
+2. Use the pinned Node version and install dependencies:
+
+   ```bash
+   nvm use
+   pnpm install
+   ```
+
+   The first `pnpm install` also installs the [lefthook](https://lefthook.dev/)
+   git hooks via the `prepare` script — Prettier + ESLint on staged files at
+   commit time, and `pnpm typecheck && pnpm test` at push time.
+
+3. Build the workspace packages the app imports from their `dist/`:
+
+   ```bash
+   pnpm build
+   ```
+
+   This compiles `@trove/shared`, `@trove/collector-presets`, and the rest.
+   Skip it on a fresh clone and the app fails to resolve them.
+
+</Steps>
+
+## Build the collector sidecar
+
+Trove bundles a **custom** OpenTelemetry Collector binary built with
+[ocb](https://opentelemetry.io/docs/collector/extend/ocb/). You build it once
+per platform; both steps are gitignored outputs, so every contributor builds
+locally for their host.
+
+<Steps>
+
+1. Build the binary (≈ 1–2 min on first run — it downloads and compiles the
+   collector components):
+
+   ```bash
+   pnpm build:collector
+   ```
+
+   `scripts/build-collector.sh` resolves your host Rust target triple,
+   installs the pinned `ocb` via `go install` if it isn't already on `PATH`,
+   and writes the binary to
+   `resources/otelcol/dist/<triple>/trove-otelcol[.exe]`.
+
+2. Stage the binary where Tauri's `externalBin` resolver expects it:
+
+   ```bash
+   pnpm bundle:sidecar
+   ```
+
+   This copies the binary into
+   `packages/app/src-tauri/binaries/trove-otelcol-<triple>[.exe]`. Tauri
+   strips the suffix at bundle time, so the runtime sees a plain
+   `trove-otelcol` next to the app executable.
+
+</Steps>
+
+<Aside type="caution">
+The app can't spawn the collector until **both** `build:collector` and
+`bundle:sidecar` have run at least once on the current host. If `tauri:dev`
+starts but the collector never goes healthy, that's the usual cause.
+</Aside>
+
+## Run the app
+
+<Tabs>
+  <TabItem label="Dev (hot reload)">
+
+  Boot the desktop app with the Vite dev server and Rust hot reload:
+
+  ```bash
+  pnpm --filter @trove/app tauri:dev
+  ```
+
+  </TabItem>
+  <TabItem label="Local dev build">
+
+  Produce an installable local build (unsigned). This is the standard loop
+  after a UI change:
+
+  ```bash
+  pnpm build:app
+  ```
+
+  `build:app` runs `scripts/build-app.mjs`, which builds an unsigned bundle,
+  installs it, and relaunches the app.
+
+  </TabItem>
+</Tabs>
+
+## Production build
+
+To produce signed, distributable bundles, the Tauri build runs directly:
+
+```bash
+pnpm build:app:release   # pnpm -F app tauri build
+```
+
+<Aside type="caution">
+`build:app:release` blocks on the signing-key prompt and is meant for
+release work, not the dev loop. For day-to-day iteration use
+`pnpm build:app`. Releases themselves run through CI — see
+[Releasing](/trove/docs/developers/releasing/).
+</Aside>
+
+Release outputs land in
+`packages/app/src-tauri/target/release/bundle/`:
+
+| Platform | Output                      |
+| -------- | --------------------------- |
+| macOS    | `macos/Trove.app`, `.dmg`   |
+| Linux    | `.deb`, `.rpm`, `.AppImage` |
+| Windows  | `.msi`, NSIS installer      |
+
+## Run the checks
+
+Before opening a PR, run the same checks CI runs:
+
+```bash
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+cargo clippy --manifest-path packages/app/src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path packages/app/src-tauri/Cargo.toml
+```
+
+See [Testing](/trove/docs/developers/testing/) for the coverage gate and
+[Contributing](/trove/docs/developers/contributing/) for the PR conventions.
+
+<LinkCard
+  title="Testing"
+  href="/trove/docs/developers/testing/"
+  description="Vitest, coverage, and the ≥95% shared-schema gate."
+/>

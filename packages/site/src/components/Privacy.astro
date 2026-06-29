@@ -1,0 +1,77 @@
+---
+// Trust section: the privacy and security guarantees that make Trove safe to run
+// on a work machine. Static, icon-led. All icon names resolve through
+// Icon.astro's path map. Copy is grounded in the product facts: localhost-only
+// forwarding, OS keychain credentials, byte-for-byte reversible managed regions,
+// never phones home, and MIT-licensed auditable source.
+import Icon from './Icon.astro';
+
+const repo = 'https://github.com/Intevity/trove';
+
+const points = [
+  {
+    icon: 'eye-off',
+    title: 'Localhost only',
+    body: 'The bundled OpenTelemetry Collector binds to 127.0.0.1 and forwards exclusively to the endpoint you configure. Nothing is exposed to the network.',
+  },
+  {
+    icon: 'key',
+    title: 'Credentials in the OS keychain',
+    body: 'Backend tokens live in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Never in plaintext JSON, never in env files, never logged.',
+  },
+  {
+    icon: 'rotate-ccw',
+    title: 'Reversible managed regions',
+    body: 'Every config patch is wrapped in a sentinel-bracketed managed region you can diff, audit, and revert byte-for-byte in one click. No orphaned env vars.',
+  },
+  {
+    icon: 'shield-check',
+    title: 'Never phones home',
+    body: 'Trove sends your telemetry only to the backend you choose, never to Trove or Intevity. No analytics, no crash reporting, no third-party SDK calling out.',
+  },
+];
+---
+
+<section id="privacy" class="has-aurora">
+  <span class="section-aurora" aria-hidden="true"></span>
+
+  <div class="section">
+    <div class="mx-auto mb-14 max-w-2xl text-center">
+      <p class="section-label">Private by design</p>
+      <h2 class="mt-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+        Your data never leaves your machine
+      </h2>
+      <p class="mt-4 text-base leading-relaxed text-muted">
+        Trove is the plumbing, not the destination. The collector runs locally, credentials stay in
+        the system keychain, and every change it makes to your tools is auditable and reversible.
+      </p>
+    </div>
+
+    <div class="grid gap-5 sm:grid-cols-2">
+      {
+        points.map((p) => (
+          <div class="glass-card flex gap-4 p-6">
+            <span class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-tile bg-brand/12 text-brand ring-1 ring-brand/20">
+              <Icon name={p.icon} size={22} />
+            </span>
+            <div>
+              <h3 class="text-base font-semibold text-foreground">{p.title}</h3>
+              <p class="mt-2 text-sm leading-relaxed text-muted">{p.body}</p>
+            </div>
+          </div>
+        ))
+      }
+    </div>
+
+    <div class="mt-8 flex flex-col items-center gap-3 text-center">
+      <p class="text-sm text-muted">
+        MIT licensed and fully open source. Read every line of the collector config, the patch
+        logic, and the state model.
+      </p>
+      <a href={repo} class="btn-ghost" target="_blank" rel="noopener noreferrer">
+        <Icon name="github" size={18} />
+        Audit the source on GitHub
+      </a>
+    </div>
+  </div>
+</section>

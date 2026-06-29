@@ -1,0 +1,117 @@
+---
+title: Project structure
+description: A tour of the Trove pnpm monorepo — packages/app (Tauri + React), packages/shared (typed schemas and IPC), packages/collector-presets (backend YAML), packages/site (this docs site), plus scripts/, resources/, and documentation/.
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+Trove is a [pnpm](https://pnpm.io/) workspace. The `pnpm-workspace.yaml` at
+the repo root globs `packages/*`, and a handful of top-level directories hold
+the build tooling, the collector source, and the docs.
+
+```
+trove/
+├─ packages/
+│  ├─ app/                 # the Tauri 2 desktop app (Rust core + React UI)
+│  ├─ shared/              # @trove/shared — typed schemas, constants, IPC messages
+│  ├─ collector-presets/   # @trove/collector-presets — per-backend YAML templates
+│  └─ site/                # the marketing site + this Starlight docs site
+├─ scripts/                # build, bundle, release, and dev tooling
+├─ resources/              # ocb manifest + hook implementations bundled into the app
+├─ documentation/          # contributor-facing design docs and runbooks
+├─ terraform/              # the S3 + OIDC auto-update infrastructure
+├─ package.json            # workspace root scripts (build, test, lint, build:app …)
+├─ pnpm-workspace.yaml
+├─ vitest.config.ts        # the shared-package coverage gate
+└─ eslint.config.ts        # flat ESLint config for the whole workspace
+```
+
+## `packages/app` — the desktop app
+
+The Tauri application. It has two halves:
+
+- **`src/`** — the React 18 + TypeScript UI (`@trove/app`). Components,
+  hooks, and the entry point that renders the six [dashboard
+  tabs](/trove/docs/features/dashboard/). Built with Vite (`vite.config.ts`),
+  type-checked with `tsc`, and exercised end-to-end with Playwright (`e2e/`).
+- **`src-tauri/`** — the Rust core. This is where harness detection
+  (`detect/`), the safety contract and adapters (`safety/`, `adapters/`),
+  keychain access (`secrets/`), collector supervision (`collector/`), the
+  mapping engine (`mappings/`), and the IPC command handlers (`ipc/`) live.
+  `tauri.conf.json` declares the sidecar via `externalBin` and the bundle
+  resources.
+
+<Aside type="note">
+The React UI never touches the OS directly — it calls typed IPC commands and
+lets the Rust core enforce the [safety
+contract](/trove/docs/developers/architecture/#config-patching-atomic-and-reversible).
+</Aside>
+
+## `packages/shared` — the typed contract
+
+`@trove/shared` is the single source of truth that both the Rust core (via
+generated types) and the React UI import from its `dist/`:
+
+- **`schemas.ts`** — the Zod schemas, including the `Backend` union and per-
+  preset metadata.
+- **`constants.ts`** — workspace-wide constants such as the `PRESETS` array.
+- **`ipc-messages.ts`** — the IPC command and event shapes.
+
+It carries its own colocated `*.test.ts` files and is the package the
+[coverage gate](/trove/docs/developers/testing/) is enforced against.
+
+## `packages/collector-presets` — backend YAML
+
+`@trove/collector-presets` holds the collector configuration templates under
+`templates/*.yaml` — one per [supported backend](/trove/docs/features/platforms/).
+When you pick a backend in the wizard, Trove codegens `collector.yaml` from
+the matching template plus your stored credentials.
+
+## `packages/site` — the website
+
+This package. It's an [Astro](https://astro.build/) project that hosts both
+the hand-built marketing homepage (`src/pages/`) and the
+[Starlight](https://starlight.astro.build/) documentation you're reading now
+(`src/content/docs/docs/**`). It deploys to GitHub Pages under the `/trove`
+base path.
+
+## Top-level directories
+
+| Directory        | What's in it                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| `scripts/`       | `build-app.mjs`, `build-collector.sh`, `bundle-sidecar.ts`, the release helpers (`assemble-latest-json.mjs`, `notary-*`), and dev utilities like `otlp-tap.py`. |
+| `resources/`     | The `otelcol/manifest.yaml` ocb build manifest and the `hooks/` driver implementations bundled into the app.   |
+| `documentation/` | Contributor design docs and runbooks — `architecture.md`, `releasing.md`, `adding-a-harness.md`, and the harness × platform matrix. |
+| `terraform/`     | The S3 update channel and GitHub OIDC role used by the [release pipeline](/trove/docs/developers/releasing/).   |
+
+## Root scripts
+
+The workspace `package.json` exposes the commands you'll use most:
+
+| Command                | What it does                                                            |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `pnpm build`           | Recursively builds every workspace package (`pnpm -r build`).           |
+| `pnpm test`            | Runs Vitest with coverage against the gated packages.                   |
+| `pnpm typecheck`       | `tsc --noEmit` across every package.                                    |
+| `pnpm lint`            | ESLint over the whole workspace.                                        |
+| `pnpm build:collector` | Builds the OpenTelemetry Collector sidecar binary.                      |
+| `pnpm bundle:sidecar`  | Stages the built binary into the Tauri `binaries/` dir.                 |
+| `pnpm build:app`       | Builds the desktop app for the local dev loop.                          |
+
+See [Building from source](/trove/docs/developers/building/) for the full
+setup flow.
+
+<CardGrid>
+  <LinkCard
+    title="Architecture"
+    href="/trove/docs/developers/architecture/"
+    description="How the Rust core, React UI, and collector fit together."
+  />
+  <LinkCard
+    title="Building from source"
+    href="/trove/docs/developers/building/"
+    description="Prereqs and the build commands these packages expose."
+  />
+</CardGrid>

@@ -1,0 +1,112 @@
+---
+title: Troubleshooting
+description: Fixes for the common Trove issues — a harness not detected, no data flowing, a health pill stuck red or amber, the collector not starting, and credential problems.
+sidebar:
+  order: 5
+---
+
+import { Aside, Steps, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+Most Trove problems fall into one of five buckets. Work top-to-bottom within the relevant section; each fix is ordered from most to least likely.
+
+## A harness isn't detected
+
+Trove sweeps the standard install paths for every supported harness **on launch**. If a tool you have installed isn't on the Harnesses tab:
+
+<Steps>
+
+1. **Confirm the tool is actually installed where Trove looks.** Trove checks each harness's standard config/binary location. Tools installed to a non-standard prefix may not be found.
+
+2. **Relaunch Trove.** Detection runs at startup, so a tool installed *after* Trove was already running won't appear until the next launch. Quit from the tray and reopen.
+
+3. **Check the coverage tier.** Some harnesses are **setup-guide** tier (Junie CLI, Droid, Kimi Code CLI, Devin, ForgeCode) — Trove can't auto-patch them yet and shows guided instructions instead of an Enable toggle. See [Supported harnesses](/trove/docs/reference/supported-harnesses/).
+
+4. **Update the harness.** A few tools only gained native OTel in recent versions (for example, OpenAI Codex CLI requires 0.130+). Older builds won't expose the config block Trove patches.
+
+</Steps>
+
+## No data is flowing
+
+You enabled a harness but nothing reaches your backend. After enabling, the row's telemetry pill should turn green within about 5 seconds and the Overview Data flow chart should go live.
+
+<Steps>
+
+1. **Generate some activity.** Telemetry only flows when the harness does work. Run a prompt or a turn in the tool, then watch the pill.
+
+2. **Check the harness is still enabled.** Open the Harnesses tab and confirm the toggle is on and the managed region is intact. If you edited the harness's config by hand, re-toggle to rewrite the managed region.
+
+3. **Check the collector is healthy.** See [The collector won't start](#the-collector-wont-start) below — if the sidecar isn't up, nothing forwards.
+
+4. **Check the backend's health pill.** A red or amber pill on the Platforms tab means the collector *is* receiving but failing to export. Jump to [A health pill is red or amber](#a-health-pill-is-red-or-amber).
+
+5. **Watch the Logs tab.** The live collector tail shows OTLP batches arriving and exporters firing. If you see receipts but no exports, the problem is the backend; if you see neither, the problem is the harness.
+
+6. **For best-effort harnesses, give the watcher a moment.** Cline, Aider, and GitHub Copilot CLI derive OTLP from on-disk logs via a watcher or shell-rc wrapper. A brand-new shell may need to be reopened so the wrapper is sourced.
+
+</Steps>
+
+<Aside type="tip">
+Confused about whether the problem is upstream (harness) or downstream (backend)? The Logs tab is the fastest answer: receipts tagged with `harness.id=<id>` prove the harness is reaching the collector.
+</Aside>
+
+## A health pill is red or amber
+
+Each backend's 4-color pill is driven by the collector's own scrape metrics over a rolling 60-second window.
+
+- **Amber** — exporting, but with some recent send failures. Often transient (a backend hiccup, a brief network blip). If it clears on its own, ignore it.
+- **Red** — recent errors and **no** recent successes. This is the case Trove most wants you to catch: an exporter stuck retrying because of a bad endpoint or stale credentials.
+- **Gray** — no traffic observed yet in the window. Expected right after enabling, before any harness has done work.
+
+<Steps>
+
+1. **Click the row to expand the detail panel.** It shows the last error string and 60-second window counters — your single best diagnostic.
+
+2. **Verify the endpoint.** A wrong host/port leaves the exporter in retry-limbo (red). Re-check the endpoint against your backend's OTLP ingest URL, including the scheme and any required path (for example, OpenObserve's `/api/<organization>`).
+
+3. **Verify the credentials.** Expired or wrong tokens produce auth errors in the detail panel. Re-enter them; they're stored in your [OS keychain](/trove/docs/reference/privacy-security/).
+
+4. **For self-hosted backends, confirm the stack is up.** A local SigNoz/OpenObserve/Elastic container that's down shows as red. Trove auto-relaxes TLS for loopback endpoints, so a cloud-style TLS error against `localhost` usually means the wrong port, not a cert problem.
+
+</Steps>
+
+## The collector won't start
+
+The bundled OpenTelemetry Collector runs as a supervised sidecar. Trove probes its health endpoint at `http://127.0.0.1:13133/health` and restarts it if it goes down.
+
+<Steps>
+
+1. **Check the Logs tab.** Startup errors from the collector surface there. A config error in the generated `collector.yaml` will name the offending section.
+
+2. **Check for a port conflict.** The collector binds loopback OTLP receivers and a health endpoint on `127.0.0.1:13133`. Another process already holding one of those ports prevents startup — stop the other process or restart your machine.
+
+3. **Restart Trove.** Quit from the tray and reopen; the supervisor re-spawns the sidecar from a clean state.
+
+4. **As a last resort, reset config.** If `collector.yaml` is corrupt, removing it from the [config directory](/trove/docs/reference/settings/#where-trove-stores-its-state) makes Trove regenerate it from your saved `state.json` on next launch.
+
+</Steps>
+
+<Aside type="caution">
+Don't hand-edit `state.json` to work around a startup problem, and never bump its `schemaVersion` by hand to match a stale binary — that corrupts state. Re-run the configuration through the UI instead.
+</Aside>
+
+## Credentials problems
+
+- **A backend keeps failing auth after you re-entered the key.** Make sure you clicked **Save** — credentials are written to the keychain on save, not on keystroke. Then watch the pill recover.
+- **You don't see your credential in any plaintext file.** That's by design. Trove stores secrets only in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service); `state.json` records only that a backend is configured.
+- **On Linux, secrets aren't persisting.** Trove uses the Secret Service (libsecret). Ensure a keyring daemon (such as GNOME Keyring) is running and unlocked for your session.
+- **You want to fully clear a credential.** Disabling a backend keeps its secret so you can re-enable instantly; use **Remove** to clear it from the keychain.
+
+## Still stuck?
+
+<CardGrid>
+  <LinkCard
+    title="Open an issue"
+    href="https://github.com/Intevity/trove/issues"
+    description="Trove is open source — file a bug with your Logs-tab output (secrets are never logged)."
+  />
+  <LinkCard
+    title="Privacy & security"
+    href="/trove/docs/reference/privacy-security/"
+    description="How credentials, patches, and forwarding actually work."
+  />
+</CardGrid>

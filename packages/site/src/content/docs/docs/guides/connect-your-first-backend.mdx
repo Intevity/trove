@@ -1,0 +1,142 @@
+---
+title: Connect your first backend
+description: Pick an observability backend, enter your ingest credentials (stored in the OS keychain), and watch the health pill turn green — your first end-to-end Trove pipeline in a few minutes.
+sidebar:
+  order: 1
+---
+
+import { Steps, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+A backend (Trove also calls it a **platform**) is the observability
+destination you already own — where your spans, metrics, and logs land.
+Trove forwards everything there and **nowhere else**: the collector binds
+to `127.0.0.1` and exports only to the endpoint you configure. Your
+telemetry never reaches Trove or Intevity.
+
+This guide gets one backend connected and verified. Once the health pill
+is green, every harness you enable afterward flows straight to it.
+
+## Before you start
+
+You need the ingest details for an observability backend you control.
+Trove ships first-class presets for 15 destinations — SigNoz, Grafana
+Cloud, Honeycomb, Datadog, New Relic, Splunk Observability, Dynatrace,
+Elastic, OpenSearch, OpenObserve, ClickStack, Chronosphere, and Sentry —
+plus **Generic OTLP** for any other OTLP-compatible endpoint and **Local
+Collector** passthrough for a collector you already run.
+
+Each preset knows the right OTLP endpoint shape and which credential it
+needs (an ingest key, an API token, or nothing for a local loopback
+endpoint). Have that value handy from your backend's settings before you
+begin.
+
+<Aside type="tip">
+If you just want to see data flow without signing up for anything, choose
+**Local Collector** or **Generic OTLP** pointed at a collector running on
+your machine. No credentials, no cloud account.
+</Aside>
+
+## Add the backend
+
+<Steps>
+
+1. Open Trove from the system tray and select the **Platforms** tab.
+
+   ![The Trove Platforms tab, showing backend presets and per-row health pills](/trove/screenshots/platforms.png)
+
+2. Choose your backend from the preset list (for example, **Honeycomb**
+   or **SigNoz**). Trove pre-fills the endpoint format and shows only the
+   fields that preset actually requires.
+
+3. Enter the **OTLP endpoint** for your backend. Cloud presets usually
+   pre-fill the host; you confirm the region or your account's ingest
+   host. For a self-hosted backend, enter the host and port you exposed
+   (for example a loopback gRPC endpoint like `localhost:14317`).
+
+   <Aside type="note">
+   Trove auto-detects loopback endpoints (`localhost`, `127.0.0.1`,
+   `::1`) and relaxes TLS for them so a local stack works out of the box.
+   Cloud endpoints keep TLS on.
+   </Aside>
+
+4. Paste your **ingest credential** (API key / ingest token). Trove
+   writes it to the OS keychain — macOS Keychain, Windows Credential
+   Manager, or the Linux Secret Service — **never** to a plaintext config
+   file. The value lives in secure OS storage and Trove reads it only
+   when generating the collector's runtime config.
+
+5. **Save** the backend. Trove regenerates the bundled collector's
+   `collector.yaml` with an exporter for this destination and reloads the
+   collector. Expect a brief (1–3 second) reload while the new pipeline
+   comes up.
+
+</Steps>
+
+## Verify the health pill turns green
+
+Each backend row in the Platforms tab carries a colored **health pill**
+driven by the collector's live exporter counters and error stream:
+
+- **Gray** — no telemetry has been sent yet. This is normal immediately
+  after saving, before any harness emits.
+- **Green (pulsing)** — batches are being accepted by your backend.
+  You're connected.
+- **Amber** — some batches are succeeding and some are failing. Check the
+  expanded row detail for the recent error.
+- **Red** — the exporter has a recent error and no recent successes
+  (typically a wrong endpoint or a stale credential stuck in retry).
+
+<Steps>
+
+1. Generate a little traffic so there's something to forward. The
+   fastest way is to [enable a harness](/trove/docs/guides/enable-a-harness/)
+   you already use, then run one prompt through it.
+
+2. Back on the **Platforms** tab, watch the row. Within a few seconds of
+   the first batch, the pill should move from gray to **green**.
+
+3. Click the row to expand the inline detail panel. It shows 60-second
+   window counters (batches sent / failed) and the last error string, if
+   any.
+
+</Steps>
+
+<Aside type="tip">
+No green after a minute or two? Open the **Logs** tab and watch the live
+collector tail. A red pill plus an exporter error line there usually
+points at a wrong endpoint host/port or an ingest key that needs the
+right scope. Fix the value on the Platforms tab and Trove reloads the
+collector automatically.
+</Aside>
+
+## What you've built
+
+You now have a localhost-only pipeline: harness → bundled OTel Collector
+→ your backend. The credential sits in your OS keychain, the collector
+forwards only to your endpoint, and the whole patch is reversible. From
+here you can add more harnesses, normalize their signals into Trove's
+cross-vendor Tier A schema, or fan the same stream out to several
+backends at once.
+
+<CardGrid>
+  <LinkCard
+    title="Enable a harness"
+    href="/trove/docs/guides/enable-a-harness/"
+    description="Turn on OTLP for one of your AI coding tools and confirm it's flowing."
+  />
+  <LinkCard
+    title="Send to multiple backends"
+    href="/trove/docs/guides/multi-backend-fan-out/"
+    description="Fan the same telemetry out to several destinations at once."
+  />
+  <LinkCard
+    title="Customize mappings"
+    href="/trove/docs/guides/customize-mappings/"
+    description="Map each harness's raw signals onto the normalized Tier A schema."
+  />
+  <LinkCard
+    title="Platforms reference"
+    href="/trove/docs/features/platforms/"
+    description="Every supported backend and what each one needs."
+  />
+</CardGrid>

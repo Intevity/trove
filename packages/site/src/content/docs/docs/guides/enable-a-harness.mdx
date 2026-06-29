@@ -1,0 +1,176 @@
+---
+title: Enable a harness
+description: Turn on OpenTelemetry for one of your AI coding tools, see exactly what Trove writes into its config (the sentinel-bracketed managed region), confirm OTLP is flowing, and revert it byte-for-byte when you're done.
+sidebar:
+  order: 2
+---
+
+import { Steps, Aside, Tabs, TabItem, LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+A **harness** is an AI coding tool on your machine — a signal source.
+Trove auto-detects the harnesses you have installed (17 are supported,
+from Claude Code and Gemini CLI to Cursor, Cline, Aider, and GitHub
+Copilot CLI) and can turn telemetry on for each one with a single toggle.
+
+Enabling a harness does one of two things depending on how that tool
+reports data:
+
+- **Native OTel harnesses** (Claude Code, Gemini CLI, Codex, Qwen,
+  OpenCode, Cursor IDE) already speak OTLP. Trove just flips the right
+  env/config flags so they point at the local collector.
+- **Best-effort harnesses** (Cline, Aider, GitHub Copilot CLI) don't emit
+  OTel natively. Trove installs a lightweight **watcher** (a filesystem
+  monitor) and/or a shell-rc **wrapper** that derives equivalent OTLP
+  records from the tool's on-disk logs. Those derived records answer the
+  same queries as their native peers.
+
+Either way the change is **atomic, idempotent, and reversible**.
+
+## Enable it
+
+<Steps>
+
+1. Open Trove and go to the **Harnesses** tab. Each detected tool appears
+   as a row with a coverage badge and an enable/disable toggle.
+
+   ![The Trove Harnesses tab listing auto-detected tools with per-row toggles and coverage badges](/trove/screenshots/harnesses.png)
+
+2. Find the harness you want and flip its toggle **on**.
+
+3. Trove writes the patch to that harness's config file (or shell rc, for
+   wrapper-based harnesses). The write is atomic — temp file, fsync,
+   rename — and the original is backed up first. Re-enabling an
+   already-enabled harness is a no-op.
+
+</Steps>
+
+<Aside type="tip">
+Connect a [backend](/trove/docs/guides/connect-your-first-backend/)
+first. With a destination configured, the moment a harness starts
+emitting you'll see its data land instead of piling up locally.
+</Aside>
+
+## What the managed-region patch looks like
+
+Trove never scatters edits through your config. Everything it writes goes
+inside a single **sentinel-bracketed managed region** — a clearly marked
+block fenced by Trove sentinel comments. Revert finds that exact block
+and removes it byte-for-byte, so your file returns to its pre-Trove
+state with nothing left behind.
+
+Conceptually, an edit to a harness config looks like this:
+
+```jsonc
+{
+  "your": "existing settings stay untouched",
+
+  // >>> TROVE MANAGED REGION — do not edit by hand <<<
+  "telemetry": {
+    "enabled": true,
+    "otlpEndpoint": "http://127.0.0.1:4317",
+    "otlpProtocol": "grpc"
+  }
+  // <<< END TROVE MANAGED REGION >>>
+}
+```
+
+For a **wrapper-based** harness the managed region lands in your shell rc
+(for example `~/.zshrc`) instead, defining a shell function that re-execs
+the real binary and logs one structured line per invocation, which the
+watcher turns into OTLP.
+
+<Aside type="caution">
+Don't hand-edit inside the managed block. If Trove detects that the
+region was modified by hand, it **refuses** to silently overwrite your
+change — it surfaces the conflict instead of clobbering your edit.
+Settings outside the block are always yours and are never touched.
+</Aside>
+
+## Confirm OTLP is flowing
+
+<Steps>
+
+1. Run a single turn through the harness — one prompt, one response.
+
+   <Tabs>
+     <TabItem label="Claude Code">
+     ```bash
+     claude -p "say hi in one word"
+     ```
+     </TabItem>
+     <TabItem label="Gemini CLI">
+     ```bash
+     gemini --prompt "say hi in one word"
+     ```
+     </TabItem>
+     <TabItem label="Any harness">
+     Just use the tool normally for one quick interaction.
+     </TabItem>
+   </Tabs>
+
+2. Open the **Logs** tab and watch the live collector tail. You should
+   see an OTLP batch arrive tagged with this harness's
+   `harness.id` resource attribute.
+
+3. Switch to the **Overview** tab. The data-flow chart shows the harness
+   as an active source feeding the collector, and the **Platforms** tab's
+   health pill for your backend should pulse green.
+
+4. Confirm it landed at the destination by running a query in your
+   backend filtered on `harness.id` (for example
+   `harness.id = "claude-code"`). One recent row means the full path
+   works end to end.
+
+</Steps>
+
+<Aside type="note">
+Native-OTel harnesses read their telemetry config at process start, so a
+tool that was already running may need to be restarted to pick up the new
+flags. Wrapper-based harnesses pick up the new shell function in any new
+shell session.
+</Aside>
+
+## Disable and revert
+
+Turning a harness back off is the inverse of enabling it, and it's clean:
+
+<Steps>
+
+1. On the **Harnesses** tab, flip the harness's toggle **off**.
+
+2. Trove locates the sentinel-bracketed managed region and removes
+   exactly what it wrote — the file is restored byte-for-byte to its
+   pre-enable state. No orphaned env vars, no half-applied config, no CLI
+   that keeps POSTing to localhost after you thought you were done.
+
+3. For watcher/wrapper harnesses, Trove also stops the filesystem watcher
+   and removes the shell-function block from your rc file.
+
+</Steps>
+
+This reversibility is the whole point: every "Enable" is something you
+can take back with one click, which is exactly what makes it safe to try
+Trove across a whole team.
+
+<CardGrid>
+  <LinkCard
+    title="Connect your first backend"
+    href="/trove/docs/guides/connect-your-first-backend/"
+    description="Pick a destination and verify the health pill turns green."
+  />
+  <LinkCard
+    title="Customize mappings"
+    href="/trove/docs/guides/customize-mappings/"
+    description="Shape this harness's raw signals into the Tier A schema."
+  />
+  <LinkCard
+    title="Harnesses reference"
+    href="/trove/docs/features/harnesses/"
+    description="The full list of supported tools and their coverage tiers."
+  />
+  <LinkCard
+    title="Add identity tags"
+    href="/trove/docs/guides/add-identity-tags/"
+    description="Tag signals with user.name / user.email for team dashboards."
+  />
+</CardGrid>

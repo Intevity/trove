@@ -1,0 +1,78 @@
+---
+title: The Settings tab
+description: The Settings tab covers Trove's auto-update behavior, the check-for-updates control, and identity tagging — stamping user.name and user.email resource attributes onto every signal so you can attribute telemetry by person.
+sidebar:
+  order: 6
+---
+
+import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+The **Settings** tab holds Trove's app-level configuration: how it keeps itself
+up to date, and the optional identity overlay that stamps *who* generated each
+signal onto the telemetry stream.
+
+<Aside type="note">Screenshot coming soon.</Aside>
+
+## Auto-update
+
+Trove can keep itself current. The Settings tab exposes the auto-update toggle and
+a manual **Check for updates** control, so you can either let new versions arrive
+on their own or pull them on demand. Updates are delivered from Trove's public
+GitHub Releases — there's no SaaS account and no separate updater daemon to
+babysit.
+
+<Aside type="tip">
+Dev builds (the unsigned builds produced by a local `build:app`) disable
+auto-update by design. If you're running a build labeled "Trove Dev" and updates
+aren't being detected, that's expected — a signed release build is what receives
+auto-updates.
+</Aside>
+
+## Identity tagging
+
+Identity tagging is an **opt-in** overlay that adds two **resource attributes** to
+every signal Trove forwards:
+
+- `user.name`
+- `user.email`
+
+Because these are *resource* attributes — set once per harness session, not
+per-data-point — they scope a metric series to a person without inflating
+cardinality. Combined with the `harness.id` attribute every signal already
+carries, identity tagging is what powers the per-person, per-tool views your team
+cares about: which engineer is using which tool, and the **dead-seat detection**
+that surfaces paid licenses with zero activity.
+
+<Aside type="caution">
+Identity tagging attaches *your* name and email to telemetry that flows only to the
+backends *you* configured on the [Platforms tab](/trove/docs/features/platforms/).
+Trove never sends this — or any other data — to Trove or Intevity. It's off until
+you turn it on.
+</Aside>
+
+### How it lands in your backend
+
+Once enabled, your queries can group and filter on `user.name` / `user.email`
+exactly as they do on `harness.id`. A finance dashboard can roll cost up by person;
+an engineering dashboard can show per-engineer turn counts across a mixed-harness
+team — all from the same normalized [Tier A metrics](/trove/docs/features/tier-a-metrics/).
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Platforms"
+    href="/trove/docs/features/platforms/"
+    description="The backends your identity-tagged telemetry forwards to."
+  />
+  <LinkCard
+    title="Tier A metrics"
+    href="/trove/docs/features/tier-a-metrics/"
+    description="The metric series identity attributes scope."
+  />
+  <LinkCard
+    title="The collector"
+    href="/trove/docs/features/the-collector/"
+    description="Where the identity overlay is applied to the stream."
+  />
+</CardGrid>

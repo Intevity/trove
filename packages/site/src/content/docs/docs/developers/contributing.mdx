@@ -1,0 +1,141 @@
+---
+title: Contributing
+description: How to contribute to Trove — setup, the PR and commit conventions, adding a new harness adapter or backend preset, reporting bugs and security issues, and the code of conduct.
+sidebar:
+  order: 6
+---
+
+import { Steps, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+Trove is open source (MIT) and contributions are welcome. The loop is meant
+to be lightweight. This page covers the conventions; the
+[Building from source](/trove/docs/developers/building/) page covers the
+environment.
+
+## Code of Conduct
+
+This project adopts the [Contributor Covenant 2.1](https://github.com/Intevity/trove/blob/main/CODE_OF_CONDUCT.md).
+By participating, you agree to abide by it.
+
+## Before you start
+
+Set up your environment per [Building from source](/trove/docs/developers/building/),
+then confirm the local checks pass — they're the same ones CI runs:
+
+```bash
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+cargo clippy --manifest-path packages/app/src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path packages/app/src-tauri/Cargo.toml
+```
+
+`pnpm lint:fix` and `pnpm format` auto-fix what they can. The lefthook git
+hooks installed on your first `pnpm install` run a subset of these at commit
+and push time.
+
+## Commit messages
+
+Trove follows [Conventional Commits 1.0](https://www.conventionalcommits.org/en/v1.0.0/),
+in the imperative mood:
+
+```
+feat(adapters): add cursor-cli adapter
+fix(collector): restart sidecar on YAML reload
+docs(readme): clarify quickstart
+test(safety): cover read-only file case in atomic.rs
+```
+
+Squash trivial follow-ups before opening a PR.
+
+## Pull requests
+
+- **Keep PRs small** and focused on one concern.
+- **Keep CI green** — lint, typecheck, vitest, clippy, and cargo test must
+  all pass.
+- **Update tests in the same PR** as the code they cover.
+- **Update the docs** in the same PR when you change user-visible behavior
+  (the README, `documentation/`, the docs site, or wizard copy).
+
+## Adding a new harness adapter
+
+This is the most common contribution. An *adapter* is the piece of code that
+knows **where** a harness's config lives, **what shape** it's in, and **what
+keys** Trove needs to write. Everything else — atomicity, backup,
+idempotence, conflict detection, and revert — is shared and enforced for you.
+
+The full walkthrough, including a copy-pasteable template and the test suite
+contributors must satisfy, lives in
+[`documentation/adding-a-harness.md`](https://github.com/Intevity/trove/blob/main/documentation/adding-a-harness.md).
+The short version:
+
+<Steps>
+
+1. **Pick a `HarnessId` slug** in kebab-case (for example `acme-cli`) and a
+   config format (`Json`, `Jsonc`, `Toml`, or `Yaml`).
+
+2. **Write a thin adapter module** under
+   `packages/app/src-tauri/src/adapters/`. It declares a `const SPEC:
+   HarnessSpec` and delegates to `adapters::common`. Your adapter owns only
+   `build_region` (the bytes to write) and its tests.
+
+3. **Rely on the shared safety contract.** `adapters::common` provides the
+   atomic write, backup, sentinel-bracketed managed region, idempotent
+   apply, and byte-for-byte clean revert. You don't reimplement any of it.
+
+4. **Add an integration test** that drives the end-to-end signal path:
+   synthetic input → parser → OTLP shape assertions.
+
+</Steps>
+
+<Aside type="note">
+**Native-OTel vs best-effort.** Some harnesses emit OTLP natively, so the
+adapter just flips the right config flags. Others don't, so Trove installs a
+filesystem watcher or a shell-rc wrapper that derives OTLP records from the
+tool's logs. The adding-a-harness guide documents both patterns —
+including how to avoid shadowing a multi-purpose binary like `gh`.
+</Aside>
+
+When `HarnessId::has_adapter()` flips on, the UI's Enable / Disable button
+lights up automatically — there's no parallel hard-coded list on the
+TypeScript side to keep in sync.
+
+## Adding a new backend preset
+
+Backend presets are collector configuration templates under
+`packages/collector-presets/templates/`. To add one:
+
+<Steps>
+
+1. Add a new YAML template file for the backend.
+2. Register it in the wizard's preset list (the `PRESETS` array in
+   `@trove/shared`).
+3. Write an integration test that exercises a synthetic OTLP payload against
+   a stub of that backend.
+
+</Steps>
+
+## Reporting bugs
+
+Open a GitHub issue with your OS, the affected harness version(s), and a
+**redacted** excerpt of the collector log.
+
+## Reporting security issues
+
+Please do **not** open a public GitHub issue for a security problem. Use the
+disclosure channel described in
+[`SECURITY.md`](https://github.com/Intevity/trove/blob/main/SECURITY.md).
+
+<CardGrid>
+  <LinkCard
+    title="Project structure"
+    href="/trove/docs/developers/project-structure/"
+    description="Where adapters, presets, and the shared contract live."
+  />
+  <LinkCard
+    title="Testing"
+    href="/trove/docs/developers/testing/"
+    description="The coverage gate your PR has to clear."
+  />
+</CardGrid>

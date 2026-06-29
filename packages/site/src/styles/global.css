@@ -1,0 +1,383 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: light;
+
+    /* Semantic theme tokens — space-separated RGB triplets so Tailwind's
+       <alpha-value> substitution works on classes like `text-foreground/60`.
+       Mirrors the app (packages/app/src/index.css). */
+    --foreground: 0 0 0;
+    --muted: 99 99 102;
+    --border-subtle: 0 0 0;
+    --surface-overlay: 0 0 0;
+  }
+
+  :root.dark {
+    color-scheme: dark;
+    --foreground: 255 255 255;
+    --muted: 142 142 147;
+    --border-subtle: 255 255 255;
+    --surface-overlay: 255 255 255;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    /* iOS neutral canvas in light; the marketing site defaults to dark. */
+    background: #f2f2f7;
+    color: rgb(var(--foreground));
+  }
+
+  :root.dark body {
+    /* The marketing site is dark by default (Base.astro adds `.dark`). */
+    background: #1c1c1e;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 99px;
+  }
+  :root.dark ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+@layer components {
+  /* Glass card — light: white shadow card, dark: elevated dark surface. */
+  .glass-card {
+    @apply rounded-2xl bg-white shadow-card dark:bg-[#1e1e1e];
+  }
+
+  /* Section label — Apple "GROUPED SECTION HEADER" style, teal-tinted. */
+  .section-label {
+    @apply text-[11px] font-semibold uppercase tracking-widest text-brand;
+  }
+
+  /* Primary button — Trove teal pill, scaled up for landing-page CTAs. */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-brand px-6 py-3
+           text-sm font-semibold text-white transition-all hover:bg-brand-hover active:scale-95
+           disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  /* Ghost / secondary button. */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-border-subtle/15
+           px-6 py-3 text-sm font-semibold text-foreground/80 transition-all
+           hover:bg-foreground/5 active:scale-95;
+  }
+
+  /* Page section vertical rhythm. */
+  .section {
+    @apply mx-auto w-full max-w-6xl px-6 py-20 sm:py-28;
+  }
+}
+
+/* ===========================================================================
+   Hero ambient wash — restrained, trpc-style. Trove teal + cyan glow bleeding
+   from the top of the page over the dark background.
+   =========================================================================== */
+.hero-gradient {
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgba(45, 191, 184, 0.18) 0%, rgba(45, 191, 184, 0) 70%),
+    radial-gradient(40% 40% at 80% 10%, rgba(56, 224, 215, 0.13) 0%, rgba(56, 224, 215, 0) 70%);
+}
+
+/* Ambient wash drifting behind the whole hero. */
+.hero-gradient::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(45% 55% at 30% 15%, rgba(45, 191, 184, 0.1), rgba(45, 191, 184, 0) 70%),
+    radial-gradient(40% 50% at 75% 10%, rgba(56, 224, 215, 0.1), rgba(56, 224, 215, 0) 70%);
+  animation: hero-aurora 16s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+@keyframes hero-aurora {
+  0% {
+    transform: translate3d(-3%, 0, 0) scale(1);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate3d(3%, 2%, 0) scale(1.08);
+    opacity: 1;
+  }
+}
+
+/* Faint dot-grid behind the hero, masked to fade out toward the edges. Static. */
+.hero-gradient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(58% 58% at 50% 38%, #000 0%, transparent 76%);
+  mask-image: radial-gradient(58% 58% at 50% 38%, #000 0%, transparent 76%);
+}
+
+/* One-time entrance: hero copy and CTAs rise in, lightly staggered via inline delay. */
+.hero-rise {
+  opacity: 0;
+  animation: hero-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Soft teal glow on the primary CTA when hovered. */
+.cta-glow {
+  box-shadow: 0 0 0 0 rgba(45, 191, 184, 0);
+  transition: box-shadow 0.3s ease;
+}
+.cta-glow:hover {
+  box-shadow:
+    0 0 0 3px rgba(45, 191, 184, 0.25),
+    0 0 28px 4px rgba(45, 191, 184, 0.28);
+}
+
+/* ===========================================================================
+   Data-flow hub — the hero's signature animation. Dotted telemetry streams
+   travel left -> collector -> right; the collector core breathes; the source
+   and destination chips gently pulse.
+   =========================================================================== */
+
+/* The stage that holds the three columns and the connecting SVG. */
+.flow-stage {
+  position: relative;
+}
+
+/* Animated dotted stream paths/lines. Each carries a dasharray; the keyframe
+   walks the dashoffset so the dots appear to travel toward the collector. The
+   inbound (source -> collector) and outbound (collector -> destination) legs
+   share the keyframe; outbound legs set their own positive direction so dots
+   still read as flowing away from the core. */
+.flow-stream {
+  stroke: rgba(45, 191, 184, 0.55);
+  stroke-width: 2;
+  stroke-dasharray: 3 9;
+  stroke-linecap: round;
+  fill: none;
+  animation: stream-flow 1.4s linear infinite;
+  will-change: stroke-dashoffset;
+}
+.flow-stream--out {
+  stroke: rgba(56, 224, 215, 0.6);
+  animation: stream-flow-out 1.4s linear infinite;
+}
+@keyframes stream-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+@keyframes stream-flow-out {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+/* Same effect for any stream drawn as a gradient background strip rather than
+   an SVG stroke (background-position walk). */
+.flow-strip {
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(45, 191, 184, 0.7) 0 4px,
+    transparent 4px 12px
+  );
+  background-size: 24px 100%;
+  animation: stream-strip 1.4s linear infinite;
+  will-change: background-position;
+}
+@keyframes stream-strip {
+  to {
+    background-position: 24px 0;
+  }
+}
+
+/* The central collector core: scales and glows teal, breathing. */
+.collector-core {
+  animation: collector-pulse 3.4s ease-in-out infinite;
+  will-change: transform, box-shadow;
+}
+@keyframes collector-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 0 rgba(45, 191, 184, 0),
+      0 0 28px 4px rgba(45, 191, 184, 0.3);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow:
+      0 0 0 8px rgba(45, 191, 184, 0.08),
+      0 0 44px 10px rgba(45, 191, 184, 0.45);
+  }
+}
+
+/* Source / destination chips: gentle pulse so the endpoints feel alive. The
+   stagger is applied inline per chip (animation-delay) by the component. */
+.flow-node {
+  animation: node-glow 3s ease-in-out infinite;
+  will-change: opacity, box-shadow;
+}
+@keyframes node-glow {
+  0%,
+  100% {
+    opacity: 0.92;
+    box-shadow: 0 0 0 0 rgba(45, 191, 184, 0);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 18px 0 rgba(45, 191, 184, 0.28);
+  }
+}
+
+/* ===========================================================================
+   Section ambient glow — whisper-faint teal wash behind a section heading.
+   `isolation` keeps the z-index:-1 wash behind this section's own content.
+   =========================================================================== */
+.has-aurora {
+  position: relative;
+  isolation: isolate;
+}
+.section-aurora {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 520px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(56% 60% at 50% 42%, rgba(45, 191, 184, 0.11), transparent 72%),
+    radial-gradient(38% 50% at 68% 36%, rgba(56, 224, 215, 0.09), transparent 72%);
+  /* Soft-fade the band's top and bottom so the glow has no hard edge. */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 18%,
+    #000 64%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 64%, transparent 100%);
+  animation: section-aurora 22s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+@keyframes section-aurora {
+  0% {
+    transform: translate3d(-2%, 0, 0) scale(1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: translate3d(2%, -1.5%, 0) scale(1.06);
+    opacity: 1;
+  }
+}
+
+/* Mobile-only vertical flow connector. Below the `sm` breakpoint the horizontal
+   SVG streams are hidden and the diagram stacks vertically, so this teal dash
+   travels downward between the sources → collector → destinations groups to keep
+   the flow metaphor. */
+.mobile-stream {
+  position: relative;
+  width: 2px;
+  height: 32px;
+  margin: 0 auto;
+  border-radius: 2px;
+  background: rgba(45, 191, 184, 0.18);
+  overflow: hidden;
+}
+.mobile-stream::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -60%;
+  height: 60%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: linear-gradient(to bottom, transparent, #2dbfb8, transparent);
+  animation: mobile-stream-down 1.3s linear infinite;
+  will-change: top;
+}
+@keyframes mobile-stream-down {
+  from {
+    top: -60%;
+  }
+  to {
+    top: 100%;
+  }
+}
+
+/* ===========================================================================
+   Reduced motion: settle every animation (ported + new data-flow) to static.
+   =========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .hero-gradient::before,
+  .hero-rise,
+  .cta-glow,
+  .cta-glow:hover,
+  .flow-stream,
+  .flow-stream--out,
+  .flow-strip,
+  .collector-core,
+  .flow-node,
+  .section-aurora {
+    animation: none;
+    transition: none;
+  }
+  .hero-rise {
+    opacity: 1;
+    transform: none;
+  }
+  .cta-glow:hover {
+    box-shadow: none;
+  }
+  /* Keep the dotted streams visible but still, so the composition still reads. */
+  .flow-stream,
+  .flow-stream--out {
+    stroke-dashoffset: 0;
+  }
+  .collector-core {
+    box-shadow: 0 0 28px 4px rgba(45, 191, 184, 0.3);
+  }
+  .mobile-stream::after {
+    animation: none;
+    top: 20%;
+  }
+}
