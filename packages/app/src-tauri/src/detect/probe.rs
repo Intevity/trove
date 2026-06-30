@@ -208,19 +208,15 @@ mod tests {
     fn probe_path_in_searches_multiple_directories() {
         let first = tempdir().unwrap();
         let second = tempdir().unwrap();
-        let exe_name = if cfg!(windows) {
-            "gemini.exe"
-        } else {
-            "gemini"
-        };
+        let exe_name = if cfg!(windows) { "agy.exe" } else { "agy" };
         let exe = second.path().join(exe_name);
         fs::write(&exe, b"#!/bin/sh\nexit 0\n").unwrap();
         make_executable(&exe);
 
         let found = probe_path_in(
-            "gemini",
+            "agy",
             &[first.path().to_path_buf(), second.path().to_path_buf()],
         );
-        assert!(found.is_some(), "expected gemini found in second dir");
+        assert!(found.is_some(), "expected agy found in second dir");
     }
 }

@@ -112,7 +112,7 @@ pub struct MetricsSnapshotWire {
     /// side; the TS twin still does so for unit-test parity.
     pub overall_health: OverallHealth,
     /// Per-harness outgoing counts from the diag filter pipelines.
-    /// Keyed by harness suffix (e.g. `"gemini-cli"`). The `FlowChart`
+    /// Keyed by harness suffix (e.g. `"claude-code"`). The `FlowChart`
     /// subtracts successive snapshots to derive per-harness rates for
     /// span / metric / log lanes; only native-OTel emitters appear.
     pub diag_observations: std::collections::HashMap<String, SignalCountsWire>,

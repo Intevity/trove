@@ -112,7 +112,7 @@ fn save_then_load_is_byte_identical_for_each_backend_kind() {
 fn upsert_replaces_by_id_and_remove_targets_one_id() {
     let dir = tempdir().unwrap();
     upsert_harness_in(dir.path(), sample_config(HarnessId::ClaudeCode)).unwrap();
-    upsert_harness_in(dir.path(), sample_config(HarnessId::GeminiCli)).unwrap();
+    upsert_harness_in(dir.path(), sample_config(HarnessId::AntigravityCli)).unwrap();
     upsert_harness_in(dir.path(), sample_config(HarnessId::CodexCli)).unwrap();
     assert_eq!(load_from_dir(dir.path()).unwrap().harnesses.len(), 3);
 
@@ -129,10 +129,10 @@ fn upsert_replaces_by_id_and_remove_targets_one_id() {
         .unwrap();
     assert_eq!(claude.last_patched_at, "2026-05-08T01:02:03Z");
 
-    remove_harness_in(dir.path(), HarnessId::GeminiCli).unwrap();
+    remove_harness_in(dir.path(), HarnessId::AntigravityCli).unwrap();
     let state = load_from_dir(dir.path()).unwrap();
     assert_eq!(state.harnesses.len(), 2);
-    assert!(!state.harnesses.iter().any(|h| h.id == HarnessId::GeminiCli));
+    assert!(!state.harnesses.iter().any(|h| h.id == HarnessId::AntigravityCli));
 }
 
 #[test]

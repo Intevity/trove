@@ -24,7 +24,7 @@ How Trove captures a harness's telemetry depends on its **coverage tier**:
 | --- | --- | --- |
 | Claude Code | Native OTel | Built-in `OTEL_EXPORTER_OTLP_*` env vars |
 | Claude Desktop | Native OTel | Auto-detected via local audit log (no setup) |
-| Gemini CLI | Native OTel | Built-in OTel exporter |
+| Antigravity CLI | Native OTel | Antigravity hooks via `~/.gemini/antigravity-cli/hooks.json` |
 | OpenAI Codex CLI | Native OTel | Codex 0.130+ `[otel.exporter.otlp-http]` block |
 | OpenAI Codex (desktop) | Native OTel | Shares Codex CLI's `codex app-server` backend |
 | Qwen Code | Native OTel | Built-in OTel exporter |

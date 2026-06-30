@@ -694,7 +694,7 @@ mod tests {
     #[test]
     fn mapping_source_synthesize_with_inject_attributes_round_trips() {
         let s = MappingSource::SynthesizeFromNative {
-            native_metric: "gemini_cli.api.request.count".into(),
+            native_metric: "qwen_code.api.request.count".into(),
             target_metric: TierAMetric::Events.id(),
             attribute_map: BTreeMap::new(),
             inject_attributes: BTreeMap::from([
@@ -854,15 +854,18 @@ mod tests {
 
     #[test]
     fn migrate_coerces_legacy_error_kind_routing_and_retry_to_network() {
-        // Gemini-CLI's pre-v2 defaults injected error.kind=routing|retry
+        // The pre-v2 Gemini-CLI defaults injected error.kind=routing|retry
         // which the connector's closed-enum table never accepted. The
-        // migration coerces them to the canonical "network" bucket so
-        // the UI no longer surfaces them as validation errors.
+        // migration coerces them to the canonical "network" bucket so the
+        // UI no longer surfaces them as validation errors. Such legacy
+        // rows now live under `antigravity-cli` (the Gemini CLI successor)
+        // after the value-level harness-id rename migration runs first;
+        // the error.kind coercion still applies to them here.
         let mut state = MappingState {
             schema_version: 1,
             metrics: vec![],
             harnesses: vec![HarnessMapping {
-                harness_id: HarnessId::GeminiCli,
+                harness_id: HarnessId::AntigravityCli,
                 enabled: true,
                 sources: vec![
                     MappingSource::SynthesizeFromNative {
@@ -1070,13 +1073,13 @@ mod tests {
     #[test]
     fn harness_mapping_serializes_camel_case_fields() {
         let m = HarnessMapping {
-            harness_id: HarnessId::GeminiCli,
+            harness_id: HarnessId::AntigravityCli,
             enabled: true,
             sources: vec![],
             cost_overrides: BTreeMap::new(),
         };
         let json = serde_json::to_string(&m).unwrap();
-        assert!(json.contains("\"harnessId\":\"gemini-cli\""));
+        assert!(json.contains("\"harnessId\":\"antigravity-cli\""));
         assert!(json.contains("\"costOverrides\":{}"));
     }
 
@@ -1115,10 +1118,12 @@ mod tests {
             .iter()
             .map(|h| h.harness_id)
             .collect();
-        // Tier 1 (native-OTel) harnesses should be in this set;
-        // hook/watcher harnesses should not.
+        // Native-OTel harnesses should be in this set; hook/watcher
+        // harnesses should not. Antigravity CLI is a hook harness (it
+        // dropped Gemini CLI's native OTLP), so it must NOT appear.
         assert!(with_synth.contains(&HarnessId::ClaudeCode));
-        assert!(with_synth.contains(&HarnessId::GeminiCli));
+        assert!(with_synth.contains(&HarnessId::CodexCli));
+        assert!(!with_synth.contains(&HarnessId::AntigravityCli));
         assert!(!with_synth.contains(&HarnessId::CursorIde));
         assert!(!with_synth.contains(&HarnessId::Aider));
     }

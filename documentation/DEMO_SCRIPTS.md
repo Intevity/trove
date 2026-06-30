@@ -477,11 +477,11 @@ of the following appear on screen, or blur/crop them in post:
 - **Target duration:** 10-14 s
 - **Tab/screen:** Harnesses
 - **Preconditions/data state:** Native OTel harnesses present (Claude Code,
-  Gemini CLI, Codex CLI/desktop, Qwen Code, OpenCode, Cursor IDE) showing
+  Antigravity CLI, Codex CLI/desktop, Qwen Code, OpenCode, Cursor IDE) showing
   Telemetry on with no extra setup.
 - **Steps:**
   1. Start on Harnesses tab. Wait 1.0 s.
-  2. Hover 3 Native OTel rows in turn (e.g. Claude Code, Gemini CLI, Codex CLI),
+  2. Hover 3 Native OTel rows in turn (e.g. Claude Code, Qwen Code, Codex CLI),
      ~1.0 s each, so each shows Telemetry on and a clean detection subtitle.
   3. Enable one currently-disabled Native OTel harness; hold 1.5 s as it turns
      green instantly (Trove just flips the flag — no watcher).

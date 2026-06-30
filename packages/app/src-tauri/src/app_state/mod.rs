@@ -55,7 +55,15 @@ pub const STATE_FILENAME: &str = "state.json";
 
 /// Current schema version. Bumped any time the persisted shape changes.
 /// See module docs for the migration scaffold.
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+///
+/// v12 renames the `gemini-cli` harness id to `antigravity-cli` (Google
+/// discontinued Gemini CLI in favor of Antigravity CLI). Because
+/// [`crate::harness::HarnessId`] is a closed serde enum, a persisted
+/// `"gemini-cli"` would hard-fail typed deserialization, so the
+/// value-level shim [`migrate_rename_gemini_to_antigravity`] rewrites it
+/// (in `harnesses[].id`, `telemetryObserved` keys, and
+/// `mappings.harnesses[].harnessId`) before the typed parse.
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 
 /// Serde helper that defaults a `bool` field to `true`. Used for opt-out
 /// settings whose absence in a migrated document should be interpreted
@@ -517,6 +525,7 @@ pub fn load_from_dir(config_dir: &Path) -> Result<AppState, AppStateError> {
             migrate_backend_to_backends(&mut value);
             migrate_wrapper_format_yaml_to_shell(&mut value);
             migrate_remove_phantom_claude_desktop(&mut value);
+            migrate_rename_gemini_to_antigravity(&mut value);
             let mut state: AppState =
                 serde_json::from_value(value).map_err(|e| AppStateError::Parse {
                     reason: e.to_string(),
@@ -711,6 +720,60 @@ fn migrate_remove_phantom_claude_desktop(v: &mut serde_json::Value) {
             .unwrap_or("");
         std::path::Path::new(path).exists()
     });
+}
+
+/// v11 → v12: rename the `gemini-cli` harness id to `antigravity-cli`.
+///
+/// Google discontinued Gemini CLI in favor of Antigravity CLI (`agy`).
+/// [`crate::harness::HarnessId`] is a closed serde enum with no
+/// `#[serde(other)]`, so a persisted `"gemini-cli"` would make typed
+/// deserialization hard-fail (total-data-loss UX). This value-level shim
+/// rewrites every place the id is serialized, in the document, before
+/// the typed parse:
+///   - `harnesses[].id` (string value)
+///   - `telemetryObserved` map keys (the `BTreeMap<HarnessId, i64>` field)
+///   - `mappings.harnesses[].harnessId` (string value)
+///
+/// Idempotent: a document already on `antigravity-cli` is untouched. The
+/// migrated rows keep their old `gemini_cli.*` synthesize content if any
+/// (the inner `MappingState::migrate_to_current` + the default-backfill
+/// reconcile the actual rule shape afterward).
+fn migrate_rename_gemini_to_antigravity(v: &mut serde_json::Value) {
+    const OLD: &str = "gemini-cli";
+    const NEW: &str = "antigravity-cli";
+
+    // (1) harnesses[].id
+    if let Some(harnesses) = v.get_mut("harnesses").and_then(|h| h.as_array_mut()) {
+        for entry in harnesses.iter_mut() {
+            if entry.get("id").and_then(serde_json::Value::as_str) == Some(OLD) {
+                entry["id"] = serde_json::Value::String(NEW.to_string());
+            }
+        }
+    }
+
+    // (2) telemetryObserved map keys (HarnessId is the JSON object key)
+    if let Some(obj) = v
+        .get_mut("telemetryObserved")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        if let Some(val) = obj.remove(OLD) {
+            // Preserve the newer entry if both somehow exist.
+            obj.entry(NEW.to_string()).or_insert(val);
+        }
+    }
+
+    // (3) mappings.harnesses[].harnessId
+    if let Some(mh) = v
+        .get_mut("mappings")
+        .and_then(|m| m.get_mut("harnesses"))
+        .and_then(|h| h.as_array_mut())
+    {
+        for entry in mh.iter_mut() {
+            if entry.get("harnessId").and_then(serde_json::Value::as_str) == Some(OLD) {
+                entry["harnessId"] = serde_json::Value::String(NEW.to_string());
+            }
+        }
+    }
 }
 
 /// Heuristic for detecting shell rc paths in `configPath` strings. The
@@ -1171,7 +1234,7 @@ mod tests {
     fn default_is_current_schema_version_with_empty_state() {
         let s = AppState::default();
         assert_eq!(s.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 11);
+        assert_eq!(s.schema_version, 12);
         assert!(s.backends.is_empty());
         assert!(s.harnesses.is_empty());
         assert!(!s.auto_update_enabled);
@@ -1399,11 +1462,11 @@ mod tests {
         // one is added; the existing timestamp is preserved.
         let added = record_telemetry_observed_in(
             dir.path(),
-            [HarnessId::ClaudeDesktop, HarnessId::GeminiCli],
+            [HarnessId::ClaudeDesktop, HarnessId::AntigravityCli],
             1_715_999_999,
         )
         .unwrap();
-        assert_eq!(added, vec![HarnessId::GeminiCli]);
+        assert_eq!(added, vec![HarnessId::AntigravityCli]);
         let state = load_from_dir(dir.path()).unwrap();
         assert_eq!(
             state.telemetry_observed.get(&HarnessId::ClaudeDesktop),
@@ -1411,7 +1474,7 @@ mod tests {
             "existing timestamp must be preserved (sticky 'first observed')",
         );
         assert_eq!(
-            state.telemetry_observed.get(&HarnessId::GeminiCli),
+            state.telemetry_observed.get(&HarnessId::AntigravityCli),
             Some(&1_715_999_999)
         );
     }
@@ -1608,7 +1671,7 @@ mod tests {
                     "configPath": "/nonexistent/path/that/cannot/possibly/exist/abc123"
                 },
                 {
-                    "id": "gemini-cli",
+                    "id": "antigravity-cli",
                     "configPath": "/another/nonexistent/path"
                 }
             ]
@@ -1673,7 +1736,7 @@ mod tests {
         // Persist so we can inspect the on-disk representation.
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 11"));
+        assert!(on_disk.contains("\"schemaVersion\": 12"));
         // The harnesses list must not contain a claude-desktop entry.
         // Note: mappings.harnesses still carries a "claude-desktop" mapping
         // key (backfilled for all known IDs), so we check for the absence
@@ -1712,7 +1775,7 @@ mod tests {
         let original = AppState {
             schema_version: CURRENT_SCHEMA_VERSION,
             backends: vec![sample_signoz_instance()],
-            harnesses: vec![sample_harness(HarnessId::GeminiCli)],
+            harnesses: vec![sample_harness(HarnessId::AntigravityCli)],
             auto_update_enabled: false,
             launch_at_startup_enabled: true,
             identity: Identity::default(),
@@ -1803,7 +1866,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 11"));
+        assert!(on_disk.contains("\"schemaVersion\": 12"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1841,11 +1904,87 @@ mod tests {
         assert_eq!(state.schema_version, CURRENT_SCHEMA_VERSION);
         assert!(!state.auto_update_enabled);
         assert_eq!(state.harnesses.len(), 1);
+        // v11 → v12 rename: the legacy `"gemini-cli"` id must have been
+        // rewritten to `antigravity-cli` before the closed enum parsed it.
+        assert_eq!(state.harnesses[0].id, HarnessId::AntigravityCli);
         // Field carried through migration unchanged.
         assert_eq!(
             state.harnesses[0].trove_patch.last_written_region_payload,
             "{\"telemetry\":{}}"
         );
+    }
+
+    #[test]
+    fn gemini_cli_id_is_migrated_to_antigravity_cli_everywhere_and_round_trips() {
+        // A real pre-v12 state.json carrying the discontinued `gemini-cli`
+        // id in all three places it can appear: the harness row id, the
+        // telemetryObserved map key, and the mappings harnessId. The
+        // closed `HarnessId` enum has no `#[serde(other)]`, so without the
+        // value-level rename shim this load would hard-fail. Confirm it
+        // loads, every site is now `antigravity-cli`, and a save → reload
+        // round-trips cleanly (no `gemini-cli` survives on disk).
+        let dir = tempfile::tempdir().unwrap();
+        let pre_v12 = serde_json::json!({
+            "schemaVersion": 11,
+            "backend": null,
+            "harnesses": [
+                {
+                    "id": "gemini-cli",
+                    "enabled": true,
+                    "configPath": "/home/u/.gemini/settings.json",
+                    "lastPatchedAt": "2026-05-08T00:00:00Z",
+                    "trovePatch": {
+                        "managedBlockHash": "cccc",
+                        "fileHashAtLastWrite": "dddd",
+                        "format": "json",
+                        "lastWrittenRegionPayload": "{}"
+                    },
+                    "options": { "logUserPrompts": false, "customAttributes": {} }
+                }
+            ],
+            "autoUpdateEnabled": false,
+            "launchAtStartupEnabled": true,
+            "identity": { "enabled": false, "source": "auto", "name": "", "email": "" },
+            "telemetryObserved": { "gemini-cli": 1_715_000_000_i64 },
+            "mappings": {
+                "schemaVersion": 1,
+                "harnesses": [
+                    { "harnessId": "gemini-cli", "enabled": true, "sources": [], "costOverrides": {} }
+                ]
+            }
+        });
+        std::fs::write(
+            state_path_in(dir.path()),
+            serde_json::to_vec_pretty(&pre_v12).unwrap(),
+        )
+        .unwrap();
+
+        let state = load_from_dir(dir.path()).unwrap();
+
+        // (1) harness row id rewritten.
+        assert_eq!(state.harnesses[0].id, HarnessId::AntigravityCli);
+        // (2) telemetryObserved key rewritten (timestamp preserved).
+        assert_eq!(
+            state.telemetry_observed.get(&HarnessId::AntigravityCli),
+            Some(&1_715_000_000)
+        );
+        // (3) mappings harnessId rewritten.
+        assert!(state
+            .mappings
+            .harnesses
+            .iter()
+            .any(|h| h.harness_id == HarnessId::AntigravityCli));
+
+        // Round-trip: save, reload, and confirm no `gemini-cli` remains.
+        save_to_dir(dir.path(), &state).unwrap();
+        let on_disk = std::fs::read_to_string(state_path_in(dir.path())).unwrap();
+        assert!(
+            !on_disk.contains("gemini-cli"),
+            "no legacy gemini-cli id should survive a save: {on_disk}"
+        );
+        assert!(on_disk.contains("antigravity-cli"));
+        let reloaded = load_from_dir(dir.path()).unwrap();
+        assert_eq!(reloaded.harnesses[0].id, HarnessId::AntigravityCli);
     }
 
     #[test]
@@ -1860,7 +1999,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 11"));
+        assert!(on_disk.contains("\"schemaVersion\": 12"));
         assert!(on_disk.contains("\"autoUpdateEnabled\": false"));
     }
 
@@ -1952,7 +2091,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 11"));
+        assert!(on_disk.contains("\"schemaVersion\": 12"));
         assert!(on_disk.contains("\"mappings\""));
     }
 
@@ -2018,7 +2157,7 @@ mod tests {
     fn upsert_appends_new_ids() {
         let dir = tempfile::tempdir().unwrap();
         upsert_harness_in(dir.path(), sample_harness(HarnessId::ClaudeCode)).unwrap();
-        upsert_harness_in(dir.path(), sample_harness(HarnessId::GeminiCli)).unwrap();
+        upsert_harness_in(dir.path(), sample_harness(HarnessId::AntigravityCli)).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
         assert_eq!(state.harnesses.len(), 2);
     }
@@ -2035,11 +2174,11 @@ mod tests {
     fn remove_removes_only_the_targeted_id() {
         let dir = tempfile::tempdir().unwrap();
         upsert_harness_in(dir.path(), sample_harness(HarnessId::ClaudeCode)).unwrap();
-        upsert_harness_in(dir.path(), sample_harness(HarnessId::GeminiCli)).unwrap();
+        upsert_harness_in(dir.path(), sample_harness(HarnessId::AntigravityCli)).unwrap();
         remove_harness_in(dir.path(), HarnessId::ClaudeCode).unwrap();
         let state = load_from_dir(dir.path()).unwrap();
         assert_eq!(state.harnesses.len(), 1);
-        assert_eq!(state.harnesses[0].id, HarnessId::GeminiCli);
+        assert_eq!(state.harnesses[0].id, HarnessId::AntigravityCli);
     }
 
     #[test]
@@ -2130,7 +2269,7 @@ mod tests {
         let state = load_from_dir(dir.path()).unwrap();
         save_to_dir(dir.path(), &state).unwrap();
         let on_disk = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
-        assert!(on_disk.contains("\"schemaVersion\": 11"));
+        assert!(on_disk.contains("\"schemaVersion\": 12"));
         assert!(on_disk.contains("\"backends\""));
         assert!(!on_disk.contains("\"backend\":"));
     }

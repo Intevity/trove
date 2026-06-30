@@ -41,7 +41,7 @@ Sprint 1 ships everything to the right of the IPC boundary plus the supervisor t
 
 Direct OTLP from each harness is what every vendor's docs show today. It works at small scale, but it has real problems:
 
-- **Credential sprawl** — the user's API key would end up in `~/.claude/settings.json`, `~/.gemini/settings.json`, `~/.codex/config.toml`, the OpenCode plugin env, the Cursor hook scripts, and shell rc files. Rotating a key is then an archaeology project.
+- **Credential sprawl** — the user's API key would end up in `~/.claude/settings.json`, `~/.gemini/antigravity-cli/hooks.json`, `~/.codex/config.toml`, the OpenCode plugin env, the Cursor hook scripts, and shell rc files. Rotating a key is then an archaeology project.
 - **No buffering** — if the backend is down or rate-limited, telemetry from every harness is silently dropped at the source.
 - **No normalization** — every harness uses its own metric namespace; cross-tool dashboards are painful.
 - **No PII gate** — `OTEL_LOG_USER_PROMPTS=1` exists in multiple harnesses. A single redaction processor in one Collector is much safer than per-harness configs.
@@ -81,21 +81,22 @@ Trove emits two tiers of metrics through the local Collector:
   five metrics that every harness adapter contributes to. Cross-harness
   dashboards live here.
 - **Tier B — harness-native, passed through untouched.** Anthropic's
-  `claude_code.token.usage`, Gemini's `telemetry.*`, etc. flow straight
-  to the user's backend without renaming or reshaping. Drill-down
-  dashboards live here.
+  `claude_code.token.usage`, Qwen Code's `gemini_cli.*`, etc. flow
+  straight to the user's backend without renaming or reshaping.
+  Drill-down dashboards live here.
 
 A user-facing mapping system ships in Sprint 13 (see
 [`MAPPING_PLAN.md`](MAPPING_PLAN.md) — status: implemented). Every
 supported harness now contributes Tier A:
 
-- **Hook/watcher harnesses** (Cursor IDE/CLI, Cline, Aider,
-  Copilot-CLI) emit Tier A inline from their drivers. Cline's watcher
-  classifies each `ui_messages.json` entry by `say` type; the Aider
-  and Copilot-CLI wrappers each produce one `chat.turn` event +
-  duration histogram per invocation, plus an `errors` data point on a
-  non-zero exit.
-- **Native-OTel harnesses** (Claude Code, Codex CLI, Gemini CLI, Qwen
+- **Hook/watcher harnesses** (Antigravity CLI, Cursor IDE/CLI, Cline,
+  Aider, Copilot-CLI) emit Tier A inline from their drivers.
+  Antigravity's hook (like Cursor's) posts Tier A directly from the
+  bundled Node script; Cline's watcher classifies each
+  `ui_messages.json` entry by `say` type; the Aider and Copilot-CLI
+  wrappers each produce one `chat.turn` event + duration histogram per
+  invocation, plus an `errors` data point on a non-zero exit.
+- **Native-OTel harnesses** (Claude Code, Codex CLI, Qwen
   Code, OpenCode) synthesize Tier A via a collector
   `metricstransform/tierA-<harness>` processor injected by Trove on
   every reload. `action: insert` preserves the native Tier B metric on
@@ -143,13 +144,13 @@ can report tokens accurately; hooks have to estimate).
 
 ### Cost: exact vs estimated
 
-For native-OTel harnesses (claude-code, codex, gemini, qwen) and the
+For native-OTel harnesses (claude-code, codex, qwen) and the
 Cline watcher, token counts come from the harness itself and cost is
 **exact**: `cost.method = "exact"`.
 
-For hook-based harnesses (Cursor IDE/CLI) and wrapper-based ones
-(Aider, Copilot CLI, OpenCode), Trove only observes prompt/response
-byte length, not the upstream tokenizer's count. We approximate
+For hook-based harnesses (Antigravity CLI, Cursor IDE/CLI) and
+wrapper-based ones (Aider, Copilot CLI, OpenCode), Trove only observes
+prompt/response byte length, not the upstream tokenizer's count. We approximate
 tokens as `bytes / 4` (an industry-standard rough heuristic; accuracy
 ~70–90% for English/code) and multiply by a per-model rate table baked
 into the hook. Those points carry `cost.method = "estimated"`.

@@ -202,7 +202,7 @@ export const pillars: Pillar[] = [
         title: 'Native OTel passthrough',
         hook: 'Flip the flag, route the stream',
         description:
-          'Claude Code, Gemini CLI, Codex, Qwen, OpenCode, and Cursor IDE emit OTLP natively. Trove sets the right env and config flags and routes their signals straight through the collector.',
+          'Claude Code, Antigravity CLI, Codex, Qwen, OpenCode, and Cursor IDE emit OTLP natively. Trove sets the right env and config flags and routes their signals straight through the collector.',
         video: 'native-otel.mp4',
         poster: 'native-otel.svg',
         hasVideo: false,

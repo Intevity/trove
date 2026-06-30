@@ -9,13 +9,13 @@ import { Steps, Aside, Tabs, TabItem, LinkCard, CardGrid } from "@astrojs/starli
 
 A **harness** is an AI coding tool on your machine — a signal source.
 Trove auto-detects the harnesses you have installed (17 are supported,
-from Claude Code and Gemini CLI to Cursor, Cline, Aider, and GitHub
+from Claude Code and Antigravity CLI to Cursor, Cline, Aider, and GitHub
 Copilot CLI) and can turn telemetry on for each one with a single toggle.
 
 Enabling a harness does one of two things depending on how that tool
 reports data:
 
-- **Native OTel harnesses** (Claude Code, Gemini CLI, Codex, Qwen,
+- **Native OTel harnesses** (Claude Code, Antigravity CLI, Codex, Qwen,
   OpenCode, Cursor IDE) already speak OTLP. Trove just flips the right
   env/config flags so they point at the local collector.
 - **Best-effort harnesses** (Cline, Aider, GitHub Copilot CLI) don't emit
@@ -98,9 +98,9 @@ Settings outside the block are always yours and are never touched.
      claude -p "say hi in one word"
      ```
      </TabItem>
-     <TabItem label="Gemini CLI">
+     <TabItem label="Antigravity CLI">
      ```bash
-     gemini --prompt "say hi in one word"
+     agy -p "say hi in one word"
      ```
      </TabItem>
      <TabItem label="Any harness">

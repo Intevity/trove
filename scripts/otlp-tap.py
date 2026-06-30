@@ -4,7 +4,7 @@ otlp-tap.py — watch the Trove collector for incoming OTLP metric points.
 
 Polls the collector's Prometheus self-metrics endpoint every 2 s, diffs
 the per-pipeline counters, and prints a summary whenever new metric points
-arrive. Designed for smoke-testing watcher adapters (Droid, Gemini, etc.)
+arrive. Designed for smoke-testing watcher adapters (Droid, Antigravity, etc.)
 without restarting the collector or changing any endpoints.
 
 Usage:

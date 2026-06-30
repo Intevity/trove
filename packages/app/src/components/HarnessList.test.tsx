@@ -33,7 +33,7 @@ describe('HarnessList', () => {
     render(
       <HarnessList
         harnesses={[
-          row({ id: 'gemini-cli', detected: false, detectionMethod: null, configPath: null }),
+          row({ id: 'antigravity-cli', detected: false, detectionMethod: null, configPath: null }),
           row({ id: 'claude-code', detected: true }),
           row({ id: 'cline', detected: false, detectionMethod: null, configPath: null }),
           row({ id: 'aider', detected: true }),
@@ -45,7 +45,7 @@ describe('HarnessList', () => {
     expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
       'harness-row-claude-code',
       'harness-row-aider',
-      'harness-row-gemini-cli',
+      'harness-row-antigravity-cli',
       'harness-row-cline',
     ]);
   });
@@ -71,7 +71,7 @@ describe('HarnessList', () => {
       <HarnessList
         harnesses={[
           row({ id: 'claude-code', detected: true }),
-          row({ id: 'gemini-cli', detected: false, detectionMethod: null, configPath: null }),
+          row({ id: 'antigravity-cli', detected: false, detectionMethod: null, configPath: null }),
         ]}
         loading={false}
       />,
@@ -83,9 +83,9 @@ describe('HarnessList', () => {
     // Detected logo renders without the dimming filter classes.
     expect(claudeLogo.getAttribute('class')).not.toMatch(/grayscale/);
     // Undetected logo is dimmed.
-    const geminiLogo = screen.getByTestId('harness-logo-gemini-cli');
-    expect(geminiLogo.getAttribute('class')).toMatch(/grayscale/);
-    expect(geminiLogo.getAttribute('class')).toMatch(/opacity-/);
+    const antigravityLogo = screen.getByTestId('harness-logo-antigravity-cli');
+    expect(antigravityLogo.getAttribute('class')).toMatch(/grayscale/);
+    expect(antigravityLogo.getAttribute('class')).toMatch(/opacity-/);
   });
 
   it('renders one row per detected harness', () => {
@@ -93,13 +93,13 @@ describe('HarnessList', () => {
       <HarnessList
         harnesses={[
           row({ id: 'claude-code' }),
-          row({ id: 'gemini-cli', detected: false, detectionMethod: null, configPath: null }),
+          row({ id: 'antigravity-cli', detected: false, detectionMethod: null, configPath: null }),
         ]}
         loading={false}
       />,
     );
     expect(screen.getByTestId('harness-row-claude-code')).toBeDefined();
-    expect(screen.getByTestId('harness-row-gemini-cli')).toBeDefined();
+    expect(screen.getByTestId('harness-row-antigravity-cli')).toBeDefined();
   });
 
   it('shows the config path when detected via config-dir', () => {
@@ -153,14 +153,16 @@ describe('HarnessList', () => {
     expect(toggle.textContent).toBe('Enable');
   });
 
-  it('enables the gemini-cli toggle (Sprint 3 PR 3)', () => {
+  it('enables the antigravity-cli toggle (Sprint 3 PR 3)', () => {
     render(
       <HarnessList
-        harnesses={[row({ id: 'gemini-cli', configPath: '/home/me/.gemini/settings.json' })]}
+        harnesses={[
+          row({ id: 'antigravity-cli', configPath: '/home/me/.gemini/antigravity-cli/hooks.json' }),
+        ]}
         loading={false}
       />,
     );
-    const toggle = screen.getByLabelText('toggle-gemini-cli') as HTMLButtonElement;
+    const toggle = screen.getByLabelText('toggle-antigravity-cli') as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
     expect(toggle.textContent).toBe('Enable');
   });
@@ -242,7 +244,7 @@ describe('HarnessList', () => {
       <HarnessList
         harnesses={[
           row({ id: 'claude-code', telemetry: 'on' }),
-          row({ id: 'gemini-cli', telemetry: 'off' }),
+          row({ id: 'antigravity-cli', telemetry: 'off' }),
           row({
             id: 'qwen-code',
             telemetry: 'unknown',
@@ -255,7 +257,9 @@ describe('HarnessList', () => {
       />,
     );
     expect(screen.getByTestId('harness-telemetry-claude-code').textContent).toBe('Telemetry on');
-    expect(screen.getByTestId('harness-telemetry-gemini-cli').textContent).toBe('Telemetry off');
+    expect(screen.getByTestId('harness-telemetry-antigravity-cli').textContent).toBe(
+      'Telemetry off',
+    );
     expect(screen.getByTestId('harness-telemetry-qwen-code').textContent).toBe('Telemetry unknown');
   });
 

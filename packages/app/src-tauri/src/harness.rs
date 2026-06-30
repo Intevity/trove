@@ -14,7 +14,12 @@ use serde::{Deserialize, Serialize};
 pub enum HarnessId {
     ClaudeCode,
     ClaudeDesktop,
-    GeminiCli,
+    /// Google Antigravity CLI (`agy`), the successor to the discontinued
+    /// Gemini CLI. Antigravity dropped the native OTLP exporter Gemini CLI
+    /// had, so Trove integrates it as a Tier 2 hook harness (a Trove-shipped
+    /// hook bridge, like Cursor) rather than a native-OTEL settings patch.
+    /// The wire id is `antigravity-cli`.
+    AntigravityCli,
     CodexCli,
     /// `OpenAI` Codex desktop app (`/Applications/Codex.app`). Shares
     /// `~/.codex/config.toml` with the CLI — both invoke the same Rust
@@ -59,7 +64,7 @@ impl HarnessId {
         match self {
             Self::ClaudeCode => "Claude Code",
             Self::ClaudeDesktop => "Claude Desktop",
-            Self::GeminiCli => "Gemini CLI",
+            Self::AntigravityCli => "Antigravity CLI",
             Self::CodexCli => "OpenAI Codex CLI",
             Self::CodexDesktop => "OpenAI Codex",
             Self::QwenCode => "Qwen Code",
@@ -88,7 +93,7 @@ impl HarnessId {
         &[
             Self::ClaudeCode,
             Self::ClaudeDesktop,
-            Self::GeminiCli,
+            Self::AntigravityCli,
             Self::CodexCli,
             Self::CodexDesktop,
             Self::QwenCode,
@@ -120,7 +125,6 @@ impl HarnessId {
             Self::ClaudeCode,
             Self::ClaudeDesktop,
             Self::Droid,
-            Self::GeminiCli,
             Self::CodexCli,
             Self::CodexDesktop,
             Self::QwenCode,
@@ -150,10 +154,18 @@ impl HarnessId {
 
     /// Tier 2 harnesses — those that need a Trove-shipped hook or
     /// plugin instead of a native OTEL toggle. Sprint 7 PR 1 landed the
-    /// two Cursor variants; PR 2 appended `OpenCode`.
+    /// two Cursor variants; PR 2 appended `OpenCode`. Antigravity CLI
+    /// joined here when Google dropped Gemini CLI's native OTLP exporter:
+    /// it now rides a Trove-shipped hook bridge (see `antigravity_cli`),
+    /// exactly like the Cursor harnesses.
     #[must_use]
     pub fn tier_2() -> &'static [Self] {
-        &[Self::CursorIde, Self::CursorCli, Self::Opencode]
+        &[
+            Self::CursorIde,
+            Self::CursorCli,
+            Self::Opencode,
+            Self::AntigravityCli,
+        ]
     }
 
     /// Tier 3 harnesses — best-effort adapters that have no native OTEL
@@ -212,8 +224,8 @@ mod tests {
 
     #[test]
     fn deserializes_kebab_case() {
-        let id: HarnessId = serde_json::from_str("\"gemini-cli\"").unwrap();
-        assert_eq!(id, HarnessId::GeminiCli);
+        let id: HarnessId = serde_json::from_str("\"antigravity-cli\"").unwrap();
+        assert_eq!(id, HarnessId::AntigravityCli);
     }
 
     #[test]
@@ -229,7 +241,6 @@ mod tests {
                 HarnessId::ClaudeCode,
                 HarnessId::ClaudeDesktop,
                 HarnessId::Droid,
-                HarnessId::GeminiCli,
                 HarnessId::CodexCli,
                 HarnessId::CodexDesktop,
                 HarnessId::QwenCode,
@@ -238,14 +249,17 @@ mod tests {
     }
 
     #[test]
-    fn tier_2_contains_cursor_pair_then_opencode() {
+    fn tier_2_contains_cursor_pair_then_opencode_then_antigravity() {
         // Sprint 7 PR 1 landed the cursor pair; PR 2 appended Opencode.
+        // Antigravity CLI joined when Gemini CLI's native OTLP was dropped
+        // and it became a Trove-shipped hook harness.
         assert_eq!(
             HarnessId::tier_2(),
             &[
                 HarnessId::CursorIde,
                 HarnessId::CursorCli,
                 HarnessId::Opencode,
+                HarnessId::AntigravityCli,
             ]
         );
     }
@@ -310,7 +324,7 @@ mod tests {
         for id in [
             HarnessId::ClaudeCode,
             HarnessId::ClaudeDesktop,
-            HarnessId::GeminiCli,
+            HarnessId::AntigravityCli,
             HarnessId::CodexCli,
             HarnessId::CodexDesktop,
             HarnessId::QwenCode,

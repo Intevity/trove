@@ -24,7 +24,7 @@ exposes both paths through the same editor surface:
 
 ### Synthesis rules (native-OTel harnesses)
 
-Native-OTel harnesses (Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode)
+Native-OTel harnesses (Claude Code, Codex, Antigravity CLI, Qwen Code, OpenCode)
 already emit their own metrics. A **synthesis rule** tells the collector to
 *additively* derive a Tier A metric from one of those native signals — for example,
 turning Claude Code's `claude_code.session.count` into a `trove.harness.events`

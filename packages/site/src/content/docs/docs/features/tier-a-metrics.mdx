@@ -16,7 +16,7 @@ normalization layer that makes cross-vendor dashboards possible.
 ## Why normalization matters
 
 Every AI coding vendor invented its own telemetry dialect. Claude Code emits
-`claude_code.token.usage`; Gemini emits `telemetry.*`; Cursor emits hook events;
+`claude_code.token.usage`; Cursor and Antigravity CLI emit hook events;
 best-effort tools emit nothing at all until Trove derives records for them. Without
 a common schema, a dashboard that answers "cost per turn across all our tools" is
 impossible — you'd be joining five incompatible namespaces by hand.

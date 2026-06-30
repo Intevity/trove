@@ -17,7 +17,7 @@ read-side query) so we end up with a results matrix that gates release.
 Telemetry topology recap:
 
 ```
-Harness (claude, gemini, ...)
+Harness (claude, agy, ...)
    │  OTLP HTTP/protobuf
    ▼
 Trove's bundled collector (127.0.0.1:4318)   ← driven by the active preset
@@ -40,11 +40,11 @@ against installed binaries on the dev machine.
 
 ### 1a. Claude-drivable today (installed CLIs)
 
-| Harness id    | Binary                      | Smoke command Claude can run              |
-| ------------- | --------------------------- | ----------------------------------------- |
-| `claude-code` | `~/.local/bin/claude`       | `claude -p "say hi" --output-format text` |
-| `gemini-cli`  | `/opt/homebrew/bin/gemini`  | `gemini --prompt "say hi"`                |
-| `cursor-cli`  | `~/.local/bin/cursor-agent` | `cursor-agent -p "say hi"`                |
+| Harness id        | Binary                      | Smoke command Claude can run              |
+| ----------------- | --------------------------- | ----------------------------------------- |
+| `claude-code`     | `~/.local/bin/claude`       | `claude -p "say hi" --output-format text` |
+| `antigravity-cli` | `/opt/homebrew/bin/agy`     | `agy -p "say hi"`                         |
+| `cursor-cli`      | `~/.local/bin/cursor-agent` | `cursor-agent -p "say hi"`                |
 
 Per-test loop: operator toggles the harness ON in Trove for the active preset
 → Claude runs the smoke command → Claude verifies receipt + read-side query
@@ -165,7 +165,7 @@ Local stacks, easiest → heaviest:
 5. `elastic-local`
 6. `sentry-local`
 
-Within each stack: drive `claude-code` first, then `gemini-cli`, then
+Within each stack: drive `claude-code` first, then `antigravity-cli`, then
 `cursor-cli`, then operator drives `claude-desktop`, `cursor-ide`, `cline`.
 Cloud platforms run in any order once credentials are in hand.
 
@@ -213,7 +213,7 @@ in [`harness-platform-matrix.md`](harness-platform-matrix.md) per cell.
 |                     | grafana-local    | openobserve-local | hyperdx-local    | signoz-local | opensearch-local | elastic-local    | sentry-local     |
 | ------------------- | ---------------- | ----------------- | ---------------- | ------------ | ---------------- | ---------------- | ---------------- |
 | claude-code         | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
-| gemini-cli          | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
+| antigravity-cli     | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
 | cursor-cli          | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
 | claude-desktop (op) | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [ ] _(⊕)_        |
 | cursor-ide (op)     | [x]              | [x]               | [x]              | [x]          | [x]              | [x]              | [x]              |
@@ -256,7 +256,7 @@ operator doesn't have creds.
 **Will attempt this session, but each pairing blocks on operator toggling
 the harness in Trove and confirming:**
 
-- Phase D for the **three installed CLIs** (`claude-code`, `gemini-cli`,
+- Phase D for the **three installed CLIs** (`claude-code`, `antigravity-cli`,
   `cursor-cli`) × the four light stacks plus existing grafana-local. ~15
   cells.
 

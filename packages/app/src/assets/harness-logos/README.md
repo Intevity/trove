@@ -1,10 +1,11 @@
 # Harness logo assets
 
-Drop one SVG per harness here, named `<HarnessId>.svg` (e.g. `claude-code.svg`,
-`gemini-cli.svg`, `cursor-ide.svg`). `HarnessList.tsx` picks them up at build
+Drop one logo per harness here, named `<HarnessId>.svg` (e.g. `claude-code.svg`,
+`cursor-ide.svg`) or `<HarnessId>.png` for raster-only brand art (e.g.
+`aider.png`, `antigravity-cli.png`). `HarnessList.tsx` picks them up at build
 time via `import.meta.glob` and renders them in place of the default monogram
-tile for each row. Any harness ID without a matching file keeps the monogram
-fallback.
+tile for each row; SVG is preferred when both exist. Any harness ID without a
+matching file keeps the monogram fallback.
 
 Conventions:
 

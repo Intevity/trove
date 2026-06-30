@@ -20,7 +20,7 @@ Some harnesses emit OTLP themselves. For these, Trove's job is small: write a
 into the tool's config that turns on its OTLP export and points it at the local
 collector. The tool does the rest.
 
-**Native-OTel harnesses:** Claude Code, Gemini CLI, Codex (CLI and desktop),
+**Native-OTel harnesses:** Claude Code, Antigravity CLI, Codex (CLI and desktop),
 Qwen Code, OpenCode, and Cursor IDE. Claude Desktop is auto-detected via a local
 audit log with no setup.
 
@@ -75,7 +75,7 @@ badge so you know the data is genuine but incomplete.
 
 | Coverage | How Trove captures it | Events | Tokens | Cost | Examples |
 | --- | --- | --- | --- | --- | --- |
-| **Native OTel** | Flip the tool's OTLP flags | Accurate | Exact | `exact` | Claude Code, Gemini CLI, Codex, Qwen, OpenCode, Cursor IDE |
+| **Native OTel** | Flip the tool's OTLP flags | Accurate | Exact | `exact` | Claude Code, Antigravity CLI, Codex, Qwen, OpenCode, Cursor IDE |
 | **Partial** | Capture an observable subset of events | Subset only | — | — | Cursor CLI |
 | **Best effort** | Watchers + shell-rc wrappers derive OTLP | Reliable | Estimated | `estimated` | Cline, Aider, Copilot CLI |
 

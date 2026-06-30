@@ -222,7 +222,7 @@ mod tests {
         // probe lands, no harness contributes identity.
         for id in [
             HarnessId::ClaudeCode,
-            HarnessId::GeminiCli,
+            HarnessId::AntigravityCli,
             HarnessId::CodexCli,
             HarnessId::QwenCode,
             HarnessId::Opencode,

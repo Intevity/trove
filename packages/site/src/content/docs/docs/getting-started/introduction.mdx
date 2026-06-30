@@ -30,7 +30,7 @@ The result: every span, metric, and log your team generates lands in a backend y
 
 ### Native OTel where it exists, best-effort where it doesn't
 
-Some harnesses already speak OpenTelemetry. Claude Code, Gemini CLI, Codex, Qwen Code, OpenCode, and Cursor IDE emit OTLP natively — Trove just flips the right flags and routes them through. Harnesses that do not emit OTel natively (such as Cline, Aider, and GitHub Copilot CLI) get **best-effort coverage**: Trove installs lightweight watchers (filesystem monitors) and shell-rc wrappers that derive equivalent OTLP records from their on-disk logs. The derived records answer the same queries as their native peers.
+Some harnesses already speak OpenTelemetry. Claude Code, Antigravity CLI, Codex, Qwen Code, OpenCode, and Cursor IDE emit OTLP natively — Trove just flips the right flags and routes them through. Harnesses that do not emit OTel natively (such as Cline, Aider, and GitHub Copilot CLI) get **best-effort coverage**: Trove installs lightweight watchers (filesystem monitors) and shell-rc wrappers that derive equivalent OTLP records from their on-disk logs. The derived records answer the same queries as their native peers.
 
 <Aside type="tip">
 See the full list and coverage tier for each of the 17 supported harnesses on the [Harnesses reference](/trove/docs/reference/harnesses/).

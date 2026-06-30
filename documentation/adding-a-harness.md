@@ -61,7 +61,7 @@ Add the slug in two places:
 pub enum HarnessId {
     ClaudeCode,
     CodexCli,
-    GeminiCli,
+    AntigravityCli,
     QwenCode,
     AcmeCli,        // ← new
     // ...
@@ -408,7 +408,7 @@ them. The npm-reference path lands a working integration with a much
 narrower surface and matches the upstream README's install instructions.
 
 What stays normal: the adapter is shape-identical to the Tier 1
-JSON-merge adapters (`claude_code.rs` / `gemini_cli.rs`). The seven
+JSON-merge adapters (`claude_code.rs` / `qwen_code.rs`). The seven
 golden cases apply unchanged.
 
 ### When to use which pattern
@@ -427,10 +427,11 @@ golden cases apply unchanged.
 ## Where to look for inspiration
 
 - **JSON merge** — `adapters/claude_code.rs` (env block) or
-  `adapters/gemini_cli.rs` (telemetry object).
+  `adapters/qwen_code.rs` (telemetry object).
 - **TOML fenced block** — `adapters/codex_cli.rs`.
 - **Bundled hook + shared writer (Tier 2)** —
-  `adapters/cursor_common.rs` + `cursor_ide.rs` + `cursor_cli.rs`.
+  `adapters/cursor_common.rs` + `cursor_ide.rs` + `cursor_cli.rs`, or
+  `adapters/antigravity_cli.rs` (Antigravity CLI's hooks.json bridge).
 - **Npm-resolved plugin (Tier 2)** — `adapters/opencode.rs`.
 - **Shared scaffolding** — `adapters/common.rs` (read it once;
   understanding `HarnessSpec` and `working_value` makes everything

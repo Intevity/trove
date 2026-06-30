@@ -714,7 +714,6 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // but tagging is still safe (idempotent: same value either way).
         // Match on the wire-format id plus the unprefixed namespace.
         HarnessId::ClaudeCode => &["claude-code", "claude"],
-        HarnessId::GeminiCli => &["gemini-cli", "gemini"],
         HarnessId::QwenCode => &["qwen-code", "qwen"],
         // Codex's Rust backend emits with `service.name=codex-app-server`
         // (the binary name of the `codex app-server` process — same
@@ -767,6 +766,12 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
         // a session-file watcher), so they contribute no service.name
         // candidates — see the catch-all group below.
         HarnessId::CursorIde
+        // Antigravity CLI (`agy`) dropped Gemini CLI's native OTLP. Trove
+        // now bridges it via a hook script (see `antigravity_cli`) that
+        // POSTs Tier A metrics with `harness.id=antigravity-cli` set inline
+        // in the resource attributes — exactly like the Cursor IDE hook —
+        // so it claims no native service.name here.
+        | HarnessId::AntigravityCli
         | HarnessId::Cline
         // codex-desktop shares ~/.codex/config.toml with codex-cli and
         // drives the same Rust backend, so it has no distinct native
@@ -792,7 +797,7 @@ fn native_service_name_candidates(id: HarnessId) -> &'static [&'static str] {
 pub fn harness_id_suffix(id: HarnessId) -> &'static str {
     match id {
         HarnessId::ClaudeCode => "claude-code",
-        HarnessId::GeminiCli => "gemini-cli",
+        HarnessId::AntigravityCli => "antigravity-cli",
         HarnessId::CodexCli => "codex-cli",
         HarnessId::CodexDesktop => "codex-desktop",
         HarnessId::QwenCode => "qwen-code",
@@ -1939,7 +1944,7 @@ mod tests {
         // FlowChart depends on per-harness diag counts to animate the
         // active harness's lane only. Diag is emitted for every enabled
         // harness with native `service.name` candidates — Claude Code,
-        // Codex CLI, Gemini CLI, Qwen Code, OpenCode, and Claude Desktop,
+        // Codex CLI, Qwen Code, OpenCode, and Claude Desktop,
         // plus the wrapper harnesses (cursor-cli, aider, copilot-cli)
         // whose adapters emit OTLP with a known `service.name` and which
         // were added to the candidate list 2026-05-22 for defensive
@@ -1955,7 +1960,6 @@ mod tests {
         for suffix in [
             "claude-code",
             "codex-cli",
-            "gemini-cli",
             "qwen-code",
             "opencode",
             "claude-desktop",
@@ -2124,13 +2128,18 @@ mod tests {
         assert_eq!(out.matches("transform/harness-tag:").count(), 1);
         for expected in [
             "metricstransform/tierA-claude-code:",
-            "metricstransform/tierA-gemini-cli:",
             "metricstransform/tierA-codex-cli:",
             "metricstransform/tierA-qwen-code:",
         ] {
             assert_eq!(out.matches(expected).count(), 1, "missing {expected}");
         }
         assert_eq!(out.matches("metricstransform/tierA-opencode:").count(), 0);
+        // Antigravity CLI is a hook emitter (writes Tier A metrics inline,
+        // like Cursor), so it synthesizes nothing in the collector.
+        assert_eq!(
+            out.matches("metricstransform/tierA-antigravity-cli:").count(),
+            0
+        );
     }
 
     #[test]
@@ -2213,9 +2222,9 @@ mod tests {
         assert_eq!(out.matches(", resource/identity]").count(), 2);
         // Diag metrics pipelines are not touched.
         assert!(out.contains(
-            "metrics/diag-gemini-cli:\n      receivers: [otlp]\n      processors: [filter/diag-gemini-cli]"
+            "metrics/diag-claude-code:\n      receivers: [otlp]\n      processors: [filter/diag-claude-code]"
         ));
-        assert!(!out.contains("filter/diag-gemini-cli, cumulativetodelta"));
+        assert!(!out.contains("filter/diag-claude-code, cumulativetodelta"));
         // The collector self-telemetry `metrics:` block is left alone.
         assert!(out.contains("    metrics:\n      level: basic"));
         // Still valid YAML.

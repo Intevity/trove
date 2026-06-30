@@ -13,10 +13,20 @@ level of this folder. Use kebab-case names matching the harness:
 
 ```
 resources/hooks/
-├── cursor-otel-hook.cjs       # single-file Node hook (Cursor IDE / CLI)
-├── README.md                  # this file
-└── <future>/                  # future Tier 3 wrappers (Sprint 9)
+├── cursor-otel-hook.cjs            # /bin/sh node-resolution shim (Cursor IDE / CLI)
+├── cursor-otel-hook-impl.cjs       # the Cursor hook logic (OTLP metrics)
+├── antigravity-otel-hook.cjs       # /bin/sh node-resolution shim (Antigravity CLI / `agy`)
+├── antigravity-otel-hook-impl.cjs  # the Antigravity hook logic (OTLP metrics)
+├── README.md                       # this file
+└── <future>/                       # future Tier 3 wrappers
 ```
+
+Both hook families use the same two-file shape: a `/bin/sh` wrapper that
+resolves `node` under launchd's minimal PATH, plus a stdlib-only `-impl.cjs`
+that turns each agent event into Trove's Tier A OTLP metrics and POSTs them
+directly to the local collector (`127.0.0.1:4318`). Antigravity inherited
+Gemini CLI's Claude-Code-style hooks after Google dropped native OTLP, so it
+is bridged exactly like Cursor.
 
 A bundled hook should:
 

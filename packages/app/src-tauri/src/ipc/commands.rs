@@ -16,10 +16,9 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 use crate::adapters::{
-    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, claude_code, claude_desktop,
-    claude_desktop_watcher, cline, cline_watcher, codex_cli, codex_desktop, copilot_cli, cursor_cli,
-    cursor_ide, droid, droid_watcher, gemini_cli, gemini_watcher, opencode,
-    qwen_code,
+    ApplyOptions, PatchPreview, PreviewStatus, TrovePatch, aider, antigravity_cli, claude_code,
+    claude_desktop, claude_desktop_watcher, cline, cline_watcher, codex_cli, codex_desktop,
+    copilot_cli, cursor_cli, cursor_ide, droid, droid_watcher, opencode, qwen_code,
 };
 use crate::app_state::{
     self, AppState, BackendDraft, BackendInstance, HarnessConfig, backend_secret_accounts,
@@ -229,7 +228,9 @@ where
         HarnessId::ClaudeCode => claude_code::preview(home, options),
         HarnessId::CodexCli => codex_cli::preview(home, options),
         HarnessId::CodexDesktop => codex_desktop::preview(home, options),
-        HarnessId::GeminiCli => gemini_cli::preview(home, options),
+        HarnessId::AntigravityCli => {
+            antigravity_cli::preview(home, options, &resolve_resource(HarnessId::AntigravityCli)?)
+        }
         HarnessId::QwenCode => qwen_code::preview(home, options),
         HarnessId::CursorIde => {
             cursor_ide::preview(home, options, &resolve_resource(HarnessId::CursorIde)?)
@@ -305,7 +306,10 @@ pub async fn apply_patch(
         HarnessId::ClaudeCode => claude_code::apply(&home, &options),
         HarnessId::CodexCli => codex_cli::apply(&home, &options),
         HarnessId::CodexDesktop => codex_desktop::apply(&home, &options),
-        HarnessId::GeminiCli => gemini_cli::apply(&home, &options),
+        HarnessId::AntigravityCli => {
+            let hook = external_resource_path(&app, HarnessId::AntigravityCli)?;
+            antigravity_cli::apply(&home, &options, &hook)
+        }
         HarnessId::QwenCode => qwen_code::apply(&home, &options),
         HarnessId::CursorIde => {
             let hook = external_resource_path(&app, HarnessId::CursorIde)?;
@@ -676,7 +680,7 @@ pub fn revert_patch(app: tauri::AppHandle, harness_id: HarnessId) -> Result<(), 
         HarnessId::ClaudeCode => claude_code::revert(&home),
         HarnessId::CodexCli => codex_cli::revert(&home),
         HarnessId::CodexDesktop => codex_desktop::revert(&home),
-        HarnessId::GeminiCli => gemini_cli::revert(&home),
+        HarnessId::AntigravityCli => antigravity_cli::revert(&home),
         HarnessId::QwenCode => qwen_code::revert(&home),
         // Both Cursor harnesses share `~/.cursor/hooks.json`; either
         // adapter's revert removes the entire managed block. We keep
@@ -1402,9 +1406,10 @@ pub fn apply_mappings(
     if let Some(store) = app.try_state::<crate::mappings::MappingStateStore>() {
         store.publish(mappings);
     }
-    // Cursor hook is out-of-process JS — regenerate the script so the
-    // user's edits take effect on the next Cursor reload.
+    // Cursor + Antigravity hooks are out-of-process JS — regenerate their
+    // rule sidecars so the user's edits take effect on the next reload.
     let _ = crate::adapters::cursor_common::regenerate_hooks_for_rules(&app, &state.mappings);
+    let _ = crate::adapters::antigravity_cli::regenerate_hooks_for_rules(&app, &state.mappings);
     let enabled: Vec<BackendInstance> = state
         .backends
         .iter()
@@ -1658,7 +1663,7 @@ pub fn harness_config_path(id: HarnessId, home: &Path) -> PathBuf {
         HarnessId::ClaudeCode => claude_code::config_path(home),
         HarnessId::CodexCli => codex_cli::config_path(home),
         HarnessId::CodexDesktop => codex_desktop::config_path(home),
-        HarnessId::GeminiCli => gemini_cli::config_path(home),
+        HarnessId::AntigravityCli => antigravity_cli::config_path(home),
         HarnessId::QwenCode => qwen_code::config_path(home),
         // Both Cursor harnesses share `~/.cursor/hooks.json`. The
         // state.json entry records the same path under either id; the
@@ -1694,6 +1699,9 @@ fn external_resource_path(app: &tauri::AppHandle, id: HarnessId) -> Result<PathB
     })?;
     let rel: &[&str] = match id {
         HarnessId::CursorIde => &["resources", "hooks", "cursor-otel-hook.cjs"],
+        // Antigravity CLI (`agy`) bridges via a Trove-shipped Node hook,
+        // registered in `~/.gemini/antigravity-cli/hooks.json`.
+        HarnessId::AntigravityCli => &["resources", "hooks", "antigravity-otel-hook.cjs"],
         // cursor-cli no longer shares cursor-ide's hooks.json — Cursor's
         // hook system is IDE-only. See `adapters::cursor_cli` for the
         // wrapper-based replacement.
@@ -1745,10 +1753,11 @@ pub fn respawn_persisted_watchers(app: &tauri::AppHandle) {
         tracing::warn!("respawn_persisted_watchers: HOME unresolvable");
         return;
     };
-    // Seed the cursor hook sidecar so the first Cursor invocation after
-    // a relaunch reads the persisted rules — not the stale defaults
-    // from the bundled cjs script. Idempotent best-effort.
+    // Seed the cursor + antigravity hook sidecars so the first invocation
+    // after a relaunch reads the persisted rules — not the stale defaults
+    // from the bundled cjs scripts. Idempotent best-effort.
     let _ = crate::adapters::cursor_common::regenerate_hooks_for_rules(app, &state.mappings);
+    let _ = crate::adapters::antigravity_cli::regenerate_hooks_for_rules(app, &state.mappings);
     for harness in &state.harnesses {
         if !harness.enabled {
             continue;
@@ -1854,17 +1863,6 @@ fn spawn_tier3_watcher(
             ensure_log_parent(&log);
             Some(spawn_wrapper_log_watcher(log, options.clone(), id, mappings))
         }
-        // Gemini emits Tier B natively, but the chat-log watcher fills
-        // the gaps: per-turn `cost.usd` (metricstransform can't do
-        // per-model rate × token-count math) and reliable
-        // `tokens` / `turn.duration` with `model` labels, sourced from
-        // `~/.gemini/tmp/<proj>/chats/session-*.jsonl`.
-        HarnessId::GeminiCli => Some(gemini_watcher::spawn(
-            home.join(".gemini").join("tmp"),
-            options.clone(),
-            mappings,
-            gemini_watcher::DEFAULT_POLL_INTERVAL,
-        )),
         // Droid emits OTLP natively for tool / event metrics (Tier 1)
         // but the factory.ai SDK writes no token or cost data over that
         // path. The log watcher tails ~/.factory/logs/droid-log-single.log
@@ -1892,6 +1890,10 @@ fn spawn_tier3_watcher(
         | HarnessId::CodexCli
         | HarnessId::CodexDesktop
         | HarnessId::CursorIde
+        // Antigravity CLI is a hook harness: its bundled hook script POSTs
+        // Tier A metrics directly to the collector, so no supplemental
+        // watcher is needed (same as Cursor IDE).
+        | HarnessId::AntigravityCli
         | HarnessId::QwenCode
         | HarnessId::Opencode
         // Detection-only harnesses never spawn a watcher.

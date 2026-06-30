@@ -8,7 +8,7 @@ import type { Backend, HarnessId } from '@trove/shared';
 export const HARNESS_LABELS: Record<HarnessId, string> = {
   'claude-code': 'Claude Code',
   'claude-desktop': 'Claude Desktop',
-  'gemini-cli': 'Gemini CLI',
+  'antigravity-cli': 'Antigravity CLI',
   'codex-cli': 'OpenAI Codex CLI',
   'codex-desktop': 'OpenAI Codex',
   'qwen-code': 'Qwen Code',
@@ -61,7 +61,7 @@ export interface LogoFallback {
 export const HARNESS_LOGOS: Record<HarnessId, LogoFallback> = {
   'claude-code': { bg: '#CC785C', mark: 'C' },
   'claude-desktop': { bg: '#CC785C', mark: 'CD' },
-  'gemini-cli': { bg: '#1A73E8', mark: 'G' },
+  'antigravity-cli': { bg: '#1A73E8', mark: 'A' },
   'codex-cli': { bg: '#10A37F', mark: 'O' },
   'codex-desktop': { bg: '#10A37F', mark: 'O' },
   'qwen-code': { bg: '#FF6A00', mark: 'Q' },

@@ -7,10 +7,10 @@
       "pinnedVersion": "2.0.0",
       "active": true
     },
-    "gemini-cli": {
-      "source": "npm",
-      "package": "@google/gemini-cli",
-      "pinnedVersion": "0.1.0",
+    "antigravity-cli": {
+      "source": "github",
+      "package": "google-antigravity/antigravity-cli",
+      "pinnedVersion": "1.0.14",
       "active": true
     },
     "codex-cli": {

@@ -41,7 +41,7 @@ describe('HarnessId', () => {
     for (const id of [
       'claude-code',
       'claude-desktop',
-      'gemini-cli',
+      'antigravity-cli',
       'codex-cli',
       'qwen-code',
       'opencode',
@@ -376,12 +376,12 @@ describe('AppState', () => {
         metrics: [],
         harnesses: [
           {
-            harnessId: 'gemini-cli',
+            harnessId: 'codex-cli',
             enabled: true,
             sources: [
               {
                 kind: 'synthesize-from-native',
-                nativeMetric: 'gemini_cli.session.count',
+                nativeMetric: 'codex.session.count',
                 targetMetric: 'events',
                 attributeMap: {},
               },
@@ -392,7 +392,7 @@ describe('AppState', () => {
       },
     });
     expect(parsed.mappings.harnesses).toHaveLength(1);
-    expect(parsed.mappings.harnesses[0].harnessId).toBe('gemini-cli');
+    expect(parsed.mappings.harnesses[0].harnessId).toBe('codex-cli');
     expect(parsed.mappings.harnesses[0].sources[0].kind).toBe('synthesize-from-native');
   });
 
@@ -699,7 +699,7 @@ describe('IpcError', () => {
   });
 
   it('parses a harness-not-detected error', () => {
-    const err = { kind: 'harness-not-detected', id: 'gemini-cli' };
+    const err = { kind: 'harness-not-detected', id: 'antigravity-cli' };
     expect(IpcError.parse(err)).toEqual(err);
   });
 

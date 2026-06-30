@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const HarnessId = z.enum([
   'claude-code',
   'claude-desktop',
-  'gemini-cli',
+  'antigravity-cli',
   'codex-cli',
   'codex-desktop',
   'qwen-code',
@@ -594,7 +594,7 @@ export const MetricsSnapshotWire = z.object({
   unreachable: z.boolean(),
   overallHealth: OverallHealth,
   /** Per-harness outgoing counts from the collector's diag filter
-   *  pipelines. Keyed by harness suffix (e.g. `"gemini-cli"`); each
+   *  pipelines. Keyed by harness suffix (e.g. `"claude-code"`); each
    *  entry holds span / metric-point / log-record counters this run.
    *  Only populated for native-OTel emitters with `service.name`
    *  candidates; watcher-emitter harnesses are absent. Defaults to `{}`

@@ -47,7 +47,7 @@ For each harness, perform: apply → dashboard turns green → revert → dashbo
 
 - [ ] Claude Code
 - [ ] Claude Desktop
-- [ ] Gemini CLI
+- [ ] Antigravity CLI
 - [ ] Cursor IDE
 - [ ] Cursor CLI
 - [ ] Codex

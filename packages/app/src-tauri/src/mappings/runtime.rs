@@ -699,15 +699,15 @@ mod tests {
     #[test]
     fn observe_double_sum_emits_as_double() {
         // cost.usd default emission via a fake rule.
-        let state = state_with_single_rule(HarnessId::GeminiCli, "gemini.turn", "cost.usd");
-        let mut acc = MetricsAccumulator::new(state, HarnessId::GeminiCli);
+        let state = state_with_single_rule(HarnessId::AntigravityCli, "Stop.cost", "cost.usd");
+        let mut acc = MetricsAccumulator::new(state, HarnessId::AntigravityCli);
         let extras: BTreeMap<String, String> = [
             ("cost.method".to_string(), "estimated".to_string()),
             ("model".to_string(), "gemini-2.5-pro".to_string()),
         ]
         .into_iter()
         .collect();
-        acc.observe_double_sum("gemini.turn", 0.0042, &extras);
+        acc.observe_double_sum("Stop.cost", 0.0042, &extras);
         let metrics = acc.build("0", "1");
         assert_eq!(metrics[0]["name"], "trove.harness.cost.usd");
         let dp = &metrics[0]["sum"]["dataPoints"][0];

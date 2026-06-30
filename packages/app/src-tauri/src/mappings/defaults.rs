@@ -37,7 +37,7 @@ pub fn default_state() -> MappingState {
         harnesses: vec![
             defaults_for(HarnessId::ClaudeCode),
             defaults_for(HarnessId::ClaudeDesktop),
-            defaults_for(HarnessId::GeminiCli),
+            defaults_for(HarnessId::AntigravityCli),
             defaults_for(HarnessId::CodexCli),
             defaults_for(HarnessId::CodexDesktop),
             defaults_for(HarnessId::QwenCode),
@@ -82,7 +82,7 @@ pub fn defaults_for(id: HarnessId) -> HarnessMapping {
     match id {
         HarnessId::ClaudeCode => claude_code_defaults(),
         HarnessId::ClaudeDesktop => claude_desktop_defaults(),
-        HarnessId::GeminiCli => gemini_cli_defaults(),
+        HarnessId::AntigravityCli => antigravity_cli_defaults(),
         HarnessId::CodexCli => codex_cli_defaults(),
         HarnessId::CodexDesktop => codex_desktop_defaults(),
         HarnessId::QwenCode => qwen_code_defaults(),
@@ -387,132 +387,120 @@ fn claude_desktop_defaults() -> HarnessMapping {
     }
 }
 
-/// Gemini CLI ≥0.41 emits `gemini_cli.api.request.count` per chat
-/// turn (confirmed against a live capture). Token usage rides under
-/// the OTel-semconv `gen_ai.client.token.usage` histogram with
-/// `gen_ai.token.type=input|output`; tool use lands in
-/// `gemini_cli.tool.call.count`. Turn duration comes from
-/// `gen_ai.client.operation.duration` (seconds, matches Tier A unit).
-/// Failure counters synthesize into `trove.harness.errors`.
+/// Antigravity CLI (`agy`) — the successor to Gemini CLI — dropped the
+/// native OTLP exporter Gemini CLI had. Trove now bridges it via the
+/// Hooks mechanism Antigravity inherited from Gemini CLI: a Trove-shipped
+/// hook script (`resources/hooks/antigravity-otel-hook.cjs`, registered
+/// in `~/.gemini/antigravity-cli/hooks.json`) turns each agent event into
+/// Tier A OTLP metrics posted directly to the collector — exactly like
+/// the Cursor adapters. So this mapping is `HookRule`-based, not
+/// `SynthesizeFromNative`-based.
 ///
-/// **Cost is not synthesized here** — `metricstransform` cannot do
-/// per-model rate × token-count arithmetic. Cost (and the more
-/// reliable tokens/duration emission with `model` and `user.email`
-/// labels attached) comes from the dedicated Gemini chat-log watcher
-/// in `crate::adapters::gemini_watcher`, which reads
-/// `~/.gemini/tmp/<proj>/chats/session-*.jsonl`.
-fn gemini_cli_defaults() -> HarnessMapping {
+/// agy fires Claude-Code-style canonical events. We model a chat turn as
+/// `UserPromptSubmit` (turn-start marker; the hook stashes the prompt
+/// size + start time) → `Stop` (emit events, turn.duration, tokens,
+/// cost), and shell commands as `BeforeShellExecution` → `AfterShell
+/// Execution`. Token counts are estimated from message byte sizes (the
+/// hook never captures body text), mirroring the Cursor hook; cost is
+/// derived per-model from those token estimates.
+fn antigravity_cli_defaults() -> HarnessMapping {
     HarnessMapping {
-        harness_id: HarnessId::GeminiCli,
+        harness_id: HarnessId::AntigravityCli,
         enabled: true,
         sources: vec![
-            MappingSource::SynthesizeFromNative {
-                native_metric: "gemini_cli.api.request.count".into(),
-                target_metric: TierAMetric::Events.id(),
-                attribute_map: BTreeMap::from([
-                    // The dashboard groups by `model`; Gemini's native
-                    // attribute is `gen_ai.request.model`. Rename it
-                    // here so the synthesized metric carries `model`.
-                    ("gen_ai.request.model".into(), "model".into()),
-                ]),
-                inject_attributes: BTreeMap::from([
-                    ("event.kind".into(), "chat.turn".into()),
-                ]),
-            },
-            MappingSource::SynthesizeFromNative {
-                native_metric: "gemini_cli.tool.call.count".into(),
-                target_metric: TierAMetric::Events.id(),
-                attribute_map: BTreeMap::new(),
-                inject_attributes: BTreeMap::from([
-                    ("event.kind".into(), "tool.call".into()),
-                ]),
-            },
-            MappingSource::SynthesizeFromNative {
-                native_metric: "gen_ai.client.token.usage".into(),
-                target_metric: TierAMetric::Tokens.id(),
-                attribute_map: BTreeMap::from([
-                    ("gen_ai.token.type".into(), "direction".into()),
-                    ("gen_ai.request.model".into(), "model".into()),
-                ]),
-                inject_attributes: BTreeMap::new(),
-            },
-            MappingSource::SynthesizeFromNative {
-                native_metric: "gen_ai.client.operation.duration".into(),
-                target_metric: TierAMetric::TurnDuration.id(),
-                attribute_map: BTreeMap::from([
-                    ("gen_ai.request.model".into(), "model".into()),
-                ]),
-                inject_attributes: BTreeMap::from([
-                    ("event.kind".into(), "chat.turn".into()),
-                ]),
-            },
-            MappingSource::SynthesizeFromNative {
-                // Model-routing failures are upstream / network-layer
-                // problems. error.kind is closed-enum per MAPPING_PLAN.md
-                // §"Background"; "network" is the canonical bucket for
-                // upstream-API failures.
-                native_metric: "gemini_cli.model_routing.failure.count".into(),
-                target_metric: TierAMetric::Errors.id(),
-                attribute_map: BTreeMap::new(),
-                inject_attributes: BTreeMap::from([
-                    ("error.kind".into(), "network".into()),
-                ]),
-            },
-            MappingSource::SynthesizeFromNative {
-                // Content-retry failures are also upstream API failures
-                // (transient errors that exceeded the retry budget). Same
-                // canonical bucket.
-                native_metric: "gemini_cli.chat.content_retry_failure.count".into(),
-                target_metric: TierAMetric::Errors.id(),
-                attribute_map: BTreeMap::new(),
-                inject_attributes: BTreeMap::from([
-                    ("error.kind".into(), "network".into()),
-                ]),
-            },
-            // gemini_watcher hook rules — the chat-log watcher emits
-            // per-turn observations against these `when` keys. Users
-            // can disable or retarget any of them via the Mappings
-            // editor; the watcher consults this table at every poll
-            // so edits take effect without a restart.
+            // Turn-start markers — suppressed (emit None) so they don't
+            // double-count. The bundled hook stashes the prompt size +
+            // start time keyed by session so the matching `Stop` /
+            // `AfterShellExecution` can compute duration and tokens.
             MappingSource::HookRule {
-                when: "gemini.turn".into(),
+                when: "UserPromptSubmit".into(),
+                emit: None,
+            },
+            MappingSource::HookRule {
+                when: "BeforeShellExecution".into(),
+                emit: None,
+            },
+            // Stop — one chat turn. The hook fans the single observation
+            // across distinct `when` keys (one per facet) so each rule
+            // matches exactly one observation type. Events + turn.duration
+            // share the bare `Stop` key (Counter vs Histogram kind filter
+            // keeps them separate at runtime).
+            MappingSource::HookRule {
+                when: "Stop".into(),
                 emit: Some(HookEmit {
                     metric: TierAMetric::Events.id(),
                     attributes: attr("event.kind", "chat.turn"),
                 }),
             },
             MappingSource::HookRule {
-                when: "gemini.turn".into(),
+                when: "Stop".into(),
                 emit: Some(HookEmit {
                     metric: TierAMetric::TurnDuration.id(),
                     attributes: attr("event.kind", "chat.turn"),
                 }),
             },
             MappingSource::HookRule {
-                when: "gemini.tokens.input".into(),
+                when: "Stop.tokens.input".into(),
                 emit: Some(HookEmit {
                     metric: TierAMetric::Tokens.id(),
                     attributes: attr("direction", "input"),
                 }),
             },
             MappingSource::HookRule {
-                when: "gemini.tokens.output".into(),
+                when: "Stop.tokens.output".into(),
                 emit: Some(HookEmit {
                     metric: TierAMetric::Tokens.id(),
                     attributes: attr("direction", "output"),
                 }),
             },
             MappingSource::HookRule {
-                when: "gemini.cost".into(),
+                when: "Stop.cost".into(),
                 emit: Some(HookEmit {
                     metric: TierAMetric::CostUsd.id(),
                     attributes: attr("cost.method", "estimated"),
+                }),
+            },
+            // AfterShellExecution — one shell command. Events +
+            // turn.duration share the bare key (kind-separated); failures
+            // (exit_code != 0) get their own `.error` suffix.
+            MappingSource::HookRule {
+                when: "AfterShellExecution".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Events.id(),
+                    attributes: attr("event.kind", "shell.exec"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "AfterShellExecution".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::TurnDuration.id(),
+                    attributes: attr("event.kind", "shell.exec"),
+                }),
+            },
+            MappingSource::HookRule {
+                when: "AfterShellExecution.error".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Errors.id(),
+                    attributes: attr("error.kind", "tool_failure"),
+                }),
+            },
+            // ErrorOccurred — agent-level error (e.g. model routing /
+            // retry-budget exhaustion). Fires only when agy emits it. The
+            // event payload carries no Trove error taxonomy, so we tag it
+            // `unknown` (the allowed-domain catch-all), matching how the
+            // other hook adapters classify un-categorized agent errors.
+            MappingSource::HookRule {
+                when: "ErrorOccurred".into(),
+                emit: Some(HookEmit {
+                    metric: TierAMetric::Errors.id(),
+                    attributes: attr("error.kind", "unknown"),
                 }),
             },
         ],
         cost_overrides: BTreeMap::new(),
     }
 }
+
 
 /// Codex CLI's native metric namespace mirrors Claude Code's shape;
 /// upstream uses `codex.*` for session and tool counters and emits
@@ -582,14 +570,18 @@ fn codex_desktop_defaults() -> HarnessMapping {
     }
 }
 
-/// Qwen Code is a Gemini CLI fork and inherits its metric namespace.
-/// But emitting `metricstransform` rules that match `gemini_cli.*`
-/// would shadow-fire whenever Gemini itself emits, producing duplicate
-/// `trove.harness.events`. So Qwen's rules use the `qwen_code.*`
-/// namespace; until upstream Qwen actually renames its emissions
-/// (verify with a live capture before relying on these), this means no
-/// Tier A synthesis for Qwen. Tier B passthrough still works, and
-/// `harness.id` is still tagged from `service.name`.
+/// Qwen Code is a Gemini-CLI-derived harness and inherited the old
+/// `gemini_cli.*` metric namespace. Trove keys Qwen's rules off the
+/// `qwen_code.*` namespace instead — both because that's what upstream
+/// Qwen is expected to rename to, and to avoid ever shadow-firing on a
+/// `gemini_cli.*`-emitting peer. (Antigravity CLI, the Gemini CLI
+/// successor, no longer emits native OTLP at all — it rides a hook
+/// bridge — so there is no live `gemini_cli.*` emitter today, but the
+/// namespace separation is kept for safety.) Until upstream Qwen
+/// actually renames its emissions (verify with a live capture before
+/// relying on these), this means no Tier A synthesis for Qwen. Tier B
+/// passthrough still works, and `harness.id` is still tagged from
+/// `service.name`.
 fn qwen_code_defaults() -> HarnessMapping {
     HarnessMapping {
         harness_id: HarnessId::QwenCode,
@@ -954,7 +946,7 @@ mod tests {
             vec![
                 HarnessId::ClaudeCode,
                 HarnessId::ClaudeDesktop,
-                HarnessId::GeminiCli,
+                HarnessId::AntigravityCli,
                 HarnessId::CodexCli,
                 HarnessId::CodexDesktop,
                 HarnessId::QwenCode,
@@ -1090,7 +1082,14 @@ mod tests {
 
     #[test]
     fn native_otel_harnesses_have_synthesize_rows() {
-        for id in [HarnessId::ClaudeCode, HarnessId::GeminiCli, HarnessId::CodexCli, HarnessId::QwenCode] {
+        // Antigravity CLI is intentionally absent: it dropped native OTLP
+        // and is now a hook harness (HookRule rows, no SynthesizeFromNative),
+        // exactly like the Cursor harnesses.
+        for id in [
+            HarnessId::ClaudeCode,
+            HarnessId::CodexCli,
+            HarnessId::QwenCode,
+        ] {
             let m = defaults_for(id);
             assert!(
                 m.sources
@@ -1099,6 +1098,25 @@ mod tests {
                 "{id:?} should have at least one synthesize-from-native row"
             );
         }
+    }
+
+    #[test]
+    fn antigravity_uses_hook_rules_not_native_synthesis() {
+        // Regression guard for the Gemini CLI → Antigravity CLI swap:
+        // agy has no native OTLP, so its mapping must be hook-driven.
+        let m = defaults_for(HarnessId::AntigravityCli);
+        assert!(
+            m.sources
+                .iter()
+                .all(|s| matches!(s, MappingSource::HookRule { .. })),
+            "Antigravity CLI must use only HookRule rows"
+        );
+        assert!(
+            m.sources
+                .iter()
+                .any(|s| matches!(s, MappingSource::HookRule { when, .. } if when == "Stop")),
+            "Antigravity CLI must map the Stop event"
+        );
     }
 
     #[test]
@@ -1181,9 +1199,11 @@ mod tests {
         // MAPPING_PLAN.md open question #2 recommends OFF for cost.usd
         // synthesis by default. No default row should target CostUsd
         // — the user adds them via the UI when they're ready.
+        // Antigravity CLI omitted: it's a hook harness now and seeds an
+        // *estimated* cost.usd row (HookRule, like Cursor), which this
+        // native-synthesis check intentionally doesn't cover.
         for id in [
             HarnessId::ClaudeCode,
-            HarnessId::GeminiCli,
             HarnessId::CodexCli,
             HarnessId::QwenCode,
         ] {

@@ -152,7 +152,7 @@ real problems that a single local collector solves:
 
 ### Tier A synthesis
 
-For native-OTel harnesses (Claude Code, Codex CLI, Gemini CLI, Qwen Code,
+For native-OTel harnesses (Claude Code, Codex CLI, Antigravity CLI, Qwen Code,
 OpenCode), Trove injects a `metricstransform/tierA-<harness>` processor on
 every collector reload. It uses `action: insert`, so the native Tier B
 metric stays on the wire untouched — synthesis is **additive**. Hook- and

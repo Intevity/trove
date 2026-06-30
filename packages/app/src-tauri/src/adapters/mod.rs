@@ -1,6 +1,8 @@
 //! Per-harness adapters that translate `ApplyOptions` into a managed
-//! region for the host config file. Tier 1 covers four harnesses:
-//! claude-code, codex-cli, gemini-cli, qwen-code.
+//! region for the host config file. Tier 1 native-OTEL harnesses include
+//! claude-code, codex-cli, and qwen-code; Antigravity CLI (`agy`, the
+//! Gemini CLI successor) is a Tier 2 hook harness (`antigravity_cli`),
+//! like the Cursor adapters.
 //!
 //! The Tauri `#[command]` layer in `crate::ipc` dispatches by
 //! [`crate::harness::HarnessId`] into the per-adapter free functions.
@@ -13,6 +15,7 @@
 mod common;
 
 pub mod aider;
+pub mod antigravity_cli;
 pub mod claude_code;
 pub mod claude_desktop;
 pub mod claude_desktop_watcher;
@@ -27,8 +30,6 @@ pub mod cursor_hook_codegen;
 pub mod cursor_ide;
 pub mod droid;
 pub mod droid_watcher;
-pub mod gemini_cli;
-pub mod gemini_watcher;
 pub mod opencode;
 pub mod qwen_code;
 pub mod wrapper_common;

@@ -89,7 +89,7 @@ pub struct MetricsSnapshot {
     pub received: SignalCounts,
     pub sent: SignalCounts,
     /// Per-`filter/diag-<suffix>` outgoing counters, keyed by harness
-    /// suffix (e.g. `"gemini-cli"`). Each entry counts spans, metric
+    /// suffix (e.g. `"claude-code"`). Each entry counts spans, metric
     /// points, and log records the diag pipeline observed for that
     /// harness. Populated only for native-OTel emitters (those with
     /// non-empty `native_service_name_candidates`).
@@ -337,7 +337,7 @@ async fn scrape_once(client: &reqwest::Client, url: &str) -> ScrapeOutcome {
 
 /// Extract per-`filter/diag-<suffix>` outgoing counts from the
 /// Prometheus exposition body. Returns a map keyed by the suffix
-/// (e.g. `"gemini-cli"`) holding per-signal-type counts. Empty when
+/// (e.g. `"claude-code"`) holding per-signal-type counts. Empty when
 /// no diag pipeline is configured.
 #[must_use]
 pub fn parse_diag_observations(body: &str) -> DiagObservations {
