@@ -14,18 +14,25 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/** The webm companion sits at the same basename as the mp4 (detect.mp4 -> detect.webm). */
+function toWebm(video: string): string {
+  return video.replace(/\.[^.]+$/, '.webm');
+}
+
 /**
- * Homepage feature carousel. Ported from Sentinel's video-driven carousel, but
- * every Trove clip is poster-only (hasVideo is false until a real recording
- * lands), so each slide renders the poster SVG as an <img> instead of a <video>.
- * Auto-advance still runs on a fixed timer; hover pauses it. Clicking a slide
- * opens a graceful "Demo coming soon" lightbox rather than a player. The whole
- * thing is data-driven from src/data/features.ts.
+ * Homepage feature carousel. Ported from Sentinel's video-driven carousel. When a
+ * slide has hasVideo, its stage renders an autoplaying muted/looped <video> (mp4
+ * with a webm companion) and clicking opens the clip full-size in the lightbox.
+ * Slides without a recording fall back to the poster <img> plus a "Demo coming
+ * soon" badge, and their lightbox shows the same coming-soon state. Auto-advance
+ * runs on a fixed timer; hover pauses it. Reduced motion suppresses inline
+ * autoplay (the poster frame shows instead). Data-driven from src/data/features.ts.
  */
 export default function FeatureCarousel({ features, base }: Props) {
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
-  // True while the "coming soon" lightbox is open; holds the carousel in place.
+  // True while the lightbox is open (playing the clip, or the "coming soon"
+  // state for a slide without one); holds the carousel in place.
   const [lightbox, setLightbox] = useState(false);
   const reduced = useMemo(prefersReducedMotion, []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -40,9 +47,9 @@ export default function FeatureCarousel({ features, base }: Props) {
     setActive((i) => (i + 1) % features.length);
   }, [features.length]);
 
-  // No clip exists yet, so a slide click opens the "coming soon" affordance
-  // rather than a player. Kept as a small, dismissible state so the UI never
-  // points at a missing .mp4.
+  // A slide click opens the lightbox for the active slide: it plays the clip
+  // full-size when the slide has a recording, or shows a "coming soon" state
+  // when it does not.
   const openLightbox = useCallback(() => {
     setLightbox(true);
   }, []);
@@ -109,18 +116,40 @@ export default function FeatureCarousel({ features, base }: Props) {
         <button
           type="button"
           onClick={openLightbox}
-          aria-label={`${current.title} — demo coming soon`}
+          aria-label={
+            current.hasVideo
+              ? `Play the ${current.title} demo at full size`
+              : `${current.title} — demo coming soon`
+          }
           className="group relative block aspect-video w-full overflow-hidden bg-[#0f1413]"
         >
-          {/* Poster image (every slide is poster-only for now). */}
-          <img
-            key={current.slug}
-            src={asset(current.poster)}
-            alt={`${current.title} preview`}
-            loading="lazy"
-            decoding="async"
-            className="absolute inset-0 h-full w-full object-cover"
-          />
+          {/* Media: an autoplaying muted/looped clip when the slide has a
+              recording, otherwise the poster placeholder. */}
+          {current.hasVideo ? (
+            <video
+              key={current.slug}
+              poster={asset(current.poster)}
+              muted
+              playsInline
+              loop
+              autoPlay={!reduced}
+              preload="auto"
+              aria-label={`${current.title} demo`}
+              className="absolute inset-0 h-full w-full object-cover"
+            >
+              <source src={asset(toWebm(current.video))} type="video/webm" />
+              <source src={asset(current.video)} type="video/mp4" />
+            </video>
+          ) : (
+            <img
+              key={current.slug}
+              src={asset(current.poster)}
+              alt={`${current.title} preview`}
+              loading="lazy"
+              decoding="async"
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          )}
 
           {/* Accent wash tuned to the slide's teal accent. */}
           <span
@@ -131,23 +160,41 @@ export default function FeatureCarousel({ features, base }: Props) {
             }}
           />
 
-          {/* "Demo coming soon" badge — the click affordance. */}
-          <span className="pointer-events-none absolute left-1/2 top-1/2 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-white/12 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/25 backdrop-blur-sm transition-colors group-hover:bg-white/20">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-            Demo coming soon
-          </span>
+          {/* Click affordance: an expand glyph for slides with a real clip, the
+              "Demo coming soon" badge for poster-only slides. */}
+          {current.hasVideo ? (
+            <span className="pointer-events-none absolute left-1/2 top-1/2 inline-flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/12 text-white opacity-0 ring-1 ring-white/25 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+              </svg>
+            </span>
+          ) : (
+            <span className="pointer-events-none absolute left-1/2 top-1/2 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-white/12 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/25 backdrop-blur-sm transition-colors group-hover:bg-white/20">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              Demo coming soon
+            </span>
+          )}
 
           {/* Caption */}
           <span className="pointer-events-none absolute inset-x-0 bottom-0 block bg-gradient-to-t from-black/80 to-transparent p-5 text-left">
@@ -213,31 +260,47 @@ export default function FeatureCarousel({ features, base }: Props) {
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
             </button>
-            <div className="relative w-full overflow-hidden rounded-2xl bg-black shadow-2xl">
-              <img
-                src={asset(current.poster)}
-                alt={`${current.title} preview`}
-                className="max-h-[78vh] w-full object-contain"
-              />
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/12 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/25 backdrop-blur-sm">
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <polyline points="12 6 12 12 16 14" />
-                  </svg>
-                  Demo coming soon
-                </span>
+            {current.hasVideo ? (
+              <video
+                key={current.slug}
+                poster={asset(current.poster)}
+                className="max-h-[78vh] w-full rounded-2xl bg-black object-contain shadow-2xl"
+                controls
+                autoPlay
+                muted
+                loop
+                playsInline
+              >
+                <source src={asset(toWebm(current.video))} type="video/webm" />
+                <source src={asset(current.video)} type="video/mp4" />
+              </video>
+            ) : (
+              <div className="relative w-full overflow-hidden rounded-2xl bg-black shadow-2xl">
+                <img
+                  src={asset(current.poster)}
+                  alt={`${current.title} preview`}
+                  className="max-h-[78vh] w-full object-contain"
+                />
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-white/12 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/25 backdrop-blur-sm">
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    Demo coming soon
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
             <p className="mt-3 text-center text-sm font-semibold text-white/85">{current.title}</p>
           </div>
         </div>

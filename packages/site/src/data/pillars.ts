@@ -6,10 +6,11 @@
 // grounded in README.md / documentation/* and kept free of em dashes per the
 // project's UI-copy rule.
 //
-// Every clip is poster-only until a real recording lands: hasVideo is false and
-// the poster is an SVG placeholder at public/videos/<slug>.svg, resolved via
-// import.meta.env.BASE_URL by the section component. The `video` field names the
-// eventual .mp4 so flipping hasVideo to true is the only change needed later.
+// Recorded clips live at public/videos/<slug>.{mp4,webm} with a JPG poster frame
+// at <slug>.jpg (via Curtain live capture; see .curtain/capture), resolved with
+// import.meta.env.BASE_URL by the section component. hasVideo is true for those.
+// The one exception is `keychain`, which has no recording yet: it stays hasVideo
+// false with an SVG placeholder poster.
 
 export interface SubFeature {
   /** Icon name resolved by Icon.astro (must exist in its path map). */
@@ -62,8 +63,8 @@ export const pillars: Pillar[] = [
         description:
           'Trove sweeps the standard install paths the moment it starts and lists exactly which of the 17 supported tools are present, so the inventory is never guesswork.',
         video: 'overview.mp4',
-        poster: 'overview.svg',
-        hasVideo: false,
+        poster: 'overview.jpg',
+        hasVideo: true,
       },
       {
         icon: 'activity',
@@ -72,22 +73,22 @@ export const pillars: Pillar[] = [
         description:
           'The Overview tab animates each source through the collector to your backends. Three or fewer tools render as individual nodes; four or more collapse into an animated Orbital Hub cluster with per-source activity halos.',
         video: 'flow-chart.mp4',
-        poster: 'flow-chart.svg',
-        hasVideo: false,
+        poster: 'flow-chart.jpg',
+        hasVideo: true,
       },
     ],
     clips: [
       {
         slug: 'overview',
         title: 'Overview health and data flow',
-        poster: 'overview.svg',
-        hasVideo: false,
+        poster: 'overview.jpg',
+        hasVideo: true,
       },
       {
         slug: 'flow-chart',
         title: 'Orbital Hub data-flow chart',
-        poster: 'flow-chart.svg',
-        hasVideo: false,
+        poster: 'flow-chart.jpg',
+        hasVideo: true,
       },
     ],
   },
@@ -106,8 +107,8 @@ export const pillars: Pillar[] = [
         description:
           'Token counts, model-call counts, and turn durations all flow through trove.harness.tokens, events, cost.usd, and turn.duration. Cost per turn for Claude Code lines up directly against Copilot CLI in your own dashboard.',
         video: 'cost-normalization.mp4',
-        poster: 'cost-normalization.svg',
-        hasVideo: false,
+        poster: 'cost-normalization.jpg',
+        hasVideo: true,
       },
       {
         icon: 'users',
@@ -116,22 +117,22 @@ export const pillars: Pillar[] = [
         description:
           'The same harness.id-keyed metric stream surfaces which licenses fire and which are silent, by user and by week, so procurement can reclaim seats with zero turns in the last 30 days.',
         video: 'dead-seats.mp4',
-        poster: 'dead-seats.svg',
-        hasVideo: false,
+        poster: 'dead-seats.jpg',
+        hasVideo: true,
       },
     ],
     clips: [
       {
         slug: 'cost-normalization',
         title: 'Tier A cost normalization',
-        poster: 'cost-normalization.svg',
-        hasVideo: false,
+        poster: 'cost-normalization.jpg',
+        hasVideo: true,
       },
       {
         slug: 'dead-seats',
         title: 'Dead-seat detection',
-        poster: 'dead-seats.svg',
-        hasVideo: false,
+        poster: 'dead-seats.jpg',
+        hasVideo: true,
       },
     ],
   },
@@ -150,8 +151,8 @@ export const pillars: Pillar[] = [
         description:
           'The bundled OpenTelemetry Collector listens on 127.0.0.1 and exports exclusively to the endpoint you configured. No analytics, no crash reporting, no third-party SDK phoning a vendor.',
         video: 'localhost-only.mp4',
-        poster: 'localhost-only.svg',
-        hasVideo: false,
+        poster: 'localhost-only.jpg',
+        hasVideo: true,
       },
       {
         icon: 'key',
@@ -170,22 +171,22 @@ export const pillars: Pillar[] = [
         description:
           'Each Enable wraps the harness config in a sentinel-bracketed managed region you can diff, audit, and revert in one click. What got written is captured in a single versioned state.json.',
         video: 'reversible-revert.mp4',
-        poster: 'reversible-revert.svg',
-        hasVideo: false,
+        poster: 'reversible-revert.jpg',
+        hasVideo: true,
       },
     ],
     clips: [
       {
         slug: 'localhost-only',
         title: 'Localhost-only forwarding',
-        poster: 'localhost-only.svg',
-        hasVideo: false,
+        poster: 'localhost-only.jpg',
+        hasVideo: true,
       },
       {
         slug: 'reversible-revert',
         title: 'Byte-for-byte revert',
-        poster: 'reversible-revert.svg',
-        hasVideo: false,
+        poster: 'reversible-revert.jpg',
+        hasVideo: true,
       },
     ],
   },
@@ -204,8 +205,8 @@ export const pillars: Pillar[] = [
         description:
           'Claude Code, Antigravity CLI, Codex, Qwen, OpenCode, and Cursor IDE emit OTLP natively. Trove sets the right env and config flags and routes their signals straight through the collector.',
         video: 'native-otel.mp4',
-        poster: 'native-otel.svg',
-        hasVideo: false,
+        poster: 'native-otel.jpg',
+        hasVideo: true,
       },
       {
         icon: 'git-merge',
@@ -214,22 +215,22 @@ export const pillars: Pillar[] = [
         description:
           'Cline and other harnesses that do not emit OTel natively get Trove’s filesystem watchers and shell-rc wrappers, which derive OTLP records from their on-disk logs into the same Tier A shape.',
         video: 'best-effort-adapter.mp4',
-        poster: 'best-effort-adapter.svg',
-        hasVideo: false,
+        poster: 'best-effort-adapter.jpg',
+        hasVideo: true,
       },
     ],
     clips: [
       {
         slug: 'native-otel',
         title: 'Native OTel passthrough',
-        poster: 'native-otel.svg',
-        hasVideo: false,
+        poster: 'native-otel.jpg',
+        hasVideo: true,
       },
       {
         slug: 'best-effort-adapter',
         title: 'Best-effort watcher adapter',
-        poster: 'best-effort-adapter.svg',
-        hasVideo: false,
+        poster: 'best-effort-adapter.jpg',
+        hasVideo: true,
       },
     ],
   },

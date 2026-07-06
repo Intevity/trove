@@ -1,10 +1,11 @@
 ---
 // Pillar deep-dives: the marketing narrative for the four audiences Trove sells
 // to (engineering leads, finance/ops, security/IT, and the native-vs-best-effort
-// coverage story), each broken into its sub-features. Static (no React); every
-// clip shows a poster placeholder with a "Demo coming soon" affordance until a
-// real recording lands in public/videos/ and hasVideo is flipped. The section
-// uses the shared section-aurora ambient glow.
+// coverage story), each broken into its sub-features. Static (no React). Each
+// clip in the media rail renders an autoplaying muted/looped <video> (mp4 with a
+// webm companion, derived from the clip slug) when hasVideo is true, and falls
+// back to a poster placeholder with a "Demo coming soon" affordance when it is
+// false. The section uses the shared section-aurora ambient glow.
 import Icon from './Icon.astro';
 import { pillars } from '../data/pillars';
 
@@ -65,27 +66,46 @@ const asset = (p: string) => `${base.replace(/\/$/, '')}/videos/${p.replace(/^\/
               </ul>
             </div>
 
-            {/* Media column — poster-only clips with a "coming soon" affordance. */}
+            {/* Media column — an autoplaying clip per entry, or a poster
+                placeholder with a "coming soon" affordance until one lands. */}
             <div class="grid gap-4 sm:grid-cols-2">
               {pillar.clips.map((clip) => (
                 <figure class="glass-card group relative overflow-hidden">
                   <div class="relative aspect-video w-full overflow-hidden bg-[#0f1413]">
-                    <img
-                      src={asset(clip.poster)}
-                      alt={`${clip.title} preview`}
-                      loading="lazy"
-                      decoding="async"
-                      class="absolute inset-0 h-full w-full object-cover"
-                    />
-                    <span
-                      aria-hidden="true"
-                      class="pointer-events-none absolute inset-0 opacity-50"
-                      style="background: radial-gradient(60% 60% at 50% 0%, rgba(45,191,184,0.20), transparent 70%);"
-                    />
-                    <span class="pointer-events-none absolute left-1/2 top-1/2 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-full bg-white/12 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 backdrop-blur-sm">
-                      <Icon name="check" size={14} class="opacity-0" />
-                      Demo coming soon
-                    </span>
+                    {clip.hasVideo ? (
+                      <video
+                        class="absolute inset-0 h-full w-full object-cover"
+                        poster={asset(clip.poster)}
+                        aria-label={`${clip.title} demo`}
+                        autoplay
+                        muted
+                        loop
+                        playsinline
+                        preload="auto"
+                      >
+                        <source src={asset(`${clip.slug}.webm`)} type="video/webm" />
+                        <source src={asset(`${clip.slug}.mp4`)} type="video/mp4" />
+                      </video>
+                    ) : (
+                      <Fragment>
+                        <img
+                          src={asset(clip.poster)}
+                          alt={`${clip.title} preview`}
+                          loading="lazy"
+                          decoding="async"
+                          class="absolute inset-0 h-full w-full object-cover"
+                        />
+                        <span
+                          aria-hidden="true"
+                          class="pointer-events-none absolute inset-0 opacity-50"
+                          style="background: radial-gradient(60% 60% at 50% 0%, rgba(45,191,184,0.20), transparent 70%);"
+                        />
+                        <span class="pointer-events-none absolute left-1/2 top-1/2 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-full bg-white/12 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 backdrop-blur-sm">
+                          <Icon name="check" size={14} class="opacity-0" />
+                          Demo coming soon
+                        </span>
+                      </Fragment>
+                    )}
                   </div>
                   <figcaption class="px-4 py-3 text-sm font-semibold text-foreground">
                     {clip.title}
