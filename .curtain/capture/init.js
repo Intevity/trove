@@ -83,7 +83,126 @@
       autoUpdateEnabled: false,
       launchAtStartupEnabled: true,
       identity: { enabled: true, source: 'manual', name: 'Demo User', email: 'demo@trove.dev' },
-      mappings: { schemaVersion: 2, metrics: [], harnesses: [] },
+      // Populated so the Mappings-tab clips (metrics / mappings / cost-normalization /
+      // best-effort-adapter) render on navigation — appState re-reads only on an IPC
+      // refresh, but the initial load picks up this seed. Five Tier A catalog metrics +
+      // synthesis rules for two native harnesses + hook rules for a best-effort one.
+      mappings: {
+        schemaVersion: 2,
+        metrics: [
+          {
+            id: 'events',
+            name: 'trove.harness.events',
+            kind: 'counter',
+            description: '',
+            requiredAttributes: [],
+            builtin: true,
+          },
+          {
+            id: 'tokens',
+            name: 'trove.harness.tokens',
+            kind: 'counter',
+            description: '',
+            requiredAttributes: [],
+            builtin: true,
+          },
+          {
+            id: 'cost.usd',
+            name: 'trove.harness.cost.usd',
+            kind: 'counter',
+            description: '',
+            requiredAttributes: [],
+            builtin: true,
+          },
+          {
+            id: 'turn.duration',
+            name: 'trove.harness.turn.duration',
+            kind: 'histogram',
+            description: '',
+            requiredAttributes: [],
+            builtin: true,
+          },
+          {
+            id: 'errors',
+            name: 'trove.harness.errors',
+            kind: 'counter',
+            description: '',
+            requiredAttributes: [],
+            builtin: true,
+          },
+        ],
+        harnesses: [
+          {
+            harnessId: 'claude-code',
+            enabled: true,
+            costOverrides: {},
+            sources: [
+              {
+                kind: 'synthesize-from-native',
+                nativeMetric: 'gen_ai.client.operation.count',
+                targetMetric: 'events',
+                attributeMap: {},
+                injectAttributes: {},
+              },
+              {
+                kind: 'synthesize-from-native',
+                nativeMetric: 'gen_ai.client.token.usage',
+                targetMetric: 'tokens',
+                attributeMap: {},
+                injectAttributes: {},
+              },
+              {
+                kind: 'synthesize-from-native',
+                nativeMetric: 'gen_ai.client.cost',
+                targetMetric: 'cost.usd',
+                attributeMap: {},
+                injectAttributes: {},
+              },
+              {
+                kind: 'synthesize-from-native',
+                nativeMetric: 'gen_ai.client.operation.duration',
+                targetMetric: 'turn.duration',
+                attributeMap: {},
+                injectAttributes: {},
+              },
+            ],
+          },
+          {
+            harnessId: 'codex-cli',
+            enabled: true,
+            costOverrides: {},
+            sources: [
+              {
+                kind: 'synthesize-from-native',
+                nativeMetric: 'gen_ai.client.token.usage',
+                targetMetric: 'tokens',
+                attributeMap: {},
+                injectAttributes: {},
+              },
+              {
+                kind: 'synthesize-from-native',
+                nativeMetric: 'gen_ai.client.cost',
+                targetMetric: 'cost.usd',
+                attributeMap: {},
+                injectAttributes: {},
+              },
+            ],
+          },
+          {
+            harnessId: 'aider',
+            enabled: true,
+            costOverrides: {},
+            sources: [
+              {
+                kind: 'hook-rule',
+                when: 'session.end',
+                emit: { metric: 'events', attributes: {} },
+              },
+              { kind: 'hook-rule', when: 'tool.call', emit: { metric: 'tokens', attributes: {} } },
+            ],
+          },
+        ],
+      },
       telemetryObserved: {
         'claude-code': 1751371200,
         'codex-cli': 1751371200,
@@ -287,7 +406,19 @@
   // capture ctx.seed(partial) delivers `partial` directly; ctx.emit(event,payload)
   // delivers a single { event, payload } object — match that convention here.
   window.__troveSetState = function (partial) {
-    Object.assign(store.state, partial);
+    if (!partial) return;
+    // appState is a nested object the app re-reads wholesale; merge one level so a
+    // recipe can seed just `{ appState: { mappings } }` without dropping backends/
+    // harnesses/identity. Other top-level keys (detectedHarnesses, metricsSnapshot,
+    // …) are replaced wholesale — recipes pass the full value.
+    if (partial.appState) {
+      store.state.appState = Object.assign({}, store.state.appState, partial.appState);
+      var rest = Object.assign({}, partial);
+      delete rest.appState;
+      Object.assign(store.state, rest);
+    } else {
+      Object.assign(store.state, partial);
+    }
   };
   window.__troveEmit = function (a) {
     fire(a.event, a.payload);
