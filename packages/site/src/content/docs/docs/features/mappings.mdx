@@ -1,0 +1,118 @@
+---
+title: The Mappings tab
+description: The Mappings tab is the visual editor that maps each harness's raw signals onto Trove's Tier A metric schema — synthesis rules for native harnesses, hook rules for watchers, a live diff preview, reset to defaults, and a custom metric catalog.
+sidebar:
+  order: 4
+---
+
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Different harnesses emit telemetry in different shapes — different attribute names,
+different event names, different aggregation grains. The **Mappings** tab is where
+Trove reconciles all of that onto a single normalized schema: the five
+[Tier A metrics](/trove/docs/features/tier-a-metrics/). It's a visual editor with a
+live preview, so you can see exactly how a raw harness signal becomes a
+cross-harness metric before you apply anything.
+
+<Aside type="note">Screenshot coming soon.</Aside>
+
+## Two kinds of rules
+
+How a harness's signals reach Tier A depends on how that harness is captured (see
+[Harness coverage](/trove/docs/features/harness-coverage/)). The Mappings tab
+exposes both paths through the same editor surface:
+
+### Synthesis rules (native-OTel harnesses)
+
+Native-OTel harnesses (Claude Code, Codex, Antigravity CLI, Qwen Code, OpenCode)
+already emit their own metrics. A **synthesis rule** tells the collector to
+_additively_ derive a Tier A metric from one of those native signals — for example,
+turning Claude Code's `claude_code.session.count` into a `trove.harness.events`
+data point with `event.kind=chat.turn`, or copying `claude_code.token.usage` into
+`trove.harness.tokens`.
+
+Synthesis is implemented as a collector overlay (`metricstransform` plus
+`transform/harness-tag`) injected on every reload, using `action: insert` — so the
+native **Tier B** metric still passes through untouched. You get the cross-harness
+view _and_ the vendor-native drill-down, not one or the other.
+
+### Hook rules (watcher / best-effort harnesses)
+
+Best-effort harnesses (Cline, Aider, GitHub Copilot CLI) don't emit OTel
+natively, so there's no native metric to synthesize from. A **hook rule** instead
+tells the watcher how to _classify a raw event_ into Tier A. For example: each
+Aider or Copilot CLI wrapper invocation becomes one `chat.turn` event plus a
+duration histogram observation, and a non-zero exit becomes a `trove.harness.errors`
+data point; Cline's watcher classifies each `ui_messages.json` entry by its
+message type into `chat.turn` / `tool.call` / `file.edit`.
+
+The editor surface is the same for both — you're configuring _which raw signal
+maps to which Tier A metric and attributes_, not writing a query language.
+
+## Live diff and preview
+
+Every edit is previewable before it's real:
+
+- **Live preview** simulates the output for a sample event, so you see the
+  resulting Tier A data point as you tune a rule — not after you've shipped a
+  silent mistake into your backend.
+- **Full-diff view** shows exactly what will change in the generated collector
+  config before you hit **Apply**.
+- **Validation at the boundary.** Bad rules surface as errors at the IPC boundary
+  when you apply, not as quietly dropped telemetry later.
+
+**Apply lives.** Because mappings are evaluated by the collector itself, applying
+changes regenerates the config and triggers a reload — a brief collector blip,
+no app restart and no agent to wait on.
+
+## Reset to defaults
+
+Each harness ships with a sensible default mapping baked into its adapter. The
+tab's **reset to defaults** affordance wipes your customizations for a harness and
+restores the shipped rows — useful when an experiment goes sideways and you want
+a known-good starting point.
+
+<Aside type="tip">
+  Trove's shipped defaults turn on `events` and `tokens` synthesis out of the box so your
+  cross-harness dashboards populate immediately; cost synthesis is more conservative by default to
+  avoid double-counting. You can flip any of these per harness here.
+</Aside>
+
+## Custom metric catalog
+
+Beyond the five locked Tier A built-ins, you can extend the catalog with your own
+metric definitions — additional counters, gauges, or histograms. Custom metrics
+flow through unchanged (no synthesis step); your receiving backend's dashboards
+interpret them.
+
+<Aside type="caution">
+  Custom metric names are *yours* — they won't line up with another Trove user's dashboards the way
+  the five Tier A built-ins do, which is the whole point of a fixed normalized schema. The "Add
+  custom metric" form warns about this. Note also that, today, only native-OTel harnesses honor
+  custom-metric rules; watcher/hook harnesses are limited to the built-ins.
+</Aside>
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Tier A metrics"
+    href="/trove/docs/features/tier-a-metrics/"
+    description="The five-metric schema mappings feed, in detail."
+  />
+  <LinkCard
+    title="Harness coverage"
+    href="/trove/docs/features/harness-coverage/"
+    description="Why some harnesses use synthesis rules and others use hook rules."
+  />
+  <LinkCard
+    title="The collector"
+    href="/trove/docs/features/the-collector/"
+    description="Where synthesis and hook overlays actually run."
+  />
+  <LinkCard
+    title="Harnesses"
+    href="/trove/docs/features/harnesses/"
+    description="Enable the tools whose signals you're mapping."
+  />
+</CardGrid>

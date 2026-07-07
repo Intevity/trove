@@ -1,0 +1,134 @@
+---
+title: The collector
+description: The bundled OpenTelemetry Collector sidecar at the heart of Trove — it receives OTLP on localhost, normalizes the cross-vendor stream, exports per-backend, and is supervised by the Tauri core.
+sidebar:
+  order: 9
+---
+
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+At the center of Trove is a single, bundled **OpenTelemetry Collector** — shipped
+as a sidecar binary (`trove-otelcol`) inside the app and supervised by the Rust
+core. Every signal from every harness flows through it; nothing reaches a backend
+without passing through it first. This page explains what it does and why a _local_
+collector is the right design.
+
+```
+  harnesses  ──OTLP──▶  trove-otelcol (127.0.0.1)  ──OTLP──▶  your backends
+                         receive · normalize · export
+```
+
+## Why a local collector
+
+Pointing each harness directly at your backend works at small scale but breaks
+down fast. A single local collector solves problems that per-harness direct export
+can't:
+
+- **Credentials live once.** Without a collector, your backend API key ends up
+  copied into every harness's config and shell rc. With one, the secret lives in
+  exactly one place Trove owns (and in your OS keychain) — rotating a key stops
+  being an archaeology project.
+- **Buffering.** If a backend is down or rate-limited, the collector holds and
+  retries instead of silently dropping telemetry at each source.
+- **Normalization.** Cross-vendor [Tier A synthesis](/trove/docs/features/tier-a-metrics/)
+  happens in one place rather than fighting per-tool namespaces.
+- **One PII gate and one cardinality bound.** Redaction and cardinality control
+  live in a single config you can reason about.
+
+## What it does
+
+### Receive (localhost only)
+
+The collector runs an OTLP receiver bound to `127.0.0.1` (gRPC on `:4317`, HTTP on
+`:4318`). It accepts telemetry **only from your own machine** — it is not a network
+service, and it does not listen on any public interface.
+
+### Normalize and tag
+
+As batches pass through, the collector applies Trove's overlays: it back-fills the
+`harness.id` resource attribute where needed, runs the per-harness
+`metricstransform` blocks that synthesize [Tier A metrics](/trove/docs/features/tier-a-metrics/)
+from native signals (using `action: insert`, so Tier B passes through untouched),
+and applies the opt-in [identity overlay](/trove/docs/features/settings/). These
+overlays are exactly what the [Mappings tab](/trove/docs/features/mappings/) edits.
+
+### Export per backend (fan-out)
+
+For each enabled [platform](/trove/docs/features/platforms/), the collector
+configures a dedicated exporter and broadcasts every signal to all of them at once.
+Each exporter succeeds or fails independently — which is what lets a single
+backend's outage show as a red [health pill](/trove/docs/features/platforms/#per-backend-health-pills)
+while the others keep flowing.
+
+<Aside type="caution">
+  The collector forwards **only** to the backends you configured — never to Trove or Intevity.
+  Localhost-in, your-endpoints-out. There is no Trove-controlled destination anywhere in the
+  pipeline.
+</Aside>
+
+## Reversible managed regions
+
+Trove patches each harness's config to point it at the collector by writing a
+**managed region** — a block bracketed by sentinel comments. That bracket is the
+entire footprint of an "Enable": clicking **Disable** removes the region and
+restores the file **byte-for-byte**. The same mechanism applies whether Trove is
+flipping a native OTLP flag or installing a best-effort shell-rc wrapper (see
+[Harness coverage](/trove/docs/features/harness-coverage/)). Atomic writes mean
+there are no half-applied states.
+
+## Supervised by the Tauri core
+
+The collector is not something you start or babysit — the Rust core owns it for the
+app's entire lifetime:
+
+- **Spawned** at startup, with a health probe (the collector's `health_check`
+  extension on `127.0.0.1:13133`) confirming it's actually up before traffic
+  flows.
+- **Restarted on crash**, with exponential backoff (starting at 500 ms, capped at
+  5 s); a run that survives long enough resets the backoff.
+- **Reloaded on config change** — enabling a harness, adding a backend, or
+  applying a mapping regenerates the collector config and triggers a brief reload
+  (a 1–3 second blip is normal).
+- **Shut down cleanly** when you quit the app, so it never orphans into a stray
+  background process.
+
+The current state of this lifecycle is what the
+[Overview tab](/trove/docs/features/overview/) summarizes and the
+[Logs tab](/trove/docs/features/logs/) tails.
+
+## Files it owns
+
+| What                       | Location (macOS / Linux / Windows)                     |
+| -------------------------- | ------------------------------------------------------ |
+| Generated config           | `collector.yaml` in the app support / config directory |
+| Log (rotating, 10 MiB cap) | `collector.log` (+ `.1`) in the logs / state directory |
+| Sidecar binary             | next to the app executable as `trove-otelcol`          |
+
+The config is **codegen'd** from your wizard, harness, platform, and mapping
+choices — you never hand-edit it, and Trove regenerates it on every relevant
+change.
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Platforms"
+    href="/trove/docs/features/platforms/"
+    description="The per-backend exporters the collector fans out to."
+  />
+  <LinkCard
+    title="Tier A metrics"
+    href="/trove/docs/features/tier-a-metrics/"
+    description="The normalization the collector applies on the wire."
+  />
+  <LinkCard
+    title="Logs"
+    href="/trove/docs/features/logs/"
+    description="Read the collector's live output."
+  />
+  <LinkCard
+    title="Harness coverage"
+    href="/trove/docs/features/harness-coverage/"
+    description="How harnesses get pointed at the collector."
+  />
+</CardGrid>

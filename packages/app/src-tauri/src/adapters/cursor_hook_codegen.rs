@@ -78,6 +78,17 @@ pub const SIDECAR_SCHEMA_VERSION: u32 = 1;
 /// double-emit.
 #[must_use]
 pub fn serialize_for_hook(state: &MappingState) -> HookSidecar {
+    // Cursor IDE + Cursor CLI share one hooks.json and one hook script.
+    serialize_for_hook_ids(state, &[HarnessId::CursorIde, HarnessId::CursorCli])
+}
+
+/// Like [`serialize_for_hook`] but for an arbitrary set of hook-based
+/// harness ids. The bundled hook sidecar shape is identical across
+/// hook harnesses (Cursor, Antigravity), so the Antigravity adapter
+/// reuses this with its single id; the Cursor pair uses the wrapper
+/// above. Rules are deduped by `(when, emit)` across the given ids.
+#[must_use]
+pub fn serialize_for_hook_ids(state: &MappingState, harness_ids: &[HarnessId]) -> HookSidecar {
     let metrics: Vec<HookMetricDef> = state
         .metrics
         .iter()
@@ -95,7 +106,7 @@ pub fn serialize_for_hook(state: &MappingState) -> HookSidecar {
 
     let mut rules: Vec<HookRule> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for harness_id in [HarnessId::CursorIde, HarnessId::CursorCli] {
+    for &harness_id in harness_ids {
         let Some(harness) = state.for_harness(harness_id) else {
             continue;
         };

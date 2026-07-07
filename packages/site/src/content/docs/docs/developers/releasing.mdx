@@ -1,0 +1,120 @@
+---
+title: Releasing
+description: The high-level Trove release flow — push a v* tag, CI builds signed bundles for macOS, Linux, and Windows in parallel, notarizes macOS out of band, publishes the auto-update channel, and promotes the draft release.
+sidebar:
+  order: 5
+---
+
+import { Steps, Aside, LinkCard } from '@astrojs/starlight/components';
+
+Trove ships through [GitHub Releases](https://github.com/Intevity/trove/releases)
+plus an auto-update channel. The whole pipeline is tag-driven: cut a tag, and
+CI does the rest.
+
+<Aside type="note">
+  This page describes the **public shape** of the release flow. The full runbook — including the
+  credential and infrastructure details — lives in `documentation/releasing.md` in the repo and is
+  intentionally not reproduced here.
+</Aside>
+
+## The trigger
+
+Pushing a tag of the form `v*` (for example `v0.6.0`) triggers the release
+workflow. There is nothing else to run by hand for a normal release.
+
+```bash
+git tag v0.6.0
+git push origin v0.6.0
+```
+
+The committed version numbers in `tauri.conf.json` and `Cargo.toml` are just
+the dev baseline — **the release version is stamped from the tag** in CI, so
+the binary's version always matches the tag it was built from.
+
+## What CI does
+
+<Steps>
+
+1. **Build every platform in parallel.** The workflow builds the Tauri app on
+   four legs — macOS arm64, macOS x64, Linux x64, and Windows x64 — and
+   uploads the bundles to a **draft** release.
+
+2. **Sign during the build.** macOS bundles are Developer ID-signed, and the
+   Go collector sidecar is codesigned before the Tauri build (Tauri doesn't
+   sign `externalBin` binaries itself, and an unsigned binary inside the
+   bundle would fail notarization). Windows installers are Authenticode-
+   signed once the signing configuration is present.
+
+3. **Notarize macOS out of band.** Notarization is **decoupled** from the
+   build so the expensive macOS runners never sit waiting on Apple's queue.
+   The build submits the bundle and exits; a lightweight poll waits for Apple
+   to accept it.
+
+4. **Finalize once accepted.** When notarization is Accepted, a reusable
+   finalize workflow staples the macOS artifacts, assembles the updater
+   manifest covering every platform, publishes it to the update channel, and
+   **promotes the draft release** to published.
+
+</Steps>
+
+```
+git tag v0.6.0 ──▶ release.yml
+                    ├─ build-tauri (×4 legs, parallel)
+                    │   ├─ stamp version + updater endpoint from the tag
+                    │   ├─ build sidecar → codesign it (macOS)
+                    │   ├─ build + sign the app (no notarize yet)
+                    │   └─ submit for notarization, then exit
+                    ├─ notarize-wait (Accepted → finalize now)
+                    └─ finalize (reusable)
+                        ├─ staple the macOS artifacts
+                        ├─ publish the updater channel
+                        └─ promote the draft → published
+```
+
+## The auto-updater channel
+
+The updater manifest (`latest.json`) is published to an S3-hosted channel,
+keyed by platform, and the binary's update endpoint is stamped from the same
+configuration that decides where the manifest is published — so the endpoint
+the app checks and the location CI writes to can never drift. Publishing uses
+short-lived OIDC credentials; no long-lived cloud keys are stored in CI.
+
+Each artifact is signed for the updater, and the manifest assembly **fails
+loudly** if any expected artifact or signature file is missing, so a partial
+release can't be promoted.
+
+## Release artifacts
+
+A completed release attaches one bundle set per platform:
+
+| Platform      | Artifacts                                          |
+| ------------- | -------------------------------------------------- |
+| macOS (arm64) | `.dmg`, `.app.tar.gz` (+ updater signature)        |
+| macOS (x64)   | `.dmg`, `.app.tar.gz` (+ updater signature)        |
+| Linux         | `.AppImage`, `.deb`, `.rpm` (+ updater signatures) |
+| Windows       | NSIS `-setup.exe`, `.msi` (+ updater signatures)   |
+
+## Verifying a release
+
+After a release publishes, a short verification pass confirms the artifacts
+are trustworthy:
+
+- **macOS** — Gatekeeper assessment (`spctl --assess`) reports a notarized
+  Developer ID, and the notarization ticket is stapled (`xcrun stapler
+validate`, which works offline).
+- **Windows** — the downloaded installer's digital signature chain validates.
+- **Auto-updater** — installing the previous release and checking for updates
+  in-app offers the new version and installs it on restart; on the latest
+  version the app reports it's up to date.
+
+<Aside type="tip">
+  Notarization can be slow on Apple's side. Don't re-tag to "retry" a slow notary run — the
+  decoupled poll picks it up and finalizes automatically once Apple accepts. Re-tagging just starts
+  a redundant build.
+</Aside>
+
+<LinkCard
+  title="Building from source"
+  href="/trove/docs/developers/building/"
+  description="The local build commands behind the release pipeline."
+/>

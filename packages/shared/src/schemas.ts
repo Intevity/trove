@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const HarnessId = z.enum([
   'claude-code',
   'claude-desktop',
-  'gemini-cli',
+  'antigravity-cli',
   'codex-cli',
   'codex-desktop',
   'qwen-code',
@@ -429,6 +429,16 @@ export const BackendInstance = z.object({
 export type BackendInstance = z.infer<typeof BackendInstance>;
 
 /** Persisted application state. Secrets are referenced via SecretRef only.
+ *  This literal MUST track the Rust `app_state::CURRENT_SCHEMA_VERSION`;
+ *  the Rust loader re-stamps every loaded document to that version, so a
+ *  stale literal here rejects the wire payload as a Zod parse failure that
+ *  `useAppState` surfaces as an `internal` IPC error (the "data is safe"
+ *  recovery notice) on every launch.
+ *
+ *  v12: the `gemini-cli` harness id was renamed to `antigravity-cli`
+ *  (harnesses, telemetryObserved keys, and mapping harnessIds); the Rust
+ *  loader migrates existing v11 documents forward.
+ *
  *  Schema version 10 adds the per-instance `enabled` flag on every
  *  `BackendInstance` so a platform can be paused without deleting its
  *  configuration. v9 documents migrate forward by defaulting every
@@ -445,7 +455,7 @@ export type BackendInstance = z.infer<typeof BackendInstance>;
  *  schemaVersion to the current value so the next save persists at the
  *  current version. Older consumers cannot read newer files. */
 export const AppState = z.object({
-  schemaVersion: z.literal(11),
+  schemaVersion: z.literal(12),
   backends: z.array(BackendInstance),
   harnesses: z.array(HarnessConfig),
   autoUpdateEnabled: z.boolean(),
@@ -594,7 +604,7 @@ export const MetricsSnapshotWire = z.object({
   unreachable: z.boolean(),
   overallHealth: OverallHealth,
   /** Per-harness outgoing counts from the collector's diag filter
-   *  pipelines. Keyed by harness suffix (e.g. `"gemini-cli"`); each
+   *  pipelines. Keyed by harness suffix (e.g. `"claude-code"`); each
    *  entry holds span / metric-point / log-record counters this run.
    *  Only populated for native-OTel emitters with `service.name`
    *  candidates; watcher-emitter harnesses are absent. Defaults to `{}`

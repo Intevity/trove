@@ -206,9 +206,9 @@ function useReceivedRates(metrics: MetricsSnapshotWire | null): LaneRates {
 /** Derive per-harness rates from `metrics.diagObservations` deltas. The
  *  collector emits one diag pipeline per native-OTel emitter, so any
  *  enabled harness with a `service.name` candidate (Claude Code,
- *  Gemini, Codex, Qwen, OpenCode, Claude Desktop) gets its own entry.
- *  Watcher-emitter harnesses don't appear here; the caller falls back
- *  to aggregate animation for those. */
+ *  Codex, Qwen, OpenCode, Claude Desktop) gets its own entry.
+ *  Hook/watcher-emitter harnesses (Cursor, Antigravity CLI) self-tag and
+ *  don't appear here; the caller falls back to aggregate animation. */
 function usePerHarnessRates(metrics: MetricsSnapshotWire | null): Record<string, LaneRates> {
   const prev = useRef<{ snap: MetricsSnapshotWire; at: number } | null>(null);
   const [rates, setRates] = useState<Record<string, LaneRates>>({});

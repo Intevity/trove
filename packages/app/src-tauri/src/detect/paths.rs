@@ -27,7 +27,22 @@ pub fn config_search_paths(harness: HarnessId, home: &Path) -> Vec<PathBuf> {
         // handled outside `config_search_paths`. We still leave a
         // hook for a per-user preferences file in case Anthropic
         // ships one later (verified empty for now).
-        HarnessId::GeminiCli => paths.push(home.join(".gemini").join("settings.json")),
+        HarnessId::AntigravityCli => {
+            // Antigravity CLI (`agy`) keeps its config under
+            // `~/.gemini/antigravity-cli/`. It dropped Gemini CLI's native
+            // OTLP exporter, so Trove registers its telemetry bridge as a
+            // hook in `hooks.json` there (mirroring Cursor's `~/.cursor/
+            // hooks.json`). The file only appears once a hook is
+            // configured, so the appDataDir itself counts as install
+            // evidence (the dir-fallback returns Unknown/false pre-apply,
+            // which is the correct state).
+            paths.push(
+                home.join(".gemini")
+                    .join("antigravity-cli")
+                    .join("hooks.json"),
+            );
+            paths.push(home.join(".gemini").join("antigravity-cli"));
+        }
         HarnessId::CodexCli | HarnessId::CodexDesktop => {
             // Codex CLI and Codex desktop both read ~/.codex/config.toml
             // — the desktop app's Electron shell still delegates to the
@@ -197,12 +212,15 @@ mod tests {
     }
 
     #[test]
-    fn gemini_cli_resolves_to_dot_gemini_settings() {
+    fn antigravity_cli_resolves_to_appdata_hooks_then_dir() {
         let home = PathBuf::from("/home/dev");
-        let paths = config_search_paths(HarnessId::GeminiCli, &home);
+        let paths = config_search_paths(HarnessId::AntigravityCli, &home);
         assert_eq!(
             paths,
-            vec![PathBuf::from("/home/dev/.gemini/settings.json")]
+            vec![
+                PathBuf::from("/home/dev/.gemini/antigravity-cli/hooks.json"),
+                PathBuf::from("/home/dev/.gemini/antigravity-cli"),
+            ]
         );
     }
 
@@ -394,7 +412,7 @@ mod tests {
     fn other_tier_one_harnesses_have_no_app_bundle() {
         let root = PathBuf::from("/Applications");
         for id in [
-            HarnessId::GeminiCli,
+            HarnessId::AntigravityCli,
             HarnessId::CodexCli,
             HarnessId::QwenCode,
         ] {

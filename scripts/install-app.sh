@@ -48,13 +48,33 @@ BUNDLE_PATH="$REPO_ROOT/packages/app/src-tauri/target/release/bundle/macos/Trove
 cd "$REPO_ROOT"
 
 # The running app holds its files open and macOS App Management will block the
-# rm -rf below. The pattern matches the main `trove` binary AND the
-# `trove-otelcol` sidecar — either one running blocks a clean swap.
-if pgrep -f "Trove.app/Contents/MacOS/" >/dev/null 2>&1; then
-  echo "✗ Trove is still running." >&2
-  echo "  Quit it from the tray (or run: osascript -e 'quit app \"Trove\"')" >&2
-  echo "  then re-run this script." >&2
-  exit 1
+# rm -rf below; a lingering `trove-otelcol` sidecar does the same. Rather than
+# make you quit by hand (and risk a stale process silently surviving so `open`
+# below just re-focuses the OLD binary instead of the freshly built one), quit
+# gracefully and then escalate by PID until the bundle is fully idle. The
+# pattern matches the installed app AND its sidecar via their bundle path — it
+# does NOT match a `pnpm dev` vite server (whose command is a repo path, not
+# `Trove.app/Contents/MacOS/`), so unrelated dev processes are never touched.
+TROVE_PROC_PATTERN="Trove.app/Contents/MacOS/"
+if pgrep -f "$TROVE_PROC_PATTERN" >/dev/null 2>&1; then
+  echo "→ Trove is running; quitting it (app + sidecar) so the new build takes over..."
+  osascript -e 'quit app "Trove"' >/dev/null 2>&1 || true
+  # Graceful first, then SIGTERM, then SIGKILL — polling for exit between each.
+  for sig in TERM TERM KILL; do
+    for _ in 1 2 3 4 5 6; do
+      pgrep -f "$TROVE_PROC_PATTERN" >/dev/null 2>&1 || break 2
+      sleep 0.5
+    done
+    echo "  …still running; sending SIG$sig by PID"
+    pkill -"$sig" -f "$TROVE_PROC_PATTERN" >/dev/null 2>&1 || true
+  done
+  if pgrep -f "$TROVE_PROC_PATTERN" >/dev/null 2>&1; then
+    echo "✗ Could not stop the running Trove processes:" >&2
+    pgrep -fl "$TROVE_PROC_PATTERN" >&2 || true
+    echo "  Quit it from the tray / Activity Monitor, then re-run." >&2
+    exit 1
+  fi
+  echo "  ✓ Trove stopped."
 fi
 
 echo "→ Building app bundle (this is the long step)..."

@@ -1,0 +1,106 @@
+---
+title: Add identity tags
+description: Set user.name and user.email in Settings so every signal Trove forwards carries identity resource attributes — the foundation for per-user dashboards, team rollups, and dead-seat detection.
+sidebar:
+  order: 6
+---
+
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+By default, Trove tags every signal with its source harness
+(`harness.id`, `harness.name`) but not with **who** produced it. Identity
+tagging adds `user.name` and `user.email` as resource attributes on every
+span, metric, and log Trove forwards, so your backend can group activity
+by person — which turns "spend by tool" into "spend by person and tool,"
+and makes dead-seat detection possible.
+
+These are **resource attributes**: set once per machine, attached to
+every signal at the source. You don't tag individual events — Trove
+stamps the whole stream.
+
+## Set your identity
+
+<Steps>
+
+1. Open Trove and go to the **Settings** tab.
+
+   <Aside type="note">Screenshot coming soon.</Aside>
+
+2. Enter your **name** in the `user.name` field and your **email** in the
+   `user.email` field. Use the same email your license roster uses, so a
+   person's activity in Trove lines up with the seat they hold.
+
+3. Save. Trove writes the values to the single versioned `state.json`,
+   regenerates the collector config so the new resource attributes are
+   applied, and reloads (a brief blip). From the next batch onward, every
+   signal carries your identity.
+
+</Steps>
+
+<Aside type="tip">
+  These values are plain attribution metadata, not credentials — they live in `state.json`, not the
+  keychain. (Backend ingest keys are the secrets, and those always go to the OS keychain.) Use the
+  email that matches your SSO / license records so backend joins are clean.
+</Aside>
+
+## What the tags look like at your backend
+
+Once set, every signal Trove forwards carries the full resource-attribute
+set:
+
+```
+service.name   = <harness service name>
+harness.id     = claude-code
+harness.name   = Claude Code
+user.name      = Ada Lovelace
+user.email     = ada@example.com
+trove.source   = trove
+```
+
+Because identity is a resource attribute, it's available on Tier A
+metrics, Tier B native metrics, traces, and logs alike — so you can group
+**any** of them by `user.email` in your backend.
+
+## What this unlocks
+
+- **Per-user dashboards.** Group `trove.harness.events`,
+  `trove.harness.tokens`, or `trove.harness.cost.usd` by `user.email` to
+  see who's doing what, with which tool.
+- **Team rollups across mixed harnesses.** Since `user.email` is
+  consistent regardless of which harness emitted, one panel can total a
+  person's activity across Claude Code, Cursor, Copilot CLI, and the rest.
+- **Dead-seat detection.** Comparing the set of active `user.email`
+  values against your license roster is exactly how you find paid seats
+  with zero activity. See
+  [Normalize costs and find dead seats](/trove/docs/guides/normalize-costs-and-find-dead-seats/).
+
+<Aside type="caution">
+  Identity tags are per-machine: each person sets their own in their own Trove install. For a
+  complete team view, roll this out so everyone has identity configured — anyone who hasn't set it
+  will still emit telemetry, just without the `user.*` attributes, and will be invisible to per-user
+  queries. Trove keeps this data local: the attributes are forwarded only to the backend you
+  configured, never to Trove or Intevity.
+</Aside>
+
+<CardGrid>
+  <LinkCard
+    title="Normalize costs & find dead seats"
+    href="/trove/docs/guides/normalize-costs-and-find-dead-seats/"
+    description="Put user.email to work spotting unused paid licenses."
+  />
+  <LinkCard
+    title="Customize mappings"
+    href="/trove/docs/guides/customize-mappings/"
+    description="Shape the Tier A metrics these identities attach to."
+  />
+  <LinkCard
+    title="Connect your first backend"
+    href="/trove/docs/guides/connect-your-first-backend/"
+    description="Have a destination ready to receive the tagged stream."
+  />
+  <LinkCard
+    title="Settings reference"
+    href="/trove/docs/features/settings/"
+    description="Auto-update and identity options in one place."
+  />
+</CardGrid>

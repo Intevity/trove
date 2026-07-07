@@ -1,0 +1,150 @@
+---
+title: Customize mappings
+description: Adjust the synthesis and hook rules that map a harness's raw signals onto Trove's normalized Tier A metrics, preview the live diff before you apply, and reset to the shipped defaults whenever you want.
+sidebar:
+  order: 3
+---
+
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Trove's **Tier A** metrics are the cross-harness comparison layer — a
+fixed, normalized schema so that "cost per turn" or "tokens this week"
+means the same thing whether the signal came from Claude Code, Cursor, or
+Aider. The five Tier A metrics are:
+
+| Metric                        | Type          | Key attributes                                                                |
+| ----------------------------- | ------------- | ----------------------------------------------------------------------------- |
+| `trove.harness.events`        | counter       | `event.kind` (chat.turn, tool.call, shell.exec, file.edit, session.start/end) |
+| `trove.harness.tokens`        | counter       | `direction` (input/output), `model`                                           |
+| `trove.harness.cost.usd`      | counter       | `model`, `cost.method` (exact / estimated)                                    |
+| `trove.harness.turn.duration` | histogram (s) | `event.kind`                                                                  |
+| `trove.harness.errors`        | counter       | `error.kind` (rate_limit, auth, tool_failure, network, policy, unknown)       |
+
+Everything a harness emits natively (its **Tier B** metrics) always
+passes through untouched. Mappings only control how raw signals are
+**additionally** projected onto Tier A. You edit those rules on the
+**Mappings** tab.
+
+## Two kinds of rule
+
+How a harness contributes to Tier A depends on its coverage type:
+
+- **Synthesis rules** (`synthesize-from-native`) — for native-OTel
+  harnesses. Each rule names a native metric (for example
+  `claude_code.token.usage`), the Tier A metric it feeds
+  (`tokens`), and an attribute map from the raw keys to Tier A keys.
+  Trove implements these as a collector-side `transform` /
+  `metricstransform` step, so synthesis is additive and never disturbs
+  the native metric.
+- **Hook rules** (`hook-rule`) — for watcher/wrapper harnesses. Each rule
+  matches a raw event name (for example `afterAgentResponse`) and either
+  emits into a Tier A metric with a set of attributes, **or** emits
+  nothing. Setting a rule's emit to "nothing" is how you suppress
+  double-counting — for example mapping `beforeSubmitPrompt → (none)` and
+  counting the turn only on `afterAgentResponse`.
+
+## Adjust a rule
+
+<Steps>
+
+1. Open the **Mappings** tab and pick the harness you want to tune. Each
+   harness shows its current Tier A rows.
+
+   <Aside type="note">Screenshot coming soon.</Aside>
+
+2. Edit a row. Typical edits:
+   - **Retarget an event.** Change which `event.kind` a raw event maps to
+     (for example, classify a shell-execution event as `shell.exec`
+     rather than `tool.call`).
+   - **Stop a double-count.** Set a redundant raw event's emit to
+     "nothing" so only one of a before/after pair contributes a
+     `chat.turn`.
+   - **Toggle a synthesis row.** Turn `synthesize-from-native` on for the
+     tokens or events metric so a native counter is also copied into
+     Tier A; turn it off for a clean native-only namespace.
+   - **Disable a metric for one harness.** Turn off a harness's
+     `cost.usd` row entirely if you don't trust its estimate.
+
+3. For cost, adjust the **rate table** if your model isn't priced the way
+   you pay. Add a model entry with your own per-1k input/output USD rates;
+   Trove uses those for the matching `model` attribute when computing
+   `trove.harness.cost.usd`. Rows priced from a rate table report
+   `cost.method = estimated`; rows that carry a real cost from the harness
+   report `cost.method = exact`.
+
+</Steps>
+
+<Aside type="caution">
+  The five built-in Tier A metrics are locked — you can't rename or delete them, because cross-user
+  and cross-team dashboards depend on the schema meaning the same thing everywhere. You can extend
+  the catalog with your own custom metrics, but a custom name only carries across teams if the
+  consuming side has the same catalog. (Custom metric rules are honored by native-OTel harnesses
+  today; watcher/hook harnesses don't yet honor them.)
+</Aside>
+
+## Preview the diff before applying
+
+Trove doesn't apply mapping edits blind. Before anything reaches the
+running collector, you can preview exactly how your changes alter the
+generated pipeline.
+
+<Steps>
+
+1. Make your edits. Trove computes a **live diff** of the generated
+   collector config — the new/changed `transform` and `metricstransform`
+   stanzas your rules produce — so you can read precisely what will
+   change before committing.
+
+2. Review the diff. Confirm the rules synthesize the metrics you expect
+   and nothing you didn't intend.
+
+3. **Apply changes.** Trove validates the mapping, persists it to the
+   single versioned `state.json`, regenerates `collector.yaml`, and
+   signals the collector to reload. Expect a brief 1–3 second collector
+   blip while the new config takes effect.
+
+</Steps>
+
+## Reset to defaults
+
+Every harness ships with a sensible default mapping baked in. If you've
+edited yourself into a corner, you can always go back:
+
+<Steps>
+
+1. On the harness's mapping, choose **Reset to defaults**.
+
+2. Trove restores that harness's shipped default rows, regenerates the
+   collector config, and reloads. Your edits to other harnesses are
+   untouched.
+
+</Steps>
+
+<Aside type="tip">
+  Defaults are deliberately conservative about cost. Token and event synthesis are commonly on by
+  default so cross-harness dashboards populate immediately; cost synthesis is often off by default
+  to avoid a confusing double-count until you opt in.
+</Aside>
+
+<CardGrid>
+  <LinkCard
+    title="Normalize costs & find dead seats"
+    href="/trove/docs/guides/normalize-costs-and-find-dead-seats/"
+    description="Put Tier A cost and events to work across every harness."
+  />
+  <LinkCard
+    title="Enable a harness"
+    href="/trove/docs/guides/enable-a-harness/"
+    description="Turn telemetry on before you start mapping it."
+  />
+  <LinkCard
+    title="Mappings reference"
+    href="/trove/docs/features/mappings/"
+    description="The full Tier A schema and rule grammar."
+  />
+  <LinkCard
+    title="Add identity tags"
+    href="/trove/docs/guides/add-identity-tags/"
+    description="Attribute Tier A metrics to people for per-user dashboards."
+  />
+</CardGrid>

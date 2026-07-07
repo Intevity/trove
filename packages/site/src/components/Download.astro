@@ -1,0 +1,64 @@
+---
+// Download section: three platform cards (macOS / Windows / Linux), each linking
+// to the GitHub Releases page. Free and open source. Icon names (apple, monitor,
+// terminal, download, github) resolve through Icon.astro's path map.
+import Icon from './Icon.astro';
+
+const repo = 'https://github.com/Intevity/trove';
+const releases = `${repo}/releases`;
+
+const platforms = [
+  { os: 'macOS', icon: 'apple', detail: 'Universal (Apple Silicon + Intel)', format: '.dmg' },
+  { os: 'Windows', icon: 'monitor', detail: 'x64 installer', format: '.msi / -setup.exe' },
+  { os: 'Linux', icon: 'terminal', detail: 'x64', format: '.AppImage / .deb / .rpm' },
+];
+---
+
+<section id="download" class="section">
+  <div class="mx-auto mb-12 max-w-2xl text-center">
+    <p class="section-label">Get Trove</p>
+    <h2 class="mt-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+      Download for your platform
+    </h2>
+    <p class="mt-4 text-base leading-relaxed text-muted">
+      Grab the latest build from the GitHub Releases page. Trove is a cross-platform desktop tray
+      app for macOS, Windows, and Linux, and it updates itself once installed.
+    </p>
+  </div>
+
+  <div class="grid gap-5 sm:grid-cols-3">
+    {
+      platforms.map((p) => (
+        <a
+          href={releases}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="glass-card group flex flex-col items-center p-8 text-center transition-transform hover:-translate-y-0.5"
+        >
+          <span class="inline-flex h-14 w-14 items-center justify-center rounded-tile bg-brand/12 text-brand ring-1 ring-brand/20">
+            <Icon name={p.icon} size={28} />
+          </span>
+          <h3 class="mt-5 text-lg font-semibold text-foreground">{p.os}</h3>
+          <p class="mt-1 text-sm text-muted">{p.detail}</p>
+          <p class="mt-3 text-xs font-medium uppercase tracking-wider text-foreground/45">
+            {p.format}
+          </p>
+          <span class="btn-primary mt-6 w-full">
+            <Icon name="download" size={18} />
+            Download
+          </span>
+        </a>
+      ))
+    }
+  </div>
+
+  <div class="mt-10 flex flex-col items-center gap-3 text-center">
+    <p class="text-sm text-muted">
+      Free and MIT licensed. No account, no sign-up, no telemetry back to Trove.
+    </p>
+    <a href={releases} class="btn-ghost" target="_blank" rel="noopener noreferrer">
+      <Icon name="github" size={18} />
+      View all releases
+    </a>
+  </div>
+</section>

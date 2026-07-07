@@ -1,0 +1,89 @@
+---
+title: Installation
+description: Download Trove for macOS, Windows, or Linux, check the system requirements, and run the first-launch setup wizard.
+sidebar:
+  order: 2
+---
+
+import { Aside, Steps, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+
+Trove ships as a single desktop app with the OpenTelemetry Collector bundled inside it. There is no separate daemon to install, no agent to upgrade, and no account to create. Download the installer for your OS, launch it, and the first-run wizard takes you the rest of the way.
+
+## System requirements
+
+- **macOS** 11+ (Apple Silicon or Intel)
+- **Windows** 10 or 11 (64-bit)
+- **Linux** with a desktop environment (Debian/Ubuntu, Fedora/RHEL, or any distro via the portable AppImage)
+- A few hundred MB of disk; the final bundle is around 30 MB
+- At least one supported AI coding harness installed (otherwise Trove launches fine but has nothing to detect)
+
+<Aside type="note">
+  Trove needs no inbound network access. The bundled collector binds to `127.0.0.1` and reaches out
+  only to the observability backend you configure.
+</Aside>
+
+## Download
+
+Grab the latest installer from the [GitHub Releases page](https://github.com/Intevity/trove/releases), then pick the format for your platform.
+
+<Tabs>
+  <TabItem label="macOS">
+    Download the `.dmg` (a single universal build runs on both Apple Silicon and Intel), open it, and drag **Trove** into your Applications folder.
+
+    <Aside type="caution">
+    Pre-1.0 macOS builds may ship unsigned. If macOS Gatekeeper blocks the first launch, right-click (or Control-click) **Trove.app** and choose **Open**, then confirm. This is a one-time step.
+    </Aside>
+
+  </TabItem>
+  <TabItem label="Windows">
+    Download the `.msi` or the NSIS `-setup.exe` and run it. Follow the installer prompts to finish.
+  </TabItem>
+  <TabItem label="Linux">
+    Choose the format for your distro:
+
+    - **Debian / Ubuntu** — install the `.deb` (`sudo apt install ./trove_*.deb`)
+    - **Fedora / RHEL** — install the `.rpm` (`sudo dnf install ./trove-*.rpm`)
+    - **Any distro** — download the portable `.AppImage`, mark it executable (`chmod +x Trove*.AppImage`), and run it
+
+    Credential storage on Linux uses the Secret Service API, so a keyring provider such as GNOME Keyring or KWallet should be available.
+
+  </TabItem>
+</Tabs>
+
+<LinkCard
+  title="All downloads"
+  description="Every platform and format on the GitHub Releases page."
+  href="https://github.com/Intevity/trove/releases"
+/>
+
+## First launch and the setup wizard
+
+The first time you open Trove, a setup wizard walks you through choosing a destination backend and entering its credentials. The collector starts the moment you save.
+
+<Steps>
+
+1. **Launch Trove.** It starts in your system tray (menu bar on macOS, notification area on Windows, system tray on Linux). Click the tray icon to open the dashboard window.
+
+2. **Pick a destination backend.** The wizard lists the supported observability platforms. Choose the one you already use — SigNoz, Grafana Cloud, Honeycomb, Datadog, New Relic, and more — or pick **Generic OTLP** to point at any OTLP endpoint, or **Local Collector** to pass through to your own self-hosted collector.
+
+3. **Enter your credentials.** Each backend has a tailored form (for example, an ingestion key, an API key plus dataset, or an endpoint plus token). Trove stores these in your OS keychain — never in plaintext.
+
+4. **Save.** Trove writes the backend config, starts the bundled collector on `127.0.0.1`, and the destination's health pill begins reporting.
+
+5. **You land on the dashboard.** Trove has already auto-detected the harnesses on your machine. Head to the next page to enable one and watch telemetry flow.
+
+</Steps>
+
+<Aside type="tip">
+  You can change or add backends any time from the **Platforms** tab — the wizard just gets you to
+  your first one fast. Trove fans out to every enabled backend at once, so adding a second
+  destination later is one more form.
+</Aside>
+
+## Next step
+
+<LinkCard
+  title="Quick start"
+  description="Enable a harness and confirm telemetry is flowing, in about five minutes."
+  href="/trove/docs/getting-started/quick-start/"
+/>

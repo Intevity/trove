@@ -15,7 +15,7 @@ const baseIdentity = { enabled: false, source: 'auto' as const, name: '', email:
 
 function appStateWithMappings(mappings: MappingState): AppState {
   return {
-    schemaVersion: 11,
+    schemaVersion: 12,
     backends: [],
     harnesses: [],
     autoUpdateEnabled: false,
@@ -99,12 +99,12 @@ describe('MappingsTab', () => {
       metrics: builtinCatalog,
       harnesses: [
         {
-          harnessId: 'gemini-cli',
+          harnessId: 'codex-cli',
           enabled: true,
           sources: [
             {
               kind: 'synthesize-from-native',
-              nativeMetric: 'gemini_cli.session.count',
+              nativeMetric: 'codex.session.count',
               targetMetric: 'events',
               attributeMap: {},
               injectAttributes: {},
@@ -116,7 +116,7 @@ describe('MappingsTab', () => {
     });
 
     render(<MappingsTab appState={state} onAppStateRefresh={vi.fn()} />);
-    expect(screen.getByText('gemini_cli.session.count')).toBeDefined();
+    expect(screen.getByText('codex.session.count')).toBeDefined();
     // Catalog name renders for the target; multiple instances allowed.
     const occurrences = screen.getAllByText('trove.harness.events');
     expect(occurrences.length).toBeGreaterThan(0);

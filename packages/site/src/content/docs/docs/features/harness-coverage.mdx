@@ -1,0 +1,119 @@
+---
+title: Harness coverage
+description: How Trove captures each harness — native OTel tools whose flags it flips versus best-effort adapters built from watchers and shell-rc wrappers — and what each tier can and cannot capture.
+sidebar:
+  order: 8
+---
+
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Not every AI coding tool speaks OpenTelemetry. Trove captures the ones that do by
+flipping their flags, and captures the ones that don't by _deriving_ telemetry from
+what they leave on disk. Understanding which path a harness takes tells you what
+data to expect from it. This is the concept behind the **coverage badges** on the
+[Harnesses tab](/trove/docs/features/harnesses/).
+
+## Native OTel
+
+Some harnesses emit OTLP themselves. For these, Trove's job is small: write a
+[managed region](/trove/docs/features/the-collector/#reversible-managed-regions)
+into the tool's config that turns on its OTLP export and points it at the local
+collector. The tool does the rest.
+
+**Native-OTel harnesses:** Claude Code, Antigravity CLI, Codex (CLI and desktop),
+Qwen Code, OpenCode, and Cursor IDE. Claude Desktop is auto-detected via a local
+audit log with no setup.
+
+Because the signal originates in the tool's own instrumentation, native coverage
+is the highest fidelity Trove offers:
+
+- **Events** — accurate, from the tool's own event stream.
+- **Tokens** — exact, from the tool's own counts.
+- **Cost** — `exact`, computed from real token usage.
+- **Durations and errors** — reported by the tool.
+
+## Best effort (watchers + wrappers)
+
+Other tools never emit OTel. Trove can't make them — but it can watch what they
+do and translate it into equivalent OTLP records. Two mechanisms:
+
+- **Watchers** — filesystem monitors that tail a tool's on-disk records. Cline's
+  watcher, for example, tails its `ui_messages.json` task records and classifies
+  each new entry by type into Tier A events.
+- **Shell-rc wrappers** — a managed block in your shell rc file defines a wrapper
+  function around the tool's command. The wrapper re-execs the real binary,
+  records each invocation (timestamp, duration, exit code), and emits OTLP from
+  that. Aider and GitHub Copilot CLI work this way.
+
+**Best-effort harnesses:** Cline, Aider, and GitHub Copilot CLI.
+
+The derived records share the **same Tier A queries** as their native peers — a
+`chat.turn` from Aider sits in the same `trove.harness.events` series as a
+`chat.turn` from Claude Code. The difference is fidelity:
+
+- **Events** — reliable (one per invocation, or one per classified record).
+- **Durations** — reliable (the wrapper times the real process).
+- **Tokens** — _estimated_. Trove only sees prompt/response byte length, not the
+  upstream tokenizer's count, so it approximates (`bytes / 4`).
+- **Cost** — `estimated`, from those approximate tokens × the rate table.
+- **Errors** — derived from non-zero exit codes.
+
+<Aside type="caution">
+  Best-effort cost and token figures are directional, not invoice-grade. They carry `cost.method =
+  "estimated"` so you can filter them out when you need exact numbers — see [Tier A
+  metrics](/trove/docs/features/tier-a-metrics/#exact-vs-estimated-cost).
+</Aside>
+
+## Partial coverage
+
+A middle case: the tool exposes _some_ of its events but not all. **Cursor CLI**
+is the example — it surfaces only a subset of Cursor's hook events (shell-exec),
+so Trove captures that subset and nothing more. Partial harnesses get a distinct
+badge so you know the data is genuine but incomplete.
+
+## At a glance
+
+| Coverage        | How Trove captures it                    | Events      | Tokens    | Cost        | Examples                                                        |
+| --------------- | ---------------------------------------- | ----------- | --------- | ----------- | --------------------------------------------------------------- |
+| **Native OTel** | Flip the tool's OTLP flags               | Accurate    | Exact     | `exact`     | Claude Code, Antigravity CLI, Codex, Qwen, OpenCode, Cursor IDE |
+| **Partial**     | Capture an observable subset of events   | Subset only | —         | —           | Cursor CLI                                                      |
+| **Best effort** | Watchers + shell-rc wrappers derive OTLP | Reliable    | Estimated | `estimated` | Cline, Aider, Copilot CLI                                       |
+
+<Aside type="note">
+  A fourth class — **setup guide** harnesses (Junie CLI, Droid, Kimi Code CLI, Devin, ForgeCode) —
+  can't be auto-patched yet, so Trove links to manual setup instructions instead of a one-click
+  toggle. Each adapter declares which Tier A metrics it can emit, so sparse rows across harnesses
+  are expected and normal.
+</Aside>
+
+## Reversibility is the same for both
+
+Whether Trove flips a native flag or installs a wrapper, the change is made through
+a sentinel-bracketed [managed region](/trove/docs/features/the-collector/#reversible-managed-regions)
+and reverts byte-for-byte on **Disable** — config files, shell rc, and all. No
+coverage tier leaves residue behind.
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard
+    title="Harnesses"
+    href="/trove/docs/features/harnesses/"
+    description="Enable harnesses and see their coverage badges."
+  />
+  <LinkCard
+    title="Tier A metrics"
+    href="/trove/docs/features/tier-a-metrics/"
+    description="The schema both native and derived records feed."
+  />
+  <LinkCard
+    title="Mappings"
+    href="/trove/docs/features/mappings/"
+    description="Synthesis rules for native tools, hook rules for watchers."
+  />
+  <LinkCard
+    title="The collector"
+    href="/trove/docs/features/the-collector/"
+    description="The localhost sidecar every harness routes through."
+  />
+</CardGrid>

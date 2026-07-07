@@ -1,0 +1,149 @@
+---
+title: Normalize costs and find dead seats
+description: Use Trove's Tier A cost and event metrics to compare spend across every AI coding tool on the same axis, and surface paid seats that generate zero activity before your next renewal.
+sidebar:
+  order: 4
+---
+
+import { Aside, Steps, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Once two or more harnesses are emitting through Trove, their signals all
+arrive in the same normalized **Tier A** schema. That's what makes them
+comparable: `trove.harness.cost.usd` from Claude Code sits on the same
+axis as `trove.harness.cost.usd` from GitHub Copilot CLI, with no
+vendor-specific exporter to build or maintain. Two questions get easy to
+answer:
+
+- **Where is the money going?** Compare spend per tool, per user, per
+  week — apples to apples.
+- **Which paid seats are dead?** Find licenses with zero activity so
+  procurement can act before renewal.
+
+<Aside type="note">
+  This guide is about what to query in your backend once data is flowing. Trove normalizes and
+  forwards; the dashboards live in the observability backend you chose. The metric and attribute
+  names below are stable across every harness, so the same queries work no matter which tools your
+  team uses.
+</Aside>
+
+## The metrics you'll use
+
+| Metric                   | Use it for                          | Key attributes                             |
+| ------------------------ | ----------------------------------- | ------------------------------------------ |
+| `trove.harness.cost.usd` | Spend, normalized across vendors    | `model`, `cost.method` (exact / estimated) |
+| `trove.harness.events`   | Activity — turns, tool calls, edits | `event.kind`                               |
+| `trove.harness.tokens`   | Volume behind the spend             | `direction`, `model`                       |
+
+Every data point also carries resource attributes set per harness:
+`harness.id`, `harness.name`, and — once you've
+[added identity tags](/trove/docs/guides/add-identity-tags/) —
+`user.name` and `user.email`. Those are the dimensions you group by.
+
+## Normalize cost across harnesses
+
+The goal is a single chart where each AI tool is a comparable series.
+
+<Steps>
+
+1. **Enable the harnesses you want to compare** and confirm each is
+   flowing (its `harness.id` shows up in the **Logs** tab and at your
+   backend). Mixed coverage is fine — native-OTel and watcher-based
+   harnesses both emit Tier A.
+
+2. **Make sure cost is being emitted.** On the **Mappings** tab, check
+   that each harness's `cost.usd` row is enabled. Where Trove can't get a
+   real cost from the harness it estimates from tokens and the rate
+   table, marking those points `cost.method = estimated`. Set your own
+   model prices in the rate table if you run a custom or self-hosted
+   model.
+
+3. **Build a "spend by tool" view** in your backend: sum
+   `trove.harness.cost.usd` grouped by `harness.id` over a time window.
+   Because the schema is shared, each harness becomes one comparable
+   series in the same panel.
+
+4. **Split exact vs. estimated** by also grouping on `cost.method` so you
+   know how much of the number is metered versus modeled. Estimated rows
+   are directional; exact rows are billable-grade.
+
+5. **Derive cost per turn** by dividing `trove.harness.cost.usd` by the
+   `chat.turn` slice of `trove.harness.events` (filter
+   `event.kind = "chat.turn"`), grouped by `harness.id`. Now "cost per
+   interaction" is directly comparable between, say, Claude Code and
+   Cursor.
+
+</Steps>
+
+<Aside type="tip">
+  If a harness's spend looks implausibly round, it's almost certainly running on `cost.method =
+  estimated` with the default rate table. Update the model rates on the Mappings tab to match your
+  contract and the estimate tightens.
+</Aside>
+
+## Find dead seats
+
+A "dead seat" is a paid license that produced **no activity** in a
+window. The same `harness.id`-keyed (and, with identity tags,
+`user.email`-keyed) stream that powers your cost dashboard surfaces them.
+
+<Steps>
+
+1. **Tag signals with identity.** In **Settings**, set `user.name` and
+   `user.email` so each person's activity is attributable. Roll this out
+   across the team so the per-user view is complete. See
+   [Add identity tags](/trove/docs/guides/add-identity-tags/).
+
+2. **Define "active."** Pick a metric and window that mean "this seat is
+   being used" — for example, at least one `trove.harness.events` point
+   with `event.kind = "chat.turn"` in the last 30 days.
+
+3. **List who fired.** In your backend, query the active set: distinct
+   `user.email` (optionally per `harness.id`) with at least one qualifying
+   event in the window.
+
+4. **Subtract from your roster.** Compare that active set against your
+   license roster for each tool. Anyone holding a paid seat who isn't in
+   the active set is a dead-seat candidate — by user, by tool, by week.
+
+5. **Act before renewal.** Hand the list to procurement. Reclaiming a
+   handful of unused Cursor or Copilot seats across a large org is often
+   the fastest payback Trove delivers.
+
+</Steps>
+
+<Aside type="caution">
+  Absence of telemetry isn't always absence of use. A seat can read as "dead" because the user never
+  had that harness enabled in Trove, or turned it off. Confirm the harness is enabled for the people
+  you're evaluating before treating a zero as an unused license.
+</Aside>
+
+## Why this works at all
+
+Trove does the normalization at the collector, so your backend never sees
+five vendor dialects — it sees one Tier A schema with consistent
+attribute names. That's the difference between "four dashboards nobody
+reconciles" and "one query that compares everything," and it's what lets
+finance and engineering look at the same numbers.
+
+<CardGrid>
+  <LinkCard
+    title="Customize mappings"
+    href="/trove/docs/guides/customize-mappings/"
+    description="Tune cost rules and the rate table per harness."
+  />
+  <LinkCard
+    title="Add identity tags"
+    href="/trove/docs/guides/add-identity-tags/"
+    description="Attribute activity to people so dead-seat detection works."
+  />
+  <LinkCard
+    title="Multi-backend fan-out"
+    href="/trove/docs/guides/multi-backend-fan-out/"
+    description="Send the cost stream to finance's backend and engineering's at once."
+  />
+  <LinkCard
+    title="Mappings reference"
+    href="/trove/docs/features/mappings/"
+    description="The full Tier A schema, attributes, and rate table."
+  />
+</CardGrid>

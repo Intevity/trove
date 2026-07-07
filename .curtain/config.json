@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "engine": "chromium",
+  "defaults": {
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "theme": "macos-sonoma-dark"
+  },
+  "capture": {
+    "appUrl": "http://localhost:1420",
+    "viewport": { "width": 960, "height": 820 },
+    "chrome": {
+      "menuApp": "Trove",
+      "title": "Trove",
+      "clock": "9:41 AM",
+      "tray": "3 harnesses · SigNoz",
+      "accent": "#2dbfb8"
+    },
+    "hooks": { "seed": "__troveSetState", "emit": "__troveEmit" },
+    "readyTestId": "app-header",
+    "readyTimeoutMs": 20000,
+    "initScript": "capture/init.js",
+    "recipesDir": "capture/recipes"
+  }
+}

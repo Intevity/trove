@@ -1,0 +1,49 @@
+---
+// Marketing homepage. Composes the hand-built sections over the Base layout, in
+// the order they tell the Trove story: nav, hero, a guided carousel of the
+// dashboard tabs, the pillar deep-dives, a capability grid, the privacy/trust
+// section, downloads, and the footer. Base.astro owns the document head and
+// derives all og/twitter SEO tags from the title and description passed here.
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Hero from '../components/Hero.astro';
+import FeatureCarousel from '../components/FeatureCarousel.tsx';
+import Pillars from '../components/Pillars.astro';
+import FeatureGrid from '../components/FeatureGrid.astro';
+import Privacy from '../components/Privacy.astro';
+import Download from '../components/Download.astro';
+import Footer from '../components/Footer.astro';
+import { features } from '../data/features';
+
+const base = import.meta.env.BASE_URL;
+
+const title = 'Trove — unified OpenTelemetry for every AI coding tool';
+const description =
+  'One tray app. Every AI coding tool on your machine. Trove auto-detects your AI coding harnesses, patches them to emit OpenTelemetry, normalizes the signals through a bundled collector, and forwards one unified stream to the observability backend you choose. Localhost-only, open source, never to Trove.';
+---
+
+<Base title={title} description={description}>
+  <Nav />
+  <Hero />
+
+  <!-- Guided carousel of the six dashboard tabs / capabilities. -->
+  <section id="demo" class="section">
+    <div class="mx-auto mb-12 max-w-2xl text-center">
+      <p class="section-label">See it in action</p>
+      <h2 class="mt-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+        A guided tour of the dashboard
+      </h2>
+      <p class="mt-4 text-base leading-relaxed text-muted">
+        Pick a feature to preview it. The carousel advances on its own; hover to pause. Demo clips
+        are on the way.
+      </p>
+    </div>
+    <FeatureCarousel client:visible features={features} base={base} />
+  </section>
+
+  <Pillars />
+  <FeatureGrid />
+  <Privacy />
+  <Download />
+  <Footer />
+</Base>

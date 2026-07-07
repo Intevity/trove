@@ -1,0 +1,191 @@
+---
+import Icon from './Icon.astro';
+
+const base = import.meta.env.BASE_URL;
+// Astro's BASE_URL carries a trailing slash; join without doubling it.
+const asset = (p: string) => `${base.replace(/\/$/, '')}/${p.replace(/^\//, '')}`;
+const repo = 'https://github.com/Intevity/trove';
+const releases = `${repo}/releases`;
+const docs = asset('docs/');
+
+// Left column: signal sources (harnesses). Right column: destinations
+// (observability backends). Five named each, plus a "+N more" chip to imply the
+// full set (17 harnesses, 15 backends). These are display-only labels.
+// Real brand logos live in public/{harness,backend}-logos/ (copied from the
+// desktop app's asset set). The "+N more" chip has no brand mark, so it falls
+// back to a lucide icon. Platforms shown are the ones the app ships a logo for
+// (SigNoz and Sentry have no logo asset yet).
+type FlowNode = { label: string; logo?: string; icon?: string };
+const sources: FlowNode[] = [
+  { label: 'Claude Code', logo: 'harness-logos/claude-code.svg' },
+  { label: 'Cursor', logo: 'harness-logos/cursor-ide.svg' },
+  { label: 'Codex', logo: 'harness-logos/codex-cli.svg' },
+  { label: 'Antigravity CLI', logo: 'harness-logos/antigravity-cli.png' },
+  { label: 'OpenCode', logo: 'harness-logos/opencode.svg' },
+  { label: '12 more', icon: 'layers' },
+];
+const destinations: FlowNode[] = [
+  { label: 'SigNoz', logo: 'backend-logos/signoz.png' },
+  { label: 'Datadog', logo: 'backend-logos/datadog.svg' },
+  { label: 'Honeycomb', logo: 'backend-logos/honeycomb.svg' },
+  { label: 'Grafana Cloud', logo: 'backend-logos/grafana-cloud.svg' },
+  { label: 'Generic OTLP', logo: 'backend-logos/otlp-generic.svg' },
+  { label: '10 more', icon: 'layers' },
+];
+---
+
+<section id="top" class="hero-gradient relative overflow-hidden">
+  <div class="section relative z-10 flex flex-col items-center pt-20 text-center sm:pt-28">
+    <span
+      class="hero-rise mb-6 inline-flex items-center gap-2 rounded-full border border-border-subtle/15 px-3.5 py-1.5 text-xs font-medium text-foreground/70"
+    >
+      <span class="h-1.5 w-1.5 rounded-full bg-brand"></span>
+      Open source. Localhost-only. Your data goes to your backend, never ours.
+    </span>
+
+    <h1
+      class="hero-rise max-w-4xl text-display font-bold tracking-tight text-foreground"
+      style="animation-delay: 60ms"
+    >
+      One pane of glass for every AI tool you run.
+    </h1>
+    <p
+      class="hero-rise mt-6 max-w-2xl text-lg leading-relaxed text-foreground/70 sm:text-xl"
+      style="animation-delay: 120ms"
+    >
+      Trove unifies the OpenTelemetry from every AI coding harness you run and forwards one
+      stream to the observability backend you choose. Never ours.
+    </p>
+
+    <div
+      class="hero-rise mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row sm:flex-wrap"
+      style="animation-delay: 180ms"
+    >
+      <a href={releases} class="btn-primary cta-glow px-7 py-3.5 text-base">
+        <Icon name="download" size={18} />
+        Download for macOS, Windows, Linux
+      </a>
+      <a href={repo} class="btn-ghost px-7 py-3.5 text-base" rel="noopener" target="_blank">
+        <Icon name="github" size={18} />
+        Star on GitHub
+      </a>
+      <a href={docs} class="btn-ghost px-7 py-3.5 text-base">
+        <Icon name="arrow-right" size={18} />
+        Read the docs
+      </a>
+    </div>
+
+    <p class="hero-rise mt-5 text-sm text-foreground/50" style="animation-delay: 220ms">
+      Free and MIT licensed.
+    </p>
+
+    <!-- Data-flow hub: sources -> collector -> destinations, with animated
+         dotted telemetry streams. Decorative; labelled for assistive tech. -->
+    <div
+      class="hero-rise flow-stage mt-16 w-full max-w-5xl"
+      style="animation-delay: 260ms"
+      role="img"
+      aria-label="Telemetry from your AI coding harnesses flows into the local Trove collector and fans out to the observability backends you choose."
+    >
+      <div class="relative flex flex-col items-center gap-6 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:items-center sm:gap-8">
+        <!-- Connecting streams sit behind the columns. -->
+        <svg
+          class="pointer-events-none absolute inset-0 hidden h-full w-full sm:block"
+          viewBox="0 0 1000 360"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <!-- Inbound: each source -> collector core (~x=500). -->
+          <path class="flow-stream" d="M250 40 C 380 40, 420 180, 500 180" />
+          <path class="flow-stream" d="M250 96 C 390 96, 430 180, 500 180" />
+          <path class="flow-stream" d="M250 152 C 420 152, 450 180, 500 180" />
+          <path class="flow-stream" d="M250 208 C 420 208, 450 180, 500 180" />
+          <path class="flow-stream" d="M250 264 C 390 264, 430 180, 500 180" />
+          <path class="flow-stream" d="M250 320 C 380 320, 420 180, 500 180" />
+          <!-- Outbound: collector core -> each destination. -->
+          <path class="flow-stream flow-stream--out" d="M500 180 C 580 180, 620 40, 750 40" />
+          <path class="flow-stream flow-stream--out" d="M500 180 C 570 180, 610 96, 750 96" />
+          <path class="flow-stream flow-stream--out" d="M500 180 C 550 180, 580 152, 750 152" />
+          <path class="flow-stream flow-stream--out" d="M500 180 C 550 180, 580 208, 750 208" />
+          <path class="flow-stream flow-stream--out" d="M500 180 C 570 180, 610 264, 750 264" />
+          <path class="flow-stream flow-stream--out" d="M500 180 C 580 180, 620 320, 750 320" />
+        </svg>
+
+        <!-- Left column: harness sources. -->
+        <ul class="relative z-10 flex flex-wrap justify-center gap-2 sm:flex-col sm:flex-nowrap sm:items-stretch sm:gap-3">
+          {
+            sources.map((s, i) => (
+              <li
+                class="flow-node glass-card flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium text-foreground/85"
+                style={`animation-delay: ${i * 240}ms`}
+              >
+                {s.logo ? (
+                  <img
+                    src={asset(s.logo)}
+                    alt=""
+                    width="20"
+                    height="20"
+                    class="h-5 w-5 shrink-0 rounded-[5px] bg-white object-contain p-[3px]"
+                  />
+                ) : (
+                  <Icon name={s.icon!} size={16} class="text-brand" />
+                )}
+                <span class="truncate">{s.label}</span>
+              </li>
+            ))
+          }
+        </ul>
+
+        <!-- Mobile-only flow connector (sources → collector); desktop uses the SVG streams. -->
+        <div class="mobile-stream sm:hidden" aria-hidden="true"></div>
+
+        <!-- Center: the collector core. -->
+        <div class="relative z-10 flex flex-col items-center">
+          <div
+            class="collector-core grid h-28 w-28 place-items-center rounded-3xl border border-brand/40 bg-[#1e1e1e]/90 text-brand sm:h-32 sm:w-32"
+          >
+            <img
+              src={asset('trove-logo.svg')}
+              alt="Trove"
+              width="60"
+              height="60"
+              class="h-14 w-14 object-contain sm:h-16 sm:w-16"
+            />
+          </div>
+          <span class="mt-3 text-xs font-semibold uppercase tracking-widest text-foreground/60"
+            >Trove Collector</span
+          >
+          <span class="mt-1 text-[11px] text-foreground/40">127.0.0.1 only</span>
+        </div>
+
+        <!-- Mobile-only flow connector (collector → destinations); desktop uses the SVG streams. -->
+        <div class="mobile-stream sm:hidden" aria-hidden="true"></div>
+
+        <!-- Right column: backend destinations. -->
+        <ul class="relative z-10 flex flex-wrap justify-center gap-2 sm:flex-col sm:flex-nowrap sm:items-stretch sm:gap-3">
+          {
+            destinations.map((d, i) => (
+              <li
+                class="flow-node glass-card flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium text-foreground/85"
+                style={`animation-delay: ${i * 240 + 120}ms`}
+              >
+                {d.logo ? (
+                  <img
+                    src={asset(d.logo)}
+                    alt=""
+                    width="20"
+                    height="20"
+                    class="h-5 w-5 shrink-0 rounded-[5px] bg-white object-contain p-[3px]"
+                  />
+                ) : (
+                  <Icon name={d.icon!} size={16} class="text-brand" />
+                )}
+                <span class="truncate">{d.label}</span>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>

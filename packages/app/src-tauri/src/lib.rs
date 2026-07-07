@@ -234,14 +234,13 @@ pub fn run() {
             app.manage(updater::PendingUpdate(Mutex::new(None)));
             updater::spawn_update_timer(app.handle().clone());
 
-            // Rehydrate supplementary watchers (Cline, Aider, Copilot-CLI,
-            // Gemini) for every harness already in state.json. Without
+            // Rehydrate supplementary watchers (Cline, Claude Desktop,
+            // Droid) for every harness already in state.json. Without
             // this, watchers only run from the moment the user re-applies
-            // the harness through the UI — which means a Gemini turn
-            // written to ~/.gemini/tmp/<proj>/chats/session-*.jsonl after
-            // an app relaunch produces no Tier A emission and the
-            // SignOz dashboard panels stay empty until the user clicks
-            // Apply again.
+            // the harness through the UI — which means a Cline task
+            // written to its task log after an app relaunch produces no
+            // Tier A emission and the SignOz dashboard panels stay empty
+            // until the user clicks Apply again.
             //
             // Deferred onto `tauri::async_runtime::spawn` so the inner
             // `tokio::spawn` calls inside each watcher run inside the

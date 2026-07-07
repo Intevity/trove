@@ -185,8 +185,8 @@ export function MappingsTab({
   }, [persisted]);
 
   // Filter the harness cards by a free-text match against the harness
-  // id. Done case-insensitively so users can type "gemini" and find
-  // `gemini-cli`. We keep the filter local to this tab — it doesn't
+  // id. Done case-insensitively so users can type "antigravity" and find
+  // `antigravity-cli`. We keep the filter local to this tab — it doesn't
   // touch persisted state and resets when the tab unmounts.
   const filteredHarnesses = useMemo(() => {
     const q = harnessFilter.trim().toLowerCase();

@@ -2,7 +2,7 @@
 
 **One tray app. Every AI coding tool on your machine. Unified OpenTelemetry, flowing to your observability backend; never ours.**
 
-Trove auto-detects 17 AI coding harnesses (Claude Code, Gemini CLI, Codex, Cursor, OpenCode, Cline, Aider, GitHub Copilot CLI, and more), patches each one's telemetry config to emit OTLP, normalizes the cross-vendor signals through a bundled OpenTelemetry Collector, and forwards a unified stream to whichever observability backend you already own: SigNoz, Honeycomb, Datadog, Grafana, New Relic, OpenSearch, Splunk, Elastic, your own self-hosted Collector, or any generic OTLP endpoint.
+Trove auto-detects 17 AI coding harnesses (Claude Code, Antigravity CLI, Codex, Cursor, OpenCode, Cline, Aider, GitHub Copilot CLI, and more), patches each one's telemetry config to emit OTLP, normalizes the cross-vendor signals through a bundled OpenTelemetry Collector, and forwards a unified stream to whichever observability backend you already own: SigNoz, Honeycomb, Datadog, Grafana, New Relic, OpenSearch, Splunk, Elastic, your own self-hosted Collector, or any generic OTLP endpoint.
 
 [![CI](https://github.com/Intevity/trove/actions/workflows/ci.yml/badge.svg)](https://github.com/Intevity/trove/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Intevity/trove?include_prereleases)](https://github.com/Intevity/trove/releases/latest)
@@ -30,7 +30,7 @@ That matters to different people for different reasons.
 #### 🔧 For engineering leads
 
 - **One pane of glass across mixed-harness teams.** Half the team uses Claude Code, the other half is on Cursor plus Copilot CLI, the platform team trialed Codex last week. Without Trove, that's four separate vendor dashboards (or four blanks). With Trove, every span, metric, and log carries a `harness.id` resource attribute so you can compare them side-by-side in one query.
-- **Native OTel where it exists, best-effort where it doesn't.** Claude Code, Gemini CLI, Codex, Qwen, OpenCode, and Cursor ship native OTLP; Trove flips the right flags and routes them through. Cline, Aider, and Copilot CLI don't emit OTel natively, so Trove installs lightweight watchers and shell-rc wrappers that derive equivalent OTLP records from their on-disk logs. The derived records share the same queries as their native peers.
+- **Native OTel where it exists, best-effort where it doesn't.** Claude Code, Antigravity CLI, Codex, Qwen, OpenCode, and Cursor ship native OTLP; Trove flips the right flags and routes them through. Cline, Aider, and Copilot CLI don't emit OTel natively, so Trove installs lightweight watchers and shell-rc wrappers that derive equivalent OTLP records from their on-disk logs. The derived records share the same queries as their native peers.
 - **Reversible.** Every "Enable" writes a sentinel-bracketed managed region into the harness's config file. One click reverts it byte-for-byte. No half-applied states, no orphaned env vars, no "I uninstalled Trove but my CLI still POSTs to localhost."
 
 #### 💸 For finance, ops, and platform owners
@@ -63,25 +63,25 @@ Trove sweeps the standard install paths for every supported AI coding tool the m
 
 Supported today:
 
-| Tier             | Harness                | Telemetry source                                    |
-| ---------------- | ---------------------- | --------------------------------------------------- |
-| Native OTel      | Claude Code            | Built-in `OTEL_EXPORTER_OTLP_*` env vars            |
-| Native OTel      | Claude Desktop         | Auto-detected via local audit log (no setup)        |
-| Native OTel      | Gemini CLI             | Built-in OTel exporter                              |
-| Native OTel      | OpenAI Codex CLI       | Codex 0.130+ `[otel.exporter.otlp-http]` block      |
-| Native OTel      | OpenAI Codex (desktop) | Shares Codex CLI's `codex app-server` backend       |
-| Native OTel      | Qwen Code              | Built-in OTel exporter                              |
-| Native OTel      | OpenCode               | Built-in OTel exporter                              |
-| Native OTel      | Cursor IDE             | Cursor hooks via `~/.cursor/hooks.json`             |
-| Partial coverage | Cursor CLI             | Subset of Cursor hook events (shell exec only)      |
-| Best effort      | Cline                  | Watcher derives OTLP from Cline's task records      |
-| Best effort      | Aider                  | Shell-rc wrapper tees session log into OTLP         |
-| Best effort      | GitHub Copilot CLI     | Shell-rc wrappers around `copilot` and `gh copilot` |
-| Setup guide      | Junie CLI              | Setup guide (JetBrains)                             |
-| Setup guide      | Droid (factory.ai)     | Setup guide                                         |
-| Setup guide      | Kimi Code CLI          | Setup guide                                         |
-| Setup guide      | Devin                  | Setup guide                                         |
-| Setup guide      | ForgeCode              | Setup guide                                         |
+| Tier             | Harness                | Telemetry source                                             |
+| ---------------- | ---------------------- | ------------------------------------------------------------ |
+| Native OTel      | Claude Code            | Built-in `OTEL_EXPORTER_OTLP_*` env vars                     |
+| Native OTel      | Claude Desktop         | Auto-detected via local audit log (no setup)                 |
+| Native OTel      | Antigravity CLI        | Antigravity hooks via `~/.gemini/antigravity-cli/hooks.json` |
+| Native OTel      | OpenAI Codex CLI       | Codex 0.130+ `[otel.exporter.otlp-http]` block               |
+| Native OTel      | OpenAI Codex (desktop) | Shares Codex CLI's `codex app-server` backend                |
+| Native OTel      | Qwen Code              | Built-in OTel exporter                                       |
+| Native OTel      | OpenCode               | Built-in OTel exporter                                       |
+| Native OTel      | Cursor IDE             | Cursor hooks via `~/.cursor/hooks.json`                      |
+| Partial coverage | Cursor CLI             | Subset of Cursor hook events (shell exec only)               |
+| Best effort      | Cline                  | Watcher derives OTLP from Cline's task records               |
+| Best effort      | Aider                  | Shell-rc wrapper tees session log into OTLP                  |
+| Best effort      | GitHub Copilot CLI     | Shell-rc wrappers around `copilot` and `gh copilot`          |
+| Setup guide      | Junie CLI              | Setup guide (JetBrains)                                      |
+| Setup guide      | Droid (factory.ai)     | Setup guide                                                  |
+| Setup guide      | Kimi Code CLI          | Setup guide                                                  |
+| Setup guide      | Devin                  | Setup guide                                                  |
+| Setup guide      | ForgeCode              | Setup guide                                                  |
 
 When a harness is enabled, Trove shows it in the Overview Data flow chart (≤ 3 tools render as individual nodes; 4+ collapse into an animated "Orbital Hub" cluster) with per-source activity halos that light up when telemetry is flowing.
 
@@ -167,7 +167,7 @@ That's it. No daemons to babysit, no agents to upgrade, no SaaS account to creat
 
 ```
                  ┌─ Claude Code ──────┐
-                 ├─ Gemini CLI ───────┤
+                 ├─ Antigravity CLI ──┤
 AI coding tools  ├─ Codex / Cursor ───┤──▶  Trove collector (localhost)
                  ├─ OpenCode / Qwen ──┤        │
                  └─ Cline / Aider / ──┘        ▼

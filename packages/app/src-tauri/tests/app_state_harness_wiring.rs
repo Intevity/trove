@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 
 use trove_app::adapters::{
-    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, droid, gemini_cli, opencode,
+    ApplyOptions, antigravity_cli, claude_code, codex_cli, cursor_cli, cursor_ide, droid, opencode,
     qwen_code,
 };
 use trove_app::app_state::{
@@ -24,9 +24,15 @@ use trove_app::app_state::{
 use trove_app::harness::HarnessId;
 
 const CURSOR_HOOK_SCRIPT_FIXTURE: &str = "/opt/trove/resources/hooks/cursor-otel-hook.cjs";
+const ANTIGRAVITY_HOOK_SCRIPT_FIXTURE: &str =
+    "/opt/trove/resources/hooks/antigravity-otel-hook.cjs";
 
 fn cursor_hook_path() -> PathBuf {
     PathBuf::from(CURSOR_HOOK_SCRIPT_FIXTURE)
+}
+
+fn antigravity_hook_path() -> PathBuf {
+    PathBuf::from(ANTIGRAVITY_HOOK_SCRIPT_FIXTURE)
 }
 
 /// Stand-in for `apply_patch` + the post-apply state.json upsert. This
@@ -46,10 +52,6 @@ fn apply_then_persist(
         HarnessId::CodexCli => (
             codex_cli::apply(home, &options).unwrap(),
             codex_cli::config_path(home),
-        ),
-        HarnessId::GeminiCli => (
-            gemini_cli::apply(home, &options).unwrap(),
-            gemini_cli::config_path(home),
         ),
         HarnessId::QwenCode => (
             qwen_code::apply(home, &options).unwrap(),
@@ -82,7 +84,6 @@ fn revert_then_unpersist(id: HarnessId, home: &Path, config_dir: &Path) {
     match id {
         HarnessId::ClaudeCode => claude_code::revert(home).unwrap(),
         HarnessId::CodexCli => codex_cli::revert(home).unwrap(),
-        HarnessId::GeminiCli => gemini_cli::revert(home).unwrap(),
         HarnessId::QwenCode => qwen_code::revert(home).unwrap(),
         HarnessId::Opencode => opencode::revert(home).unwrap(),
         HarnessId::Droid => droid::revert(home).unwrap(),
@@ -196,7 +197,7 @@ fn separate_harnesses_get_separate_entries() {
         ApplyOptions::default(),
     );
     apply_then_persist(
-        HarnessId::GeminiCli,
+        HarnessId::Opencode,
         home.path(),
         cfg.path(),
         ApplyOptions::default(),
@@ -252,7 +253,7 @@ fn revert_only_drops_its_own_id() {
         ApplyOptions::default(),
     );
     apply_then_persist(
-        HarnessId::GeminiCli,
+        HarnessId::Opencode,
         home.path(),
         cfg.path(),
         ApplyOptions::default(),
@@ -262,7 +263,7 @@ fn revert_only_drops_its_own_id() {
 
     let state = load_from_dir(cfg.path()).unwrap();
     assert_eq!(state.harnesses.len(), 1);
-    assert_eq!(state.harnesses[0].id, HarnessId::GeminiCli);
+    assert_eq!(state.harnesses[0].id, HarnessId::Opencode);
 }
 
 #[test]
@@ -276,7 +277,7 @@ fn options_round_trip_through_state_json() {
         .insert("team".into(), "platform".into());
     options.custom_attributes.insert("env".into(), "prod".into());
 
-    apply_then_persist(HarnessId::GeminiCli, home.path(), cfg.path(), options.clone());
+    apply_then_persist(HarnessId::Opencode, home.path(), cfg.path(), options.clone());
 
     let state = load_from_dir(cfg.path()).unwrap();
     let entry = &state.harnesses[0];
@@ -316,7 +317,14 @@ fn apply_cursor_then_persist(
                 cursor_cli::config_path(home),
             )
         }
-        other => panic!("apply_cursor_then_persist called with non-cursor id {other:?}"),
+        // Antigravity CLI is also a hook adapter (it takes the same
+        // `hook_script_path` parameter Cursor does), so it rides the same
+        // helper rather than the native `apply_then_persist`.
+        HarnessId::AntigravityCli => (
+            antigravity_cli::apply(home, &options, hook_path).unwrap(),
+            antigravity_cli::config_path(home),
+        ),
+        other => panic!("apply_cursor_then_persist called with non-hook id {other:?}"),
     };
     let entry = harness_config_from_apply(id, &config_path, options, patch.clone());
     upsert_harness_in(config_dir, entry).unwrap();
@@ -384,6 +392,57 @@ fn cursor_ide_revert_removes_state_json_entry() {
 
     cursor_ide::revert(home.path()).unwrap();
     remove_harness_in(cfg.path(), HarnessId::CursorIde).unwrap();
+
+    assert!(load_from_dir(cfg.path()).unwrap().harnesses.is_empty());
+}
+
+// --- Antigravity CLI (hook adapter) state.json wiring ---------------------
+
+#[test]
+fn antigravity_apply_lands_a_harness_config_in_state_json() {
+    let home = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+
+    let patch = apply_cursor_then_persist(
+        HarnessId::AntigravityCli,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+        &antigravity_hook_path(),
+    );
+
+    let state: AppState = load_from_dir(cfg.path()).unwrap();
+    assert_eq!(state.harnesses.len(), 1);
+    let entry = &state.harnesses[0];
+    assert_eq!(entry.id, HarnessId::AntigravityCli);
+    assert!(entry.enabled);
+    assert!(
+        entry
+            .config_path
+            .ends_with(".gemini/antigravity-cli/hooks.json"),
+        "config_path was {}",
+        entry.config_path,
+    );
+    assert_eq!(entry.trove_patch, patch);
+    assert!(entry.last_patched_at.contains('T'));
+}
+
+#[test]
+fn antigravity_revert_removes_state_json_entry() {
+    let home = tempdir().unwrap();
+    let cfg = tempdir().unwrap();
+
+    apply_cursor_then_persist(
+        HarnessId::AntigravityCli,
+        home.path(),
+        cfg.path(),
+        ApplyOptions::default(),
+        &antigravity_hook_path(),
+    );
+    assert_eq!(load_from_dir(cfg.path()).unwrap().harnesses.len(), 1);
+
+    antigravity_cli::revert(home.path()).unwrap();
+    remove_harness_in(cfg.path(), HarnessId::AntigravityCli).unwrap();
 
     assert!(load_from_dir(cfg.path()).unwrap().harnesses.is_empty());
 }

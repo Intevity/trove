@@ -92,7 +92,7 @@ pub fn detect(id: HarnessId, detector: &Detector) -> DetectedHarness {
 fn path_binary_name(id: HarnessId) -> Option<&'static str> {
     match id {
         HarnessId::ClaudeCode => Some("claude"),
-        HarnessId::GeminiCli => Some("gemini"),
+        HarnessId::AntigravityCli => Some("agy"),
         HarnessId::CodexCli => Some("codex"),
         HarnessId::QwenCode => Some("qwen"),
         // Cursor CLI binary is `cursor-agent`. Cursor IDE has no canonical
@@ -133,7 +133,7 @@ fn path_binary_name(id: HarnessId) -> Option<&'static str> {
 fn read_trove_region_present(id: HarnessId, path: &Path) -> bool {
     let format = match id {
         HarnessId::ClaudeCode
-        | HarnessId::GeminiCli
+        | HarnessId::AntigravityCli
         | HarnessId::QwenCode
         | HarnessId::CursorIde
         | HarnessId::CursorCli
@@ -172,9 +172,15 @@ fn read_telemetry(id: HarnessId, path: &Path) -> TelemetryStatus {
     };
     match id {
         HarnessId::ClaudeCode => check_claude_telemetry(&text),
-        HarnessId::GeminiCli | HarnessId::QwenCode => check_gemini_like_telemetry(&text),
+        // Qwen Code keeps Gemini CLI's old `telemetry.enabled` shape.
+        // Antigravity CLI dropped native OTLP, so its only Trove signal is
+        // whether our hook block is present in hooks.json — the same
+        // region-presence check Cursor uses.
+        HarnessId::QwenCode => check_gemini_like_telemetry(&text),
         HarnessId::CodexCli | HarnessId::CodexDesktop => check_codex_telemetry(&text),
-        HarnessId::CursorIde | HarnessId::CursorCli => check_cursor_telemetry(&text),
+        HarnessId::AntigravityCli | HarnessId::CursorIde | HarnessId::CursorCli => {
+            check_cursor_telemetry(&text)
+        }
         HarnessId::Opencode => check_opencode_telemetry(&text),
         HarnessId::Sentinel => check_sentinel_telemetry(&text),
         _ => TelemetryStatus::Unknown,
@@ -232,7 +238,9 @@ fn is_trove_collector_endpoint(url: &str) -> bool {
     loopback && u.contains(":4318")
 }
 
-/// Gemini CLI and Qwen Code use a `telemetry.enabled` boolean.
+/// Qwen Code (a Gemini-CLI-derived harness) uses a `telemetry.enabled`
+/// boolean. Antigravity CLI no longer does — it dropped native OTLP — so
+/// only Qwen routes here now.
 fn check_gemini_like_telemetry(text: &str) -> TelemetryStatus {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
         return TelemetryStatus::Unknown;
@@ -542,22 +550,39 @@ mod tests {
     }
 
     #[test]
-    fn gemini_telemetry_on_when_enabled_true() {
+    fn antigravity_telemetry_on_when_trove_hook_region_present() {
+        // Antigravity CLI dropped Gemini CLI's native OTLP exporter, so
+        // its only Trove signal is whether our hook block is installed in
+        // hooks.json — the same `_trove` region check Cursor uses.
         let home = tempdir().unwrap();
-        let cfg = home.path().join(".gemini").join("settings.json");
-        write_settings(&cfg, r#"{"telemetry":{"enabled":true}}"#);
+        let cfg = home
+            .path()
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("hooks.json");
+        write_settings(
+            &cfg,
+            r#"{
+              "_trove": { "managed_keys": ["UserPromptSubmit"], "hash": "deadbeef" },
+              "UserPromptSubmit": { "type": "command", "command": "/x/antigravity-otel-hook.cjs" }
+            }"#,
+        );
 
-        let result = detect(HarnessId::GeminiCli, &detector_for(home.path()));
+        let result = detect(HarnessId::AntigravityCli, &detector_for(home.path()));
         assert_eq!(result.telemetry, TelemetryStatus::On);
     }
 
     #[test]
-    fn gemini_telemetry_off_when_enabled_false() {
+    fn antigravity_telemetry_off_when_no_trove_region() {
         let home = tempdir().unwrap();
-        let cfg = home.path().join(".gemini").join("settings.json");
-        write_settings(&cfg, r#"{"telemetry":{"enabled":false}}"#);
+        let cfg = home
+            .path()
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("hooks.json");
+        write_settings(&cfg, r#"{"colorScheme":"dark"}"#);
 
-        let result = detect(HarnessId::GeminiCli, &detector_for(home.path()));
+        let result = detect(HarnessId::AntigravityCli, &detector_for(home.path()));
         assert_eq!(result.telemetry, TelemetryStatus::Off);
     }
 

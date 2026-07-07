@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   ApplyOptions,
@@ -41,7 +44,7 @@ describe('HarnessId', () => {
     for (const id of [
       'claude-code',
       'claude-desktop',
-      'gemini-cli',
+      'antigravity-cli',
       'codex-cli',
       'qwen-code',
       'opencode',
@@ -320,9 +323,9 @@ describe('AppState', () => {
     harnesses: [],
   };
 
-  it('parses a minimal v11 state with default identity off and empty mappings', () => {
+  it('parses a minimal v12 state with default identity off and empty mappings', () => {
     const parsed = AppState.parse({
-      schemaVersion: 11,
+      schemaVersion: 12,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
@@ -330,7 +333,7 @@ describe('AppState', () => {
       identity: defaultIdentity,
       mappings: emptyMappings,
     });
-    expect(parsed.schemaVersion).toBe(11);
+    expect(parsed.schemaVersion).toBe(12);
     expect(parsed.backends).toEqual([]);
     expect(parsed.harnesses).toEqual([]);
     expect(parsed.autoUpdateEnabled).toBe(false);
@@ -340,9 +343,9 @@ describe('AppState', () => {
     expect(parsed.mappings.harnesses).toEqual([]);
   });
 
-  it('parses a v11 state with autoUpdateEnabled true and identity tagging on', () => {
+  it('parses a v12 state with autoUpdateEnabled true and identity tagging on', () => {
     const parsed = AppState.parse({
-      schemaVersion: 11,
+      schemaVersion: 12,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: true,
@@ -363,9 +366,9 @@ describe('AppState', () => {
     expect(parsed.identity.email).toBe('ada@example.com');
   });
 
-  it('parses a v11 state with populated mapping rows', () => {
+  it('parses a v12 state with populated mapping rows', () => {
     const parsed = AppState.parse({
-      schemaVersion: 11,
+      schemaVersion: 12,
       backends: [],
       harnesses: [],
       autoUpdateEnabled: false,
@@ -376,12 +379,12 @@ describe('AppState', () => {
         metrics: [],
         harnesses: [
           {
-            harnessId: 'gemini-cli',
+            harnessId: 'codex-cli',
             enabled: true,
             sources: [
               {
                 kind: 'synthesize-from-native',
-                nativeMetric: 'gemini_cli.session.count',
+                nativeMetric: 'codex.session.count',
                 targetMetric: 'events',
                 attributeMap: {},
               },
@@ -392,14 +395,14 @@ describe('AppState', () => {
       },
     });
     expect(parsed.mappings.harnesses).toHaveLength(1);
-    expect(parsed.mappings.harnesses[0].harnessId).toBe('gemini-cli');
+    expect(parsed.mappings.harnesses[0].harnessId).toBe('codex-cli');
     expect(parsed.mappings.harnesses[0].sources[0].kind).toBe('synthesize-from-native');
   });
 
   it('rejects when launchAtStartupEnabled is missing', () => {
     expect(() =>
       AppState.parse({
-        schemaVersion: 11,
+        schemaVersion: 12,
         backends: [],
         harnesses: [],
         autoUpdateEnabled: false,
@@ -450,11 +453,11 @@ describe('AppState', () => {
     ).toThrow();
   });
 
-  it('rejects v2..v10 wire payloads (Rust loader migrates them to v11 before IPC return)', () => {
+  it('rejects v2..v11 wire payloads (Rust loader migrates them to v12 before IPC return)', () => {
     // Migrations live in `app_state::load_from_dir`; older payloads
     // should never appear at the IPC boundary, so the Zod literal
     // rejects them outright.
-    for (const schemaVersion of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+    for (const schemaVersion of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
       expect(() =>
         AppState.parse({
           schemaVersion,
@@ -467,6 +470,18 @@ describe('AppState', () => {
         }),
       ).toThrow();
     }
+  });
+
+  it('schemaVersion literal stays in lockstep with the Rust CURRENT_SCHEMA_VERSION', () => {
+    // Guards against the desync that ships a build which rejects its own wire
+    // payload on every launch (a "Trove IPC error: internal" recovery notice):
+    // the Rust loader stamps every returned AppState with CURRENT_SCHEMA_VERSION,
+    // so this Zod literal MUST equal it. Bump one and this test forces the other.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const rustSrc = readFileSync(join(here, '../../app/src-tauri/src/app_state/mod.rs'), 'utf8');
+    const match = /CURRENT_SCHEMA_VERSION:\s*u32\s*=\s*(\d+)/.exec(rustSrc);
+    expect(match, 'CURRENT_SCHEMA_VERSION not found in app_state/mod.rs').not.toBeNull();
+    expect(AppState.shape.schemaVersion.value).toBe(Number(match![1]));
   });
 });
 
@@ -699,7 +714,7 @@ describe('IpcError', () => {
   });
 
   it('parses a harness-not-detected error', () => {
-    const err = { kind: 'harness-not-detected', id: 'gemini-cli' };
+    const err = { kind: 'harness-not-detected', id: 'antigravity-cli' };
     expect(IpcError.parse(err)).toEqual(err);
   });
 

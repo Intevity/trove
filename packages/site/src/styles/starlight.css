@@ -1,0 +1,36 @@
+/* Brand overrides for the Starlight docs theme, so the docs at /trove/docs/
+   match the marketing site: Trove teal accent, dark-first, the system font
+   stack ported from src/styles/global.css (and the app's own index.css).
+
+   Starlight is dark-first: `:root` holds the dark palette and
+   `:root[data-theme='light']` the light one. We only override the accent ramp
+   and a couple of brand touches; Starlight's neutral grays are left intact so
+   the docs keep good contrast and accessibility out of the box. */
+
+:root {
+  /* Trove teal accent ramp (dark theme). Brand mid-tone is #2dbfb8; the low
+     end is a deep teal that sits behind text, the high end a soft tint for
+     links/headings against the dark canvas. */
+  --sl-color-accent-low: #062e2c;
+  --sl-color-accent: #2dbfb8;
+  --sl-color-accent-high: #aef0ec;
+
+  /* Match the marketing site's font stack. */
+  --sl-font:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Helvetica Neue', sans-serif;
+}
+
+:root[data-theme='light'] {
+  /* Trove teal accent ramp (light theme). Darkened mid-tone (brand-hover) so
+     teal links clear contrast on the light canvas; high end is a deep teal. */
+  --sl-color-accent-low: #c9efed;
+  --sl-color-accent: #1f8d88;
+  --sl-color-accent-high: #06403d;
+}
+
+/* The hero CTA on the marketing site uses a soft teal glow; echo a restrained
+   version on the docs masthead title so the two surfaces feel related. */
+.site-title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}

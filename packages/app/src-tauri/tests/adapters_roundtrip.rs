@@ -13,14 +13,12 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 use trove_app::adapters::{
-    ApplyOptions, claude_code, codex_cli, cursor_cli, cursor_ide, droid, gemini_cli, opencode,
+    ApplyOptions, antigravity_cli, claude_code, codex_cli, cursor_cli, cursor_ide, droid, opencode,
     qwen_code,
 };
 
 const CLAUDE_ORIGINAL: &str =
     "{\n  \"theme\": \"dark\",\n  \"env\": {\n    \"MY_USER_VAR\": \"keepme\"\n  }\n}\n";
-const GEMINI_ORIGINAL: &str =
-    "{\n  \"theme\": \"dark\",\n  \"model\": {\n    \"name\": \"flash\"\n  }\n}\n";
 const QWEN_ORIGINAL: &str =
     "{\n  \"theme\": \"dark\",\n  \"model\": {\n    \"name\": \"qwen3-coder\"\n  }\n}\n";
 const CODEX_ORIGINAL: &str = "[user]\nname = \"jeff\"\n\n[model]\ndefault = \"o1\"\n";
@@ -31,24 +29,23 @@ fn write(path: &Path, body: &str) {
 }
 
 #[test]
-fn all_four_tier_1_adapters_apply_and_revert_byte_identical() {
+fn tier_1_native_adapters_apply_and_revert_byte_identical() {
     let home = tempdir().unwrap();
 
     let claude_path = claude_code::config_path(home.path());
     let codex_path = codex_cli::config_path(home.path());
-    let gemini_path = gemini_cli::config_path(home.path());
     let qwen_path = qwen_code::config_path(home.path());
 
     write(&claude_path, CLAUDE_ORIGINAL);
     write(&codex_path, CODEX_ORIGINAL);
-    write(&gemini_path, GEMINI_ORIGINAL);
     write(&qwen_path, QWEN_ORIGINAL);
 
-    // Apply all four. Bindings named to dodge clippy::similar_names
-    // (which trips on `claude_patch` / `claude_path`).
+    // Apply all three. Bindings named to dodge clippy::similar_names
+    // (which trips on `claude_patch` / `claude_path`). Antigravity CLI
+    // is no longer here — it dropped native OTLP and is now a hook
+    // adapter (see `antigravity_apply_then_revert_is_byte_identical`).
     let claude_metadata = claude_code::apply(home.path(), &ApplyOptions::default()).unwrap();
     let codex_metadata = codex_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
-    let gemini_metadata = gemini_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
     let qwen_metadata = qwen_code::apply(home.path(), &ApplyOptions::default()).unwrap();
 
     // Each JSON file must parse, preserve user keys, and contain the
@@ -62,17 +59,6 @@ fn all_four_tier_1_adapters_apply_and_revert_byte_identical() {
         "http://127.0.0.1:4318"
     );
     assert!(claude_after.get("_trove").is_some());
-
-    let gemini_after: Value = serde_json::from_str(&fs::read_to_string(&gemini_path).unwrap())
-        .expect("post-apply Gemini settings.json must parse as JSON");
-    assert_eq!(gemini_after["theme"], "dark");
-    assert_eq!(gemini_after["model"]["name"], "flash");
-    assert_eq!(gemini_after["telemetry"]["enabled"], true);
-    assert_eq!(
-        gemini_after["telemetry"]["otlpEndpoint"],
-        "http://127.0.0.1:4318"
-    );
-    assert!(gemini_after.get("_trove").is_some());
 
     let qwen_after: Value = serde_json::from_str(&fs::read_to_string(&qwen_path).unwrap())
         .expect("post-apply Qwen settings.json must parse as JSON");
@@ -108,12 +94,7 @@ fn all_four_tier_1_adapters_apply_and_revert_byte_identical() {
     assert!(codex_text.contains("# trove:end"));
 
     // Returned TrovePatch metadata is well-formed across all four.
-    for metadata in [
-        &claude_metadata,
-        &codex_metadata,
-        &gemini_metadata,
-        &qwen_metadata,
-    ] {
+    for metadata in [&claude_metadata, &codex_metadata, &qwen_metadata] {
         assert_eq!(metadata.managed_block_hash.len(), 64);
         assert_eq!(metadata.file_hash_at_last_write.len(), 64);
     }
@@ -122,7 +103,6 @@ fn all_four_tier_1_adapters_apply_and_revert_byte_identical() {
     // the pre-apply file, including the trailing newline.
     claude_code::revert(home.path()).unwrap();
     codex_cli::revert(home.path()).unwrap();
-    gemini_cli::revert(home.path()).unwrap();
     qwen_code::revert(home.path()).unwrap();
 
     assert_eq!(
@@ -134,11 +114,6 @@ fn all_four_tier_1_adapters_apply_and_revert_byte_identical() {
         fs::read_to_string(&codex_path).unwrap(),
         CODEX_ORIGINAL,
         "Codex config must be byte-identical post-revert"
-    );
-    assert_eq!(
-        fs::read_to_string(&gemini_path).unwrap(),
-        GEMINI_ORIGINAL,
-        "Gemini config must be byte-identical post-revert"
     );
     assert_eq!(
         fs::read_to_string(&qwen_path).unwrap(),
@@ -153,19 +128,16 @@ fn applying_one_adapter_does_not_disturb_the_other_files() {
 
     let claude_path = claude_code::config_path(home.path());
     let codex_path = codex_cli::config_path(home.path());
-    let gemini_path = gemini_cli::config_path(home.path());
     let qwen_path = qwen_code::config_path(home.path());
 
     write(&claude_path, CLAUDE_ORIGINAL);
     write(&codex_path, CODEX_ORIGINAL);
-    write(&gemini_path, GEMINI_ORIGINAL);
     write(&qwen_path, QWEN_ORIGINAL);
 
     claude_code::apply(home.path(), &ApplyOptions::default()).unwrap();
 
-    // The other three are untouched.
+    // The other two are untouched.
     assert_eq!(fs::read_to_string(&codex_path).unwrap(), CODEX_ORIGINAL);
-    assert_eq!(fs::read_to_string(&gemini_path).unwrap(), GEMINI_ORIGINAL);
     assert_eq!(fs::read_to_string(&qwen_path).unwrap(), QWEN_ORIGINAL);
 }
 
@@ -175,33 +147,66 @@ fn fresh_install_works_when_no_files_exist() {
 
     claude_code::apply(home.path(), &ApplyOptions::default()).unwrap();
     codex_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
-    gemini_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
     qwen_code::apply(home.path(), &ApplyOptions::default()).unwrap();
 
     let claude_path = claude_code::config_path(home.path());
     let codex_path = codex_cli::config_path(home.path());
-    let gemini_path = gemini_cli::config_path(home.path());
     let qwen_path = qwen_code::config_path(home.path());
 
-    // All four parent dirs created; all four files parse.
+    // All three parent dirs created; all three files parse.
     assert!(claude_path.exists());
     assert!(codex_path.exists());
-    assert!(gemini_path.exists());
     assert!(qwen_path.exists());
 
     let _claude: Value =
         serde_json::from_str(&fs::read_to_string(&claude_path).unwrap()).unwrap();
     let _codex: toml_edit::DocumentMut = fs::read_to_string(&codex_path).unwrap().parse().unwrap();
-    let _gemini: Value =
-        serde_json::from_str(&fs::read_to_string(&gemini_path).unwrap()).unwrap();
     let _qwen: Value = serde_json::from_str(&fs::read_to_string(&qwen_path).unwrap()).unwrap();
 }
 
 const CURSOR_ORIGINAL: &str = "{\n  \"unrelatedUserKey\": \"keepme\"\n}\n";
 const CURSOR_HOOK_SCRIPT_FIXTURE: &str = "/opt/trove/resources/hooks/cursor-otel-hook.cjs";
+const ANTIGRAVITY_HOOK_SCRIPT_FIXTURE: &str =
+    "/opt/trove/resources/hooks/antigravity-otel-hook.cjs";
 
 fn cursor_hook_path() -> PathBuf {
     PathBuf::from(CURSOR_HOOK_SCRIPT_FIXTURE)
+}
+
+fn antigravity_hook_path() -> PathBuf {
+    PathBuf::from(ANTIGRAVITY_HOOK_SCRIPT_FIXTURE)
+}
+
+const ANTIGRAVITY_ORIGINAL: &str = "{\n  \"PreToolUse\": {\n    \"type\": \"command\",\n    \"command\": \"/x/user-hook\"\n  }\n}\n";
+
+#[test]
+fn antigravity_apply_then_revert_is_byte_identical() {
+    // Antigravity CLI is a hook adapter (it dropped native OTLP), so it
+    // takes a `hook_script_path` like Cursor and writes JSONHookSpec
+    // objects keyed by event name into ~/.gemini/antigravity-cli/hooks.json.
+    let home = tempdir().unwrap();
+    let path = antigravity_cli::config_path(home.path());
+    write(&path, ANTIGRAVITY_ORIGINAL);
+
+    let metadata =
+        antigravity_cli::apply(home.path(), &ApplyOptions::default(), &antigravity_hook_path())
+            .unwrap();
+    assert_eq!(metadata.managed_block_hash.len(), 64);
+
+    // Post-apply: the user's own (unmanaged) PreToolUse hook survives,
+    // and Trove's managed event hooks point at the bundled script.
+    let after: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(after["PreToolUse"]["command"], "/x/user-hook");
+    assert_eq!(after["Stop"]["type"], "command");
+    assert_eq!(after["Stop"]["command"], ANTIGRAVITY_HOOK_SCRIPT_FIXTURE);
+    assert_eq!(
+        after["UserPromptSubmit"]["command"],
+        ANTIGRAVITY_HOOK_SCRIPT_FIXTURE,
+    );
+    assert!(after.get("_trove").is_some());
+
+    antigravity_cli::revert(home.path()).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), ANTIGRAVITY_ORIGINAL);
 }
 
 #[test]
@@ -347,46 +352,45 @@ fn all_seven_supported_harnesses_apply_and_revert_byte_identical() {
 
     let claude_path = claude_code::config_path(home.path());
     let codex_path = codex_cli::config_path(home.path());
-    let gemini_path = gemini_cli::config_path(home.path());
     let qwen_path = qwen_code::config_path(home.path());
     let cursor_path = cursor_ide::config_path(home.path());
     let opencode_path = opencode::config_path(home.path());
+    let antigravity_path = antigravity_cli::config_path(home.path());
 
     write(&claude_path, CLAUDE_ORIGINAL);
     write(&codex_path, CODEX_ORIGINAL);
-    write(&gemini_path, GEMINI_ORIGINAL);
     write(&qwen_path, QWEN_ORIGINAL);
-    // Cursor + OpenCode start from missing files so we cover the
-    // "fresh install" branch alongside the others.
+    // Cursor, OpenCode, and Antigravity (all hook/plugin adapters) start
+    // from missing files so we cover the "fresh install" branch too.
 
     claude_code::apply(home.path(), &ApplyOptions::default()).unwrap();
     codex_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
-    gemini_cli::apply(home.path(), &ApplyOptions::default()).unwrap();
     qwen_code::apply(home.path(), &ApplyOptions::default()).unwrap();
     cursor_ide::apply(home.path(), &ApplyOptions::default(), &cursor_hook_path()).unwrap();
     opencode::apply(home.path(), &ApplyOptions::default()).unwrap();
+    antigravity_cli::apply(home.path(), &ApplyOptions::default(), &antigravity_hook_path())
+        .unwrap();
 
-    // All seven now exist and parse.
+    // All now exist and parse.
     assert!(claude_path.exists());
     assert!(codex_path.exists());
-    assert!(gemini_path.exists());
     assert!(qwen_path.exists());
     assert!(cursor_path.exists());
     assert!(opencode_path.exists());
+    assert!(antigravity_path.exists());
 
-    // Revert each. Tier 1 + opencode return to byte-identical originals;
-    // cursor + opencode start from missing so we just confirm the _trove
-    // block is gone.
+    // Revert each. The native config adapters return to byte-identical
+    // originals; the hook/plugin adapters (cursor, opencode, antigravity)
+    // started from missing so we just confirm the _trove block is gone.
     claude_code::revert(home.path()).unwrap();
     codex_cli::revert(home.path()).unwrap();
-    gemini_cli::revert(home.path()).unwrap();
     qwen_code::revert(home.path()).unwrap();
     cursor_ide::revert(home.path()).unwrap();
     opencode::revert(home.path()).unwrap();
+    antigravity_cli::revert(home.path()).unwrap();
 
     assert_eq!(fs::read_to_string(&claude_path).unwrap(), CLAUDE_ORIGINAL);
     assert_eq!(fs::read_to_string(&codex_path).unwrap(), CODEX_ORIGINAL);
-    assert_eq!(fs::read_to_string(&gemini_path).unwrap(), GEMINI_ORIGINAL);
     assert_eq!(fs::read_to_string(&qwen_path).unwrap(), QWEN_ORIGINAL);
 
     let cursor_after: Value =
@@ -396,6 +400,10 @@ fn all_seven_supported_harnesses_apply_and_revert_byte_identical() {
     let opencode_after: Value =
         serde_json::from_str(&fs::read_to_string(&opencode_path).unwrap()).unwrap();
     assert!(opencode_after.get("_trove").is_none());
+
+    let antigravity_after: Value =
+        serde_json::from_str(&fs::read_to_string(&antigravity_path).unwrap()).unwrap();
+    assert!(antigravity_after.get("_trove").is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -470,9 +478,9 @@ fn applying_droid_does_not_disturb_tier_1_config_files() {
     write_zshrc(home.path(), DROID_ZSHRC_ORIGINAL);
 
     let claude_path = claude_code::config_path(home.path());
-    let gemini_path = gemini_cli::config_path(home.path());
+    let qwen_path = qwen_code::config_path(home.path());
     write(&claude_path, CLAUDE_ORIGINAL);
-    write(&gemini_path, GEMINI_ORIGINAL);
+    write(&qwen_path, QWEN_ORIGINAL);
 
     droid::apply(home.path(), &ApplyOptions::default()).unwrap();
 
@@ -482,8 +490,8 @@ fn applying_droid_does_not_disturb_tier_1_config_files() {
         "droid apply must not touch Claude Code config"
     );
     assert_eq!(
-        fs::read_to_string(&gemini_path).unwrap(),
-        GEMINI_ORIGINAL,
-        "droid apply must not touch Gemini config"
+        fs::read_to_string(&qwen_path).unwrap(),
+        QWEN_ORIGINAL,
+        "droid apply must not touch Qwen config"
     );
 }

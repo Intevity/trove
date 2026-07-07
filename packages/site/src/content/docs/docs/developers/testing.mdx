@@ -1,0 +1,138 @@
+---
+title: Testing
+description: How Trove is tested — Vitest with v8 coverage and a ≥95% gate on the shared schema package, Rust coverage gated separately, Playwright for the UI, and the harness × platform end-to-end results matrix.
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Trove leans on a small number of high-signal test layers: unit tests with a
+hard coverage gate on the typed contract, Rust tests for the core, an
+end-to-end browser suite for the UI, and a hand-driven harness × platform
+matrix that gates releases.
+
+## Running the tests
+
+The whole TypeScript suite runs from the workspace root with coverage:
+
+```bash
+pnpm test          # vitest run --coverage --reporter=verbose
+pnpm test:watch    # vitest in watch mode (no coverage gate)
+```
+
+For the Rust core:
+
+```bash
+cargo test --manifest-path packages/app/src-tauri/Cargo.toml
+```
+
+## The coverage gate
+
+[Vitest](https://vitest.dev/) collects coverage with the **v8** provider.
+The thresholds are deliberately strict, matching the gate Trove inherited
+from claude-sentinel:
+
+| Metric     | Threshold |
+| ---------- | --------- |
+| Lines      | **≥ 95%** |
+| Statements | **≥ 95%** |
+| Functions  | **≥ 95%** |
+| Branches   | **≥ 93%** |
+
+The gate is enforced where the logic lives — the **`@trove/shared`** package
+(schemas, constants, IPC messages). Two deliberate exclusions keep the
+number honest:
+
+- **The app frontend (`packages/app/src/`) is excluded** from unit
+  coverage. It's exercised end-to-end with Playwright instead, so unit-
+  coverage gating sits on the shared package rather than on React
+  components.
+- **Pure re-export barrels** (like `packages/shared/src/index.ts`) are
+  excluded. v8 reports them as 0% covered, which would sink the aggregate
+  even when the real schema and IPC files are at 100%.
+
+<Aside type="note">
+  Branches sit at 93 rather than 95 because some Zod fallbacks (for example `.default(...)` shapes)
+  introduce branches the tests don't all hit. The 3-point gap leaves headroom for new schema fields
+  without paper-cut threshold drift.
+</Aside>
+
+### Rust coverage
+
+Rust coverage is gated **separately** in CI, not by Vitest:
+
+```bash
+cargo llvm-cov --fail-under-lines 95 --fail-under-functions 95
+```
+
+The bulk of the Rust surface — detection, the safety contract, adapters, and
+the supervisor — is covered by unit and integration tests, including a
+collector integration test
+(`packages/app/src-tauri/tests/collector_integration.rs`) that runs against
+a freshly built sidecar.
+
+## UI end-to-end tests
+
+The React UI is validated with [Playwright](https://playwright.dev/), which
+runs against the built front end:
+
+```bash
+pnpm --filter @trove/app e2e
+pnpm --filter @trove/app e2e:install   # one-time: install the Chromium runner
+```
+
+## The harness × platform matrix
+
+Trove's hardest correctness question can't be answered by unit tests alone:
+_does every harness actually land real telemetry in every backend?_ The
+[automated testing plan](https://github.com/Intevity/trove/blob/main/documentation/AUTOMATED_TESTING_PLAN.md)
+codifies a per-pairing protocol that produces a release-gating results
+matrix.
+
+The topology under test is the real pipeline:
+
+```
+Harness (claude, agy, …)
+   │  OTLP HTTP/protobuf
+   ▼
+Trove's bundled collector (127.0.0.1:4318)   ← driven by the active preset
+   │  per-preset exporter
+   ▼
+Platform OTLP intake (local Docker, or a cloud OTLP endpoint)
+```
+
+Each cell is verified two ways — **collector receipt** (the signal reached
+the sidecar) _and_ a **read-side query** (it's queryable in the destination
+backend). Because Trove is a desktop GUI with no headless IPC to toggle
+adapters, an operator drives the harness enable/disable in the UI while the
+rest of the verification is scripted.
+
+<Aside type="tip">
+  Bring up **one observability stack at a time** when working through the matrix locally — up,
+  smoke, query, down. Several backends are memory-heavy, so running them all at once will exhaust
+  Docker's allocation.
+</Aside>
+
+## Local checks before a PR
+
+These mirror CI exactly:
+
+```bash
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+cargo clippy --manifest-path packages/app/src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path packages/app/src-tauri/Cargo.toml
+```
+
+Run `pnpm lint:fix` and `pnpm format` to auto-fix where possible. Every PR
+must keep CI green and update tests in the same change as the code they
+cover.
+
+<LinkCard
+  title="Contributing"
+  href="/trove/docs/developers/contributing/"
+  description="PR conventions, adding an adapter, and the code of conduct."
+/>

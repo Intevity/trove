@@ -40,11 +40,12 @@ across every harness Trove supports without per-harness customisation.
 
 ## Notes
 
-- The `trove.source` attribute is emitted directly by Trove's Tier 3 adapters
-  (Aider, Cline, Copilot CLI) with the harness id as the value. For Tier 1
-  harnesses that emit native OTLP (Claude Code, Gemini CLI, Codex CLI, Qwen
-  Code), the value carried on the wire is currently the backend kind — fall
-  back to grouping on `service.name` for those and the dashboards still work.
+- The `trove.source` attribute is emitted directly by Trove's hook/watcher
+  adapters (Antigravity CLI, Aider, Cline, Copilot CLI) with the harness id as
+  the value. For Tier 1 harnesses that emit native OTLP (Claude Code, Codex
+  CLI, Qwen Code), the value carried on the wire is currently the backend kind
+  — fall back to grouping on `service.name` for those and the dashboards still
+  work.
 - Metric names follow the OTLP-to-Prometheus name-mangling rules:
   `claude_code.session.count` on the wire becomes `claude_code_session_count`
   in PromQL.

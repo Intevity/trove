@@ -1,0 +1,49 @@
+---
+import Icon from './Icon.astro';
+
+const base = import.meta.env.BASE_URL;
+// Astro's BASE_URL carries a trailing slash; join without doubling it.
+const asset = (p: string) => `${base.replace(/\/$/, '')}/${p.replace(/^\//, '')}`;
+const repo = 'https://github.com/Intevity/trove';
+const releases = `${repo}/releases`;
+const docs = asset('docs/');
+const logo = asset('trove-logo.svg');
+---
+
+<header
+  class="sticky top-0 z-40 border-b border-border-subtle/10 bg-[#1c1c1e]/70 backdrop-blur-xs"
+>
+  <nav class="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-3">
+    <a href="#top" class="flex items-center gap-2.5">
+      <img src={logo} alt="" width="28" height="28" class="rounded-lg" />
+      <span class="text-sm font-semibold tracking-tight text-foreground">Trove</span>
+    </a>
+
+    <div class="flex items-center gap-1 sm:gap-2">
+      <a
+        href="#features"
+        class="hidden rounded-full px-3 py-2 text-sm font-medium text-foreground/70 transition hover:text-foreground sm:inline-flex"
+        >Features</a
+      >
+      <a
+        href="#how-it-works"
+        class="hidden rounded-full px-3 py-2 text-sm font-medium text-foreground/70 transition hover:text-foreground sm:inline-flex"
+        >How it works</a
+      >
+      <a
+        href={docs}
+        class="inline-flex rounded-full px-2.5 py-2 text-sm font-medium text-foreground/70 transition hover:text-foreground sm:px-3"
+        >Docs</a
+      >
+      <a
+        href={repo}
+        class="hidden rounded-full px-3 py-2 text-sm font-medium text-foreground/70 transition hover:text-foreground sm:inline-flex"
+        >GitHub</a
+      >
+      <a href={releases} class="btn-primary px-3 py-2 sm:px-4" aria-label="Download Trove">
+        <Icon name="download" size={16} />
+        <span class="hidden sm:inline">Download</span>
+      </a>
+    </div>
+  </nav>
+</header>

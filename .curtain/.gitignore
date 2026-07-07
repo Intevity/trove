@@ -1,0 +1,7 @@
+# Curtain build artifacts — large binaries + runtime state; regenerate with
+# `curtain capture <slug>` / `curtain render <slug>`. The reproducible source
+# (config.json, capture/init.js, capture/recipes/*, scripts/*) IS committed.
+renders/
+preview/
+.state/
+annotations/

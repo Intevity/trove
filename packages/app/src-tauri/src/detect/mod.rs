@@ -157,12 +157,19 @@ mod tests {
     #[test]
     fn detect_all_marks_present_harnesses_as_detected() {
         let home = tempdir().unwrap();
-        // Lay down a claude config and a gemini config; codex/qwen
-        // remain absent.
+        // Lay down a claude config and an antigravity-cli config dir;
+        // codex/qwen remain absent.
         fs::create_dir_all(home.path().join(".claude")).unwrap();
         fs::write(home.path().join(".claude").join("settings.json"), "{}").unwrap();
-        fs::create_dir_all(home.path().join(".gemini")).unwrap();
-        fs::write(home.path().join(".gemini").join("settings.json"), "{}").unwrap();
+        fs::create_dir_all(home.path().join(".gemini").join("antigravity-cli")).unwrap();
+        fs::write(
+            home.path()
+                .join(".gemini")
+                .join("antigravity-cli")
+                .join("hooks.json"),
+            "{}",
+        )
+        .unwrap();
 
         let detector = Detector {
             home: home.path().to_path_buf(),
@@ -174,7 +181,7 @@ mod tests {
         let by_id: std::collections::HashMap<HarnessId, &DetectedHarness> =
             results.iter().map(|r| (r.id, r)).collect();
         assert!(by_id[&HarnessId::ClaudeCode].detected);
-        assert!(by_id[&HarnessId::GeminiCli].detected);
+        assert!(by_id[&HarnessId::AntigravityCli].detected);
         assert!(!by_id[&HarnessId::CodexCli].detected);
         assert!(!by_id[&HarnessId::QwenCode].detected);
     }

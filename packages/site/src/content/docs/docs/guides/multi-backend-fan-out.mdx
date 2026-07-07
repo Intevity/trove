@@ -1,0 +1,135 @@
+---
+title: Send to multiple backends at once
+description: Fan the same unified telemetry stream out to several observability backends simultaneously, watch each destination's independent health pill, and pause one backend without losing its keychain-stored credentials.
+sidebar:
+  order: 5
+---
+
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+You don't have to pick one backend. Trove can forward the **same**
+normalized stream to several destinations at once — useful when finance
+watches one tool, the platform team watches another, you're migrating
+from one vendor to the next, or you want a local collector for debugging
+alongside a cloud backend for the real dashboards.
+
+Under the hood the bundled collector simply gets one exporter per
+configured backend, fed from the same pipeline. Each destination forwards
+independently and reports its own health, so one slow or broken backend
+never blocks the others.
+
+## Add a second (or third) backend
+
+<Steps>
+
+1. Open the **Platforms** tab. You'll see the backend you already
+   connected, with its health pill.
+
+   ![The Trove Platforms tab with multiple configured backends, each with its own health pill](/trove/screenshots/platforms.png)
+
+2. Add another backend exactly as you did the first: choose the preset,
+   enter its OTLP endpoint, and paste its ingest credential. Each
+   credential goes into the OS keychain on its own — they don't share
+   storage and one never overwrites another.
+
+3. **Save.** Trove regenerates `collector.yaml` with an additional
+   exporter and reloads the collector once (a brief 1–3 second blip).
+   Every enabled harness now fans out to all configured destinations
+   without any per-harness change.
+
+4. Repeat for as many backends as you need. The harnesses don't know or
+   care how many destinations exist — they emit once to the local
+   collector, and the collector handles the fan-out.
+
+</Steps>
+
+<Aside type="tip">
+  Pair a cloud backend with a **Local Collector** or **Generic OTLP** destination pointed at a
+  collector on your machine. You get production dashboards in the cloud and a raw local tap for
+  debugging, from the same stream.
+</Aside>
+
+## Each backend has its own health
+
+Fan-out makes per-destination health essential — without it, one
+silently failing exporter hides behind the others. Trove gives every
+backend row its own pill so a single broken destination is visible even
+while the rest keep flowing:
+
+- **Green** — this destination is accepting batches.
+- **Amber** — mixed success and failure for this destination.
+- **Red** — this destination has a recent error and no recent successes
+  (a wrong endpoint or stale credential stuck in retry), even though
+  other backends are green.
+- **Gray** — nothing sent here yet.
+
+Click any row to expand its 60-second window counters and last error
+string. This is how you catch the case where, say, your Datadog exporter
+is fine but your self-hosted SigNoz container went down — the tray icon
+stays green because other destinations still receive, but that one row
+turns red.
+
+## Pause a backend without losing its credentials
+
+Sometimes you want to stop sending to a destination temporarily —
+during maintenance, a vendor incident, or while you're testing — without
+re-entering its ingest key later.
+
+<Steps>
+
+1. On the **Platforms** tab, **disable** the backend you want to pause.
+
+2. Trove removes that destination's exporter from the regenerated
+   collector config and reloads. Telemetry stops flowing there
+   immediately; every other backend keeps receiving uninterrupted.
+
+3. The backend's **credential stays in the OS keychain** — disabling a
+   destination pauses forwarding, it doesn't forget the secret. Your
+   endpoint and settings are preserved too.
+
+4. When you're ready, **re-enable** the backend. Trove restores its
+   exporter from the saved config and stored credential, reloads once,
+   and the destination's health pill climbs back to green. No
+   re-entering keys.
+
+</Steps>
+
+<Aside type="caution">
+  Disabling a backend is reversible and credential-preserving. Removing it entirely is the heavier
+  action — only delete a backend when you actually want Trove to forget its configuration. For a
+  temporary stop, disable.
+</Aside>
+
+## Good to know
+
+- **One emit, many destinations.** Harnesses always emit once, to the
+  local collector. Fan-out happens collector-side, so adding a backend
+  never touches a single harness config.
+- **Still localhost-only.** No matter how many destinations you add, the
+  collector binds to `127.0.0.1` and forwards only to the endpoints you
+  configured. Adding backends doesn't widen what Trove listens on.
+- **Independent failure.** A red destination doesn't drop data for the
+  green ones; each exporter has its own retry queue.
+
+<CardGrid>
+  <LinkCard
+    title="Connect your first backend"
+    href="/trove/docs/guides/connect-your-first-backend/"
+    description="The basics of adding and verifying a single destination."
+  />
+  <LinkCard
+    title="Normalize costs & find dead seats"
+    href="/trove/docs/guides/normalize-costs-and-find-dead-seats/"
+    description="Route the same Tier A stream to finance and engineering at once."
+  />
+  <LinkCard
+    title="Platforms reference"
+    href="/trove/docs/features/platforms/"
+    description="Every supported backend and what each needs."
+  />
+  <LinkCard
+    title="Overview & data flow"
+    href="/trove/docs/features/overview/"
+    description="Watch sources, the collector, and destinations in one chart."
+  />
+</CardGrid>

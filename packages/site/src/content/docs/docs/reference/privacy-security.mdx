@@ -1,0 +1,96 @@
+---
+title: Privacy & security
+description: How Trove keeps your telemetry yours — localhost-only forwarding, OS-keychain credentials, byte-for-byte reversible config patches, no phone-home, and a fully open-source, auditable codebase.
+sidebar:
+  order: 3
+---
+
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Trove's whole reason to exist is to give you one unified telemetry stream **flowing to the observability backend you choose; never ours.** Everything below is a direct consequence of that promise.
+
+<Aside type="note">
+  **The one-sentence version:** Trove's bundled collector binds to `127.0.0.1`, forwards only to the
+  endpoint you configured, stores credentials in your OS keychain, and every file it touches is
+  reversible byte-for-byte. It never phones home.
+</Aside>
+
+## Localhost-only architecture
+
+The bundled OpenTelemetry Collector listens on `127.0.0.1` and forwards exclusively to the endpoint you set. No third-party SDK in Trove's dependency tree phones a vendor. Harnesses on your machine point their OTLP exporters at the local collector; the collector normalizes the signals and ships one stream to your backend.
+
+```
+AI coding harnesses ──OTLP──▶ Trove collector (127.0.0.1) ──OTLP──▶ your backend
+```
+
+There is no Trove cloud, no SaaS layer, and no analytics or crash-reporting endpoint in the path.
+
+## No phone-home, no telemetry-on-telemetry
+
+- **No telemetry.** Trove collects no usage analytics about itself.
+- **No crash reporting.** Nothing is uploaded when the app errors.
+- **No data aggregation.** Trove never aggregates or relays your harness data to Intevity. There is no business model that depends on your data, and no SaaS layer that could change its mind about pricing or data-sharing next quarter.
+
+## What actually leaves your machine
+
+The only network traffic Trove originates is the OTLP stream from the local collector to the backend(s) **you** configured.
+
+| Data                                                     | Where it goes                                                                                   |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Harness spans, metrics, logs (Tier A + Tier B)           | Only to the backend(s) you enabled in the Platforms tab                                         |
+| Backend credentials                                      | Stored in your OS keychain; sent only as auth headers to that backend                           |
+| Your identity tags (`user.name`, `user.email`, optional) | Attached as resource attributes on the telemetry you forward — only if you set them in Settings |
+| Anything to Trove / Intevity                             | **Nothing.** Ever.                                                                              |
+
+<Aside type="tip">
+  Want to verify with your own eyes? Point Trove at a **Local Collector (passthrough)** backend, or
+  watch the **Logs** tab — the live collector tail shows exactly which exporters are firing and
+  where.
+</Aside>
+
+## Credentials live in the OS keychain
+
+Backend tokens, API keys, and ingest secrets are stored in the operating system's secure credential store:
+
+| Platform | Credential store           |
+| -------- | -------------------------- |
+| macOS    | Keychain                   |
+| Windows  | Credential Manager         |
+| Linux    | Secret Service (libsecret) |
+
+Credentials are **never** written to plaintext JSON, **never** placed in env files, and **never** logged. Trove's single state file (`state.json`) records _that_ a backend is configured and _what_ was patched — not the secret itself.
+
+## Reversible, auditable config patches
+
+Every change Trove makes to a harness's config file is wrapped in a **sentinel-bracketed managed region**: a clearly delimited block the patcher owns.
+
+- **Atomic.** Each patch is written atomically — no half-applied states, no orphaned env vars.
+- **Reversible byte-for-byte.** Clicking **Disable** restores the original file exactly as it was. No "I uninstalled Trove but my CLI still POSTs to localhost."
+- **Diffable and auditable.** Because the managed region is bracketed, you can diff it, audit it, and revert it by hand if you ever need to. What Trove wrote is captured in `state.json`.
+
+This is the same model Trove uses for best-effort harnesses — the shell-rc wrapper lines it adds live inside a managed block in your shell profile and come out cleanly on disable.
+
+## Open source, auditable end-to-end
+
+Trove is MIT licensed and fully open source. Every line of TypeScript, every Rust handler, the custom OpenTelemetry Collector build, and every harness adapter is auditable on GitHub. CI gates a high test-coverage bar on the shared schema layer, where the security-sensitive logic lives.
+
+<CardGrid>
+  <LinkCard
+    title="Browse the source"
+    href="https://github.com/Intevity/trove"
+    description="The full Trove repository — core, UI, collector build, and adapters."
+  />
+  <LinkCard
+    title="Settings & identity tagging"
+    href="/trove/docs/reference/settings/"
+    description="Control the optional user.name / user.email resource attributes."
+  />
+</CardGrid>
+
+## At a glance
+
+- Collector binds `127.0.0.1`; forwards only to your configured endpoint.
+- Credentials in the OS keychain, never plaintext.
+- Config patches are atomic, sentinel-bracketed, reversible byte-for-byte.
+- No telemetry, no analytics, no crash reporting, no phone-home.
+- MIT licensed, fully open source, end-to-end auditable.

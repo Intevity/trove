@@ -3,6 +3,10 @@ dist/
 coverage/
 target/
 .pnpm-store/
+
+# Astro's generated cache (types, content collections) — regenerated on build,
+# gitignored, never hand-edited.
+**/.astro/
 packages/app/src-tauri/target/
 packages/app/src-tauri/gen/
 packages/app/dist/
@@ -16,3 +20,7 @@ documentation/MVP_PLAN.md
 # existing ~/.cursor/hooks.json patches) but is actually a /bin/sh script.
 # Prettier's JS parser chokes on the shell syntax.
 resources/hooks/cursor-otel-hook.cjs
+
+# Antigravity hook wrapper — same deal as the Cursor wrapper above: a
+# /bin/sh script behind a .cjs extension baked into installed hooks.json.
+resources/hooks/antigravity-otel-hook.cjs

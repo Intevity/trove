@@ -1,10 +1,13 @@
 //! Qwen Code adapter — patches `~/.qwen/settings.json`'s top-level
-//! `telemetry` object. Qwen Code is a Gemini CLI fork; the settings
-//! schema for telemetry is byte-for-byte the same shape, so this
-//! adapter mirrors `gemini_cli` with the namespace swapped.
+//! `telemetry` object. Qwen Code is a Gemini-CLI-derived harness and
+//! still ships the native-OTLP `telemetry` settings block Gemini CLI
+//! had (the `{ enabled, target, useCollector, otlpProtocol, otlpEndpoint,
+//! logPrompts }` shape). Note this is the *legacy* Gemini CLI mechanism:
+//! Antigravity CLI (the official Gemini CLI successor) dropped it and is
+//! instead bridged via a hook (see `antigravity_cli`). Qwen keeps it.
 //!
 //! Verify the field set against the upstream qwen-code docs at every
-//! adapter rev — the schema may diverge from Gemini's over time.
+//! adapter rev — the schema may diverge over time.
 
 use std::path::{Path, PathBuf};
 
@@ -48,10 +51,9 @@ pub fn revert(home: &Path) -> Result<(), IpcError> {
 }
 
 /// Build the [`ManagedRegion`] for a JSON merge of the `telemetry`
-/// block. Mirrors `gemini_cli::build_region` because Qwen Code is a
-/// Gemini CLI fork and the upstream schema is byte-identical for this
-/// block. `customAttributes` is a no-op for Qwen for the same reason
-/// it's a no-op for Gemini.
+/// block. Uses the legacy Gemini-CLI native-OTLP settings shape, which
+/// Qwen Code still honors byte-for-byte. `customAttributes` is a no-op
+/// for Qwen (the upstream schema doesn't expose a clear path yet).
 ///
 /// `logPrompts` is pinned to `false`: Trove's pipeline is metrics-only
 /// by policy, so we never opt into upstream prompt-body capture.
@@ -59,9 +61,9 @@ fn build_region(_opts: &ApplyOptions) -> Result<ManagedRegion, SentinelError> {
     let mut telemetry = serde_json::Map::new();
     telemetry.insert("enabled".to_string(), Value::Bool(true));
     telemetry.insert("target".to_string(), Value::String("local".to_string()));
-    // useCollector + otlpProtocol mirror gemini_cli: required as of
-    // upstream's 0.4x telemetry refactor for any signal to actually
-    // leave the harness process for the local collector.
+    // useCollector + otlpProtocol: required as of upstream's 0.4x
+    // telemetry refactor for any signal to actually leave the harness
+    // process for the local collector.
     telemetry.insert("useCollector".to_string(), Value::Bool(true));
     telemetry.insert(
         "otlpProtocol".to_string(),

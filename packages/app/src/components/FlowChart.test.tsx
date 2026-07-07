@@ -7,8 +7,8 @@ const IDLE = { spans: 0, metrics: 0, logs: 0 };
 
 describe('resolveHarnessRate', () => {
   it('uses a harness own diag lane when present', () => {
-    const per = { 'gemini-cli': { spans: 0, metrics: 3, logs: 0 } };
-    expect(resolveHarnessRate('gemini-cli', per, AGGREGATE)).toEqual({
+    const per = { 'codex-cli': { spans: 0, metrics: 3, logs: 0 } };
+    expect(resolveHarnessRate('codex-cli', per, AGGREGATE)).toEqual({
       spans: 0,
       metrics: 3,
       logs: 0,

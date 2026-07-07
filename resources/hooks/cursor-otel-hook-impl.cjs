@@ -16,7 +16,7 @@
 // up every rule whose `when` matches. The rule's target metric id is
 // resolved against the sidecar's catalog to produce the wire name and
 // OTLP shape. This is the same rules-driven path the in-process Rust
-// watchers (Cline, Gemini, Claude Desktop) use — the JS port keeps
+// watchers (Cline, Claude Desktop, Droid) use — the JS port keeps
 // Cursor on the same model.
 //
 // **Fallback.** When the sidecar is missing (host upgraded the bundled

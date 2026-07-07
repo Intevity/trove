@@ -44,7 +44,7 @@ function appState(opts?: {
   harnesses?: HarnessConfig[];
 }): AppState {
   return {
-    schemaVersion: 11,
+    schemaVersion: 12,
     backends:
       opts?.backends === undefined
         ? [
@@ -291,7 +291,10 @@ describe('DiagnosticsPanel', () => {
   });
 
   it('shows red harnesses row when no harness is enabled', () => {
-    const harnesses = [harnessConfig('claude-code', false), harnessConfig('gemini-cli', false)];
+    const harnesses = [
+      harnessConfig('claude-code', false),
+      harnessConfig('antigravity-cli', false),
+    ];
     render(
       <DiagnosticsPanel appState={appState({ harnesses })} state={RUNNING} metrics={snapshot()} />,
     );
