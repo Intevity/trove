@@ -37,6 +37,10 @@ export default defineConfig({
         // App frontend is exercised end-to-end via Playwright (Sprint 6 will
         // expand the surface). Unit-coverage gating sits on packages/shared.
         'packages/app/src/**',
+        // Promotional site: Astro pages + presentational React islands +
+        // static data files, verified by `astro build` and visual/e2e review,
+        // not unit coverage — same rationale as packages/app/src above.
+        'packages/site/**',
         // Pure re-export barrels carry no logic; v8 reports them as
         // 0% covered which sinks the aggregate even when the actual
         // schema and IPC files sit at 100%.
