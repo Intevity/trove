@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import { Aside, Steps, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, Steps, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 A **platform** (or **backend**) is an observability destination — the place your
 telemetry actually lands. The **Platforms** tab is where you tell Trove which
@@ -36,23 +36,23 @@ forms, and two escape hatches cover everything else.
 
 The 15 integrations and their auth patterns:
 
-| Platform | Auth pattern |
-| --- | --- |
-| **SigNoz Cloud** *(recommended)* | Ingestion key (gRPC or HTTP) |
-| Grafana Cloud | Endpoint plus Basic auth |
-| Honeycomb | Team API key plus dataset |
-| Datadog | `DD-API-KEY` header plus site selector |
-| New Relic | License key plus region (US or EU) |
-| Splunk Observability Cloud | Realm plus `X-SF-Token` access token |
-| Dynatrace | Environment URL plus API token |
-| Elastic | OTLP/HTTP plus `Authorization: ApiKey` |
-| OpenSearch | OTLP routed to Data Prepper |
-| OpenObserve | OTLP plus `/api/<organization>` path |
-| ClickStack (HyperDX) | OTLP plus ingestion key header |
-| Chronosphere | Tenant plus `API-Token` header |
-| Sentry | OTLP/HTTP plus `X-Sentry-Auth` |
-| Generic OTLP | Arbitrary endpoint plus any header set |
-| Local Collector (passthrough) | OTLP to your own self-hosted collector |
+| Platform                         | Auth pattern                           |
+| -------------------------------- | -------------------------------------- |
+| **SigNoz Cloud** _(recommended)_ | Ingestion key (gRPC or HTTP)           |
+| Grafana Cloud                    | Endpoint plus Basic auth               |
+| Honeycomb                        | Team API key plus dataset              |
+| Datadog                          | `DD-API-KEY` header plus site selector |
+| New Relic                        | License key plus region (US or EU)     |
+| Splunk Observability Cloud       | Realm plus `X-SF-Token` access token   |
+| Dynatrace                        | Environment URL plus API token         |
+| Elastic                          | OTLP/HTTP plus `Authorization: ApiKey` |
+| OpenSearch                       | OTLP routed to Data Prepper            |
+| OpenObserve                      | OTLP plus `/api/<organization>` path   |
+| ClickStack (HyperDX)             | OTLP plus ingestion key header         |
+| Chronosphere                     | Tenant plus `API-Token` header         |
+| Sentry                           | OTLP/HTTP plus `X-Sentry-Auth`         |
+| Generic OTLP                     | Arbitrary endpoint plus any header set |
+| Local Collector (passthrough)    | OTLP to your own self-hosted collector |
 
 ## Credentials live in the OS keychain
 
@@ -70,10 +70,9 @@ in the config file Trove owns — so your key lives in exactly one place instead
 sprawling across every harness's config.
 
 <Aside type="caution">
-Trove asks you to enter credentials into its own forms, which hand off to your OS
-keychain. Treat any request to paste a key elsewhere — or to forward your
-telemetry to an endpoint you didn't choose — with suspicion. Trove forwards only
-to backends *you* added here.
+  Trove asks you to enter credentials into its own forms, which hand off to your OS keychain. Treat
+  any request to paste a key elsewhere — or to forward your telemetry to an endpoint you didn't
+  choose — with suspicion. Trove forwards only to backends *you* added here.
 </Aside>
 
 ## Multi-platform fan-out
@@ -92,21 +91,21 @@ collector's own scrape metrics and exporter error stream — so silent data loss
 becomes visible immediately instead of waiting for someone to notice their
 dashboard went quiet:
 
-| Pill | Meaning |
-| --- | --- |
-| **Green** | Batches are being accepted; the exporter is healthy (pulses on activity). |
-| **Amber** | Sending, but with recent failures — degraded, not dead. |
-| **Red** | Recent errors and no recent successes (e.g. wrong endpoint, stale credential, or the backend is down). |
-| **Gray** | Idle — no traffic sent in the current window (nothing wrong, just quiet). |
+| Pill      | Meaning                                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------ |
+| **Green** | Batches are being accepted; the exporter is healthy (pulses on activity).                              |
+| **Amber** | Sending, but with recent failures — degraded, not dead.                                                |
+| **Red**   | Recent errors and no recent successes (e.g. wrong endpoint, stale credential, or the backend is down). |
+| **Gray**  | Idle — no traffic sent in the current window (nothing wrong, just quiet).                              |
 
 Clicking a backend row expands an inline detail panel with the last error string
-and rolling 60-second window counters, so a red pill tells you not just *that*
-something broke but *what*.
+and rolling 60-second window counters, so a red pill tells you not just _that_
+something broke but _what_.
 
 <Aside type="tip">
-A red pill on one backend doesn't stop the others — fan-out means each
-destination succeeds or fails independently. The global tray icon can stay green
-while one exporter is red, which is exactly why per-backend pills exist.
+  A red pill on one backend doesn't stop the others — fan-out means each destination succeeds or
+  fails independently. The global tray icon can stay green while one exporter is red, which is
+  exactly why per-backend pills exist.
 </Aside>
 
 ## Disable vs Remove

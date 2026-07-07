@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 The **Logs** tab is Trove's debugging window. It streams the live tail of the
 bundled [OpenTelemetry Collector](/trove/docs/features/the-collector/)'s log file
@@ -25,11 +25,11 @@ reloads, and any errors — not a Trove-curated summary.
 The log file is size-capped (10 MiB) with a single rotation to a `.1` file, so it
 never grows without bound. It lives in your platform's standard logs directory:
 
-| Platform | Location |
-| --- | --- |
-| macOS | `~/Library/Logs/com.intevity.trove/collector.log` |
-| Linux | `~/.local/state/com.intevity.trove/collector.log` |
-| Windows | `%LOCALAPPDATA%\com.intevity.trove\Logs\collector.log` |
+| Platform | Location                                               |
+| -------- | ------------------------------------------------------ |
+| macOS    | `~/Library/Logs/com.intevity.trove/collector.log`      |
+| Linux    | `~/.local/state/com.intevity.trove/collector.log`      |
+| Windows  | `%LOCALAPPDATA%\com.intevity.trove\Logs\collector.log` |
 
 ## What to look for
 
@@ -48,10 +48,9 @@ The Logs tab is most useful when paired with a symptom from another tab:
   binary, a port already in use, or a malformed config after a mapping edit).
 
 <Aside type="tip">
-Exporter errors for a backend whose container or service is simply *down* are
-expected and harmless — bring the destination back up and the retries succeed.
-The lines worth acting on are the ones that persist after the destination is
-known-healthy.
+  Exporter errors for a backend whose container or service is simply *down* are expected and
+  harmless — bring the destination back up and the retries succeed. The lines worth acting on are
+  the ones that persist after the destination is known-healthy.
 </Aside>
 
 ## Where to go next

@@ -5,10 +5,10 @@ sidebar:
   order: 1
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 The **Overview** tab is the first thing you see when you open Trove. It answers one
-question at a glance: *is telemetry flowing, and where is it going?* It pairs a
+question at a glance: _is telemetry flowing, and where is it going?_ It pairs a
 health summary with a live data-flow chart that traces every signal from the AI
 coding tools on your machine, through the bundled collector, out to the
 observability backends you configured.
@@ -32,8 +32,8 @@ The top of the tab is a status band that rolls up the whole pipeline:
   accepted from harnesses (received) and forwarded to your backends (sent).
 
 <Aside type="note">
-"Received" and "Sent" count total signals (spans, metrics, and logs), not spans
-alone — so a healthy session shows both numbers climbing together.
+  "Received" and "Sent" count total signals (spans, metrics, and logs), not spans alone — so a
+  healthy session shows both numbers climbing together.
 </Aside>
 
 ## The data-flow chart
@@ -62,10 +62,9 @@ activity halos: you still see which tools are firing, just grouped into one
 orbiting constellation rather than a row of separate boxes.
 
 <Aside type="tip">
-If you want to confirm a specific tool is emitting and the Orbital Hub has it
-clustered, the [Harnesses tab](/trove/docs/features/harnesses/) shows each row's
-telemetry pill individually, and the [Logs tab](/trove/docs/features/logs/) tails
-the raw collector output.
+  If you want to confirm a specific tool is emitting and the Orbital Hub has it clustered, the
+  [Harnesses tab](/trove/docs/features/harnesses/) shows each row's telemetry pill individually, and
+  the [Logs tab](/trove/docs/features/logs/) tails the raw collector output.
 </Aside>
 
 ## Collector and sidecar diagnostics
@@ -85,10 +84,9 @@ cleanly when you quit the app. Overview reflects that lifecycle:
   usually names the cause (a bad endpoint, a missing binary, a port conflict).
 
 <Aside type="caution">
-The collector binds to localhost only (`127.0.0.1`). It receives OTLP from your
-machine and forwards exclusively to the backends you configured — never to Trove
-or Intevity. See [The collector](/trove/docs/features/the-collector/) for the
-binding and forwarding model.
+  The collector binds to localhost only (`127.0.0.1`). It receives OTLP from your machine and
+  forwards exclusively to the backends you configured — never to Trove or Intevity. See [The
+  collector](/trove/docs/features/the-collector/) for the binding and forwarding model.
 </Aside>
 
 ## Where to go next

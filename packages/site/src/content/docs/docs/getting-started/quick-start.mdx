@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import { Aside, Steps, LinkCard } from "@astrojs/starlight/components";
+import { Aside, Steps, LinkCard } from '@astrojs/starlight/components';
 
 This guide takes you from a fresh install to live, unified telemetry in about five minutes. It assumes you have already [installed Trove](/trove/docs/getting-started/installation/) and have at least one supported AI coding harness on your machine.
 
@@ -22,7 +22,8 @@ This guide takes you from a fresh install to live, unified telemetry in about fi
 3. **Enable one harness.** Pick a tool you actually use and click its **Enable** toggle. Trove writes a sentinel-bracketed managed region into that harness's config so it emits OTLP to the local collector. For native-OTel harnesses this just flips the right flags; for best-effort harnesses it installs a watcher or shell-rc wrapper. The change is fully reversible — toggle **Disable** and Trove restores the original file byte-for-byte.
 
    <Aside type="tip">
-   Start with one harness so you can clearly see the data-flow light up. You can enable the rest once you have confirmed the path works.
+     Start with one harness so you can clearly see the data-flow light up. You can enable the rest
+     once you have confirmed the path works.
    </Aside>
 
 4. **Add a backend on the Platforms tab.** Open the **Platforms** tab and add the observability backend you want to forward to. Each backend has a tailored credential form; Trove stores what you enter in your OS keychain. If you already chose a destination in the first-launch wizard, it is here — and you can add more, since Trove broadcasts every signal to every enabled backend.
@@ -34,7 +35,8 @@ This guide takes you from a fresh install to live, unified telemetry in about fi
 6. **Watch the Overview go green.** Back on the **Overview** tab, the data-flow chart comes alive as telemetry flows: the source halo for your enabled harness lights up, and the row's telemetry pill turns green — typically within about five seconds. Each configured backend shows a health pill (green / amber / red / gray) driven by the collector's own scrape metrics.
 
    <Aside type="note">
-   When four or more harnesses are enabled, the individual source nodes collapse into an animated "Orbital Hub" cluster to keep the chart readable.
+     When four or more harnesses are enabled, the individual source nodes collapse into an animated
+     "Orbital Hub" cluster to keep the chart readable.
    </Aside>
 
 7. **Confirm in your backend.** Open your observability backend's own dashboard. Spans, metrics, and logs land tagged with `harness.id` and `service.name`, alongside the normalized Tier A metric set (`trove.harness.events`, `trove.harness.tokens`, `trove.harness.cost.usd`, `trove.harness.turn.duration`, `trove.harness.errors`).

@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, Steps, Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+import { Aside, Steps, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
 
 Trove ships as a single desktop app with the OpenTelemetry Collector bundled inside it. There is no separate daemon to install, no agent to upgrade, and no account to create. Download the installer for your OS, launch it, and the first-run wizard takes you the rest of the way.
 
@@ -18,7 +18,8 @@ Trove ships as a single desktop app with the OpenTelemetry Collector bundled ins
 - At least one supported AI coding harness installed (otherwise Trove launches fine but has nothing to detect)
 
 <Aside type="note">
-Trove needs no inbound network access. The bundled collector binds to `127.0.0.1` and reaches out only to the observability backend you configure.
+  Trove needs no inbound network access. The bundled collector binds to `127.0.0.1` and reaches out
+  only to the observability backend you configure.
 </Aside>
 
 ## Download
@@ -32,6 +33,7 @@ Grab the latest installer from the [GitHub Releases page](https://github.com/Int
     <Aside type="caution">
     Pre-1.0 macOS builds may ship unsigned. If macOS Gatekeeper blocks the first launch, right-click (or Control-click) **Trove.app** and choose **Open**, then confirm. This is a one-time step.
     </Aside>
+
   </TabItem>
   <TabItem label="Windows">
     Download the `.msi` or the NSIS `-setup.exe` and run it. Follow the installer prompts to finish.
@@ -44,6 +46,7 @@ Grab the latest installer from the [GitHub Releases page](https://github.com/Int
     - **Any distro** — download the portable `.AppImage`, mark it executable (`chmod +x Trove*.AppImage`), and run it
 
     Credential storage on Linux uses the Secret Service API, so a keyring provider such as GNOME Keyring or KWallet should be available.
+
   </TabItem>
 </Tabs>
 
@@ -72,7 +75,9 @@ The first time you open Trove, a setup wizard walks you through choosing a desti
 </Steps>
 
 <Aside type="tip">
-You can change or add backends any time from the **Platforms** tab — the wizard just gets you to your first one fast. Trove fans out to every enabled backend at once, so adding a second destination later is one more form.
+  You can change or add backends any time from the **Platforms** tab — the wizard just gets you to
+  your first one fast. Trove fans out to every enabled backend at once, so adding a second
+  destination later is one more form.
 </Aside>
 
 ## Next step

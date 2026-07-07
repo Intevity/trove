@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-import { Steps, Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Steps, Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Trove is open source (MIT) and contributions are welcome. The loop is meant
 to be lightweight. This page covers the conventions; the
@@ -60,7 +60,7 @@ Squash trivial follow-ups before opening a PR.
 
 ## Adding a new harness adapter
 
-This is the most common contribution. An *adapter* is the piece of code that
+This is the most common contribution. An _adapter_ is the piece of code that
 knows **where** a harness's config lives, **what shape** it's in, and **what
 keys** Trove needs to write. Everything else — atomicity, backup,
 idempotence, conflict detection, and revert — is shared and enforced for you.
@@ -77,7 +77,7 @@ The short version:
 
 2. **Write a thin adapter module** under
    `packages/app/src-tauri/src/adapters/`. It declares a `const SPEC:
-   HarnessSpec` and delegates to `adapters::common`. Your adapter owns only
+HarnessSpec` and delegates to `adapters::common`. Your adapter owns only
    `build_region` (the bytes to write) and its tests.
 
 3. **Rely on the shared safety contract.** `adapters::common` provides the
@@ -90,11 +90,10 @@ The short version:
 </Steps>
 
 <Aside type="note">
-**Native-OTel vs best-effort.** Some harnesses emit OTLP natively, so the
-adapter just flips the right config flags. Others don't, so Trove installs a
-filesystem watcher or a shell-rc wrapper that derives OTLP records from the
-tool's logs. The adding-a-harness guide documents both patterns —
-including how to avoid shadowing a multi-purpose binary like `gh`.
+  **Native-OTel vs best-effort.** Some harnesses emit OTLP natively, so the adapter just flips the
+  right config flags. Others don't, so Trove installs a filesystem watcher or a shell-rc wrapper
+  that derives OTLP records from the tool's logs. The adding-a-harness guide documents both patterns
+  — including how to avoid shadowing a multi-purpose binary like `gh`.
 </Aside>
 
 When `HarnessId::has_adapter()` flips on, the UI's Enable / Disable button

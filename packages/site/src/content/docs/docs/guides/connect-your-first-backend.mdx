@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import { Steps, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 A backend (Trove also calls it a **platform**) is the observability
 destination you already own — where your spans, metrics, and logs land.
@@ -31,9 +31,8 @@ endpoint). Have that value handy from your backend's settings before you
 begin.
 
 <Aside type="tip">
-If you just want to see data flow without signing up for anything, choose
-**Local Collector** or **Generic OTLP** pointed at a collector running on
-your machine. No credentials, no cloud account.
+  If you just want to see data flow without signing up for anything, choose **Local Collector** or
+  **Generic OTLP** pointed at a collector running on your machine. No credentials, no cloud account.
 </Aside>
 
 ## Add the backend
@@ -54,9 +53,8 @@ your machine. No credentials, no cloud account.
    (for example a loopback gRPC endpoint like `localhost:14317`).
 
    <Aside type="note">
-   Trove auto-detects loopback endpoints (`localhost`, `127.0.0.1`,
-   `::1`) and relaxes TLS for them so a local stack works out of the box.
-   Cloud endpoints keep TLS on.
+     Trove auto-detects loopback endpoints (`localhost`, `127.0.0.1`, `::1`) and relaxes TLS for
+     them so a local stack works out of the box. Cloud endpoints keep TLS on.
    </Aside>
 
 4. Paste your **ingest credential** (API key / ingest token). Trove
@@ -102,11 +100,10 @@ driven by the collector's live exporter counters and error stream:
 </Steps>
 
 <Aside type="tip">
-No green after a minute or two? Open the **Logs** tab and watch the live
-collector tail. A red pill plus an exporter error line there usually
-points at a wrong endpoint host/port or an ingest key that needs the
-right scope. Fix the value on the Platforms tab and Trove reloads the
-collector automatically.
+  No green after a minute or two? Open the **Logs** tab and watch the live collector tail. A red
+  pill plus an exporter error line there usually points at a wrong endpoint host/port or an ingest
+  key that needs the right scope. Fix the value on the Platforms tab and Trove reloads the collector
+  automatically.
 </Aside>
 
 ## What you've built

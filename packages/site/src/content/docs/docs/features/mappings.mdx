@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Different harnesses emit telemetry in different shapes — different attribute names,
 different event names, different aggregation grains. The **Mappings** tab is where
@@ -26,7 +26,7 @@ exposes both paths through the same editor surface:
 
 Native-OTel harnesses (Claude Code, Codex, Antigravity CLI, Qwen Code, OpenCode)
 already emit their own metrics. A **synthesis rule** tells the collector to
-*additively* derive a Tier A metric from one of those native signals — for example,
+_additively_ derive a Tier A metric from one of those native signals — for example,
 turning Claude Code's `claude_code.session.count` into a `trove.harness.events`
 data point with `event.kind=chat.turn`, or copying `claude_code.token.usage` into
 `trove.harness.tokens`.
@@ -34,20 +34,20 @@ data point with `event.kind=chat.turn`, or copying `claude_code.token.usage` int
 Synthesis is implemented as a collector overlay (`metricstransform` plus
 `transform/harness-tag`) injected on every reload, using `action: insert` — so the
 native **Tier B** metric still passes through untouched. You get the cross-harness
-view *and* the vendor-native drill-down, not one or the other.
+view _and_ the vendor-native drill-down, not one or the other.
 
 ### Hook rules (watcher / best-effort harnesses)
 
 Best-effort harnesses (Cline, Aider, GitHub Copilot CLI) don't emit OTel
 natively, so there's no native metric to synthesize from. A **hook rule** instead
-tells the watcher how to *classify a raw event* into Tier A. For example: each
+tells the watcher how to _classify a raw event_ into Tier A. For example: each
 Aider or Copilot CLI wrapper invocation becomes one `chat.turn` event plus a
 duration histogram observation, and a non-zero exit becomes a `trove.harness.errors`
 data point; Cline's watcher classifies each `ui_messages.json` entry by its
 message type into `chat.turn` / `tool.call` / `file.edit`.
 
-The editor surface is the same for both — you're configuring *which raw signal
-maps to which Tier A metric and attributes*, not writing a query language.
+The editor surface is the same for both — you're configuring _which raw signal
+maps to which Tier A metric and attributes_, not writing a query language.
 
 ## Live diff and preview
 
@@ -73,10 +73,9 @@ restores the shipped rows — useful when an experiment goes sideways and you wa
 a known-good starting point.
 
 <Aside type="tip">
-Trove's shipped defaults turn on `events` and `tokens` synthesis out of the box so
-your cross-harness dashboards populate immediately; cost synthesis is more
-conservative by default to avoid double-counting. You can flip any of these per
-harness here.
+  Trove's shipped defaults turn on `events` and `tokens` synthesis out of the box so your
+  cross-harness dashboards populate immediately; cost synthesis is more conservative by default to
+  avoid double-counting. You can flip any of these per harness here.
 </Aside>
 
 ## Custom metric catalog
@@ -87,11 +86,10 @@ flow through unchanged (no synthesis step); your receiving backend's dashboards
 interpret them.
 
 <Aside type="caution">
-Custom metric names are *yours* — they won't line up with another Trove user's
-dashboards the way the five Tier A built-ins do, which is the whole point of a
-fixed normalized schema. The "Add custom metric" form warns about this. Note also
-that, today, only native-OTel harnesses honor custom-metric rules; watcher/hook
-harnesses are limited to the built-ins.
+  Custom metric names are *yours* — they won't line up with another Trove user's dashboards the way
+  the five Tier A built-ins do, which is the whole point of a fixed normalized schema. The "Add
+  custom metric" form warns about this. Note also that, today, only native-OTel harnesses honor
+  custom-metric rules; watcher/hook harnesses are limited to the built-ins.
 </Aside>
 
 ## Where to go next

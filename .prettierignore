@@ -3,6 +3,10 @@ dist/
 coverage/
 target/
 .pnpm-store/
+
+# Astro's generated cache (types, content collections) — regenerated on build,
+# gitignored, never hand-edited.
+**/.astro/
 packages/app/src-tauri/target/
 packages/app/src-tauri/gen/
 packages/app/dist/

@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, Steps, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, Steps, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 A **harness** is an AI coding tool that produces telemetry — Claude Code,
 Antigravity CLI, Cursor, Cline, and so on. The **Harnesses** tab is where Trove shows you
@@ -35,7 +35,7 @@ Each detected harness is a row with a single toggle.
 
 <Steps>
 
-1. **Click Enable** on a harness row. Trove writes a *managed region* into that
+1. **Click Enable** on a harness row. Trove writes a _managed region_ into that
    tool's config file — a block bracketed by sentinel comments that flips on the
    tool's OTLP export and points it at the local collector.
 
@@ -50,17 +50,16 @@ Each detected harness is a row with a single toggle.
 </Steps>
 
 <Aside type="tip">
-Every patch is **atomic and reversible**. The sentinel-bracketed managed region is
-the entire footprint of an "Enable" — disabling is a clean, exact revert. This is
-the same managed-region mechanism described in
-[The collector](/trove/docs/features/the-collector/) and the project's privacy
-pillars.
+  Every patch is **atomic and reversible**. The sentinel-bracketed managed region is the entire
+  footprint of an "Enable" — disabling is a clean, exact revert. This is the same managed-region
+  mechanism described in [The collector](/trove/docs/features/the-collector/) and the project's
+  privacy pillars.
 </Aside>
 
 ## Coverage badges
 
 Not every tool speaks OpenTelemetry the same way. Each row carries a **coverage
-badge** telling you *how* Trove captures that harness — which sets your
+badge** telling you _how_ Trove captures that harness — which sets your
 expectations for what data you'll see:
 
 - **Native OTel** — the tool emits OTLP itself. Trove just flips the right
@@ -78,18 +77,17 @@ A fourth class, **Setup guide**, covers harnesses Trove can't auto-patch yet
 (Junie CLI, Droid, Kimi Code CLI, Devin, ForgeCode) — the tab links you to manual
 setup instructions instead of offering a one-click toggle.
 
-| Badge | Example harnesses | What you get |
-| --- | --- | --- |
-| Native OTel | Claude Code, Antigravity CLI, Codex, Qwen Code, OpenCode, Cursor IDE | Exact events, tokens, cost (where reported) |
-| Partial | Cursor CLI | A subset of events (e.g. shell exec) |
-| Best Effort | Cline, Aider, GitHub Copilot CLI | Derived events + durations; estimated tokens/cost |
-| Setup guide | Junie CLI, Droid, Kimi Code CLI, Devin, ForgeCode | Manual setup instructions |
+| Badge       | Example harnesses                                                    | What you get                                      |
+| ----------- | -------------------------------------------------------------------- | ------------------------------------------------- |
+| Native OTel | Claude Code, Antigravity CLI, Codex, Qwen Code, OpenCode, Cursor IDE | Exact events, tokens, cost (where reported)       |
+| Partial     | Cursor CLI                                                           | A subset of events (e.g. shell exec)              |
+| Best Effort | Cline, Aider, GitHub Copilot CLI                                     | Derived events + durations; estimated tokens/cost |
+| Setup guide | Junie CLI, Droid, Kimi Code CLI, Devin, ForgeCode                    | Manual setup instructions                         |
 
 <Aside type="note">
-The deeper "what each tier can and cannot capture" breakdown lives in
-[Harness coverage](/trove/docs/features/harness-coverage/). The normalized
-five-metric schema every enabled harness contributes to is
-[Tier A metrics](/trove/docs/features/tier-a-metrics/).
+  The deeper "what each tier can and cannot capture" breakdown lives in [Harness
+  coverage](/trove/docs/features/harness-coverage/). The normalized five-metric schema every enabled
+  harness contributes to is [Tier A metrics](/trove/docs/features/tier-a-metrics/).
 </Aside>
 
 ## What lands in your backend

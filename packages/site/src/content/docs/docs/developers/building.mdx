@@ -5,19 +5,19 @@ sidebar:
   order: 3
 ---
 
-import { Steps, Aside, Tabs, TabItem, LinkCard } from "@astrojs/starlight/components";
+import { Steps, Aside, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
 
 Trove is open source under the MIT license. This page gets you from a fresh
 clone to a running desktop build.
 
 ## Prerequisites
 
-| Tool       | Version  | Why                                                                  |
-| ---------- | -------- | ------------------------------------------------------------------- |
-| **Node.js** | ≥ 24     | Runs the workspace tooling. Use `nvm use` — `.nvmrc` pins it.        |
-| **pnpm**    | ≥ 10     | The workspace package manager. Install via Corepack.                 |
-| **Rust**    | stable   | Compiles the Tauri core. Install with `rustfmt` and `clippy`.        |
-| **Go**      | ≥ 1.23   | Only needed to build the collector sidecar (`pnpm build:collector`). |
+| Tool        | Version | Why                                                                  |
+| ----------- | ------- | -------------------------------------------------------------------- |
+| **Node.js** | ≥ 24    | Runs the workspace tooling. Use `nvm use` — `.nvmrc` pins it.        |
+| **pnpm**    | ≥ 10    | The workspace package manager. Install via Corepack.                 |
+| **Rust**    | stable  | Compiles the Tauri core. Install with `rustfmt` and `clippy`.        |
+| **Go**      | ≥ 1.23  | Only needed to build the collector sidecar (`pnpm build:collector`). |
 
 You'll also need the platform-specific Tauri system dependencies — see the
 [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/) for
@@ -29,6 +29,7 @@ Enable pnpm through Corepack so the version matches the workspace:
 ```bash
 corepack enable && corepack prepare pnpm@latest --activate
 ```
+
 </Aside>
 
 ## Clone and bootstrap
@@ -99,9 +100,9 @@ locally for their host.
 </Steps>
 
 <Aside type="caution">
-The app can't spawn the collector until **both** `build:collector` and
-`bundle:sidecar` have run at least once on the current host. If `tauri:dev`
-starts but the collector never goes healthy, that's the usual cause.
+  The app can't spawn the collector until **both** `build:collector` and `bundle:sidecar` have run
+  at least once on the current host. If `tauri:dev` starts but the collector never goes healthy,
+  that's the usual cause.
 </Aside>
 
 ## Run the app
@@ -109,24 +110,24 @@ starts but the collector never goes healthy, that's the usual cause.
 <Tabs>
   <TabItem label="Dev (hot reload)">
 
-  Boot the desktop app with the Vite dev server and Rust hot reload:
+Boot the desktop app with the Vite dev server and Rust hot reload:
 
-  ```bash
-  pnpm --filter @trove/app tauri:dev
-  ```
+```bash
+pnpm --filter @trove/app tauri:dev
+```
 
   </TabItem>
   <TabItem label="Local dev build">
 
-  Produce an installable local build (unsigned). This is the standard loop
-  after a UI change:
+Produce an installable local build (unsigned). This is the standard loop
+after a UI change:
 
-  ```bash
-  pnpm build:app
-  ```
+```bash
+pnpm build:app
+```
 
-  `build:app` runs `scripts/build-app.mjs`, which builds an unsigned bundle,
-  installs it, and relaunches the app.
+`build:app` runs `scripts/build-app.mjs`, which builds an unsigned bundle,
+installs it, and relaunches the app.
 
   </TabItem>
 </Tabs>
@@ -140,10 +141,9 @@ pnpm build:app:release   # pnpm -F app tauri build
 ```
 
 <Aside type="caution">
-`build:app:release` blocks on the signing-key prompt and is meant for
-release work, not the dev loop. For day-to-day iteration use
-`pnpm build:app`. Releases themselves run through CI — see
-[Releasing](/trove/docs/developers/releasing/).
+  `build:app:release` blocks on the signing-key prompt and is meant for release work, not the dev
+  loop. For day-to-day iteration use `pnpm build:app`. Releases themselves run through CI — see
+  [Releasing](/trove/docs/developers/releasing/).
 </Aside>
 
 Release outputs land in

@@ -5,10 +5,10 @@ sidebar:
   order: 8
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Not every AI coding tool speaks OpenTelemetry. Trove captures the ones that do by
-flipping their flags, and captures the ones that don't by *deriving* telemetry from
+flipping their flags, and captures the ones that don't by _deriving_ telemetry from
 what they leave on disk. Understanding which path a harness takes tells you what
 data to expect from it. This is the concept behind the **coverage badges** on the
 [Harnesses tab](/trove/docs/features/harnesses/).
@@ -53,37 +53,37 @@ The derived records share the **same Tier A queries** as their native peers — 
 
 - **Events** — reliable (one per invocation, or one per classified record).
 - **Durations** — reliable (the wrapper times the real process).
-- **Tokens** — *estimated*. Trove only sees prompt/response byte length, not the
+- **Tokens** — _estimated_. Trove only sees prompt/response byte length, not the
   upstream tokenizer's count, so it approximates (`bytes / 4`).
 - **Cost** — `estimated`, from those approximate tokens × the rate table.
 - **Errors** — derived from non-zero exit codes.
 
 <Aside type="caution">
-Best-effort cost and token figures are directional, not invoice-grade. They carry
-`cost.method = "estimated"` so you can filter them out when you need exact numbers —
-see [Tier A metrics](/trove/docs/features/tier-a-metrics/#exact-vs-estimated-cost).
+  Best-effort cost and token figures are directional, not invoice-grade. They carry `cost.method =
+  "estimated"` so you can filter them out when you need exact numbers — see [Tier A
+  metrics](/trove/docs/features/tier-a-metrics/#exact-vs-estimated-cost).
 </Aside>
 
 ## Partial coverage
 
-A middle case: the tool exposes *some* of its events but not all. **Cursor CLI**
+A middle case: the tool exposes _some_ of its events but not all. **Cursor CLI**
 is the example — it surfaces only a subset of Cursor's hook events (shell-exec),
 so Trove captures that subset and nothing more. Partial harnesses get a distinct
 badge so you know the data is genuine but incomplete.
 
 ## At a glance
 
-| Coverage | How Trove captures it | Events | Tokens | Cost | Examples |
-| --- | --- | --- | --- | --- | --- |
-| **Native OTel** | Flip the tool's OTLP flags | Accurate | Exact | `exact` | Claude Code, Antigravity CLI, Codex, Qwen, OpenCode, Cursor IDE |
-| **Partial** | Capture an observable subset of events | Subset only | — | — | Cursor CLI |
-| **Best effort** | Watchers + shell-rc wrappers derive OTLP | Reliable | Estimated | `estimated` | Cline, Aider, Copilot CLI |
+| Coverage        | How Trove captures it                    | Events      | Tokens    | Cost        | Examples                                                        |
+| --------------- | ---------------------------------------- | ----------- | --------- | ----------- | --------------------------------------------------------------- |
+| **Native OTel** | Flip the tool's OTLP flags               | Accurate    | Exact     | `exact`     | Claude Code, Antigravity CLI, Codex, Qwen, OpenCode, Cursor IDE |
+| **Partial**     | Capture an observable subset of events   | Subset only | —         | —           | Cursor CLI                                                      |
+| **Best effort** | Watchers + shell-rc wrappers derive OTLP | Reliable    | Estimated | `estimated` | Cline, Aider, Copilot CLI                                       |
 
 <Aside type="note">
-A fourth class — **setup guide** harnesses (Junie CLI, Droid, Kimi Code CLI,
-Devin, ForgeCode) — can't be auto-patched yet, so Trove links to manual setup
-instructions instead of a one-click toggle. Each adapter declares which Tier A
-metrics it can emit, so sparse rows across harnesses are expected and normal.
+  A fourth class — **setup guide** harnesses (Junie CLI, Droid, Kimi Code CLI, Devin, ForgeCode) —
+  can't be auto-patched yet, so Trove links to manual setup instructions instead of a one-click
+  toggle. Each adapter declares which Tier A metrics it can emit, so sparse rows across harnesses
+  are expected and normal.
 </Aside>
 
 ## Reversibility is the same for both

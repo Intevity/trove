@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import { Steps, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 You don't have to pick one backend. Trove can forward the **same**
 normalized stream to several destinations at once — useful when finance
@@ -44,10 +44,9 @@ never blocks the others.
 </Steps>
 
 <Aside type="tip">
-Pair a cloud backend with a **Local Collector** or **Generic OTLP**
-destination pointed at a collector on your machine. You get production
-dashboards in the cloud and a raw local tap for debugging, from the same
-stream.
+  Pair a cloud backend with a **Local Collector** or **Generic OTLP** destination pointed at a
+  collector on your machine. You get production dashboards in the cloud and a raw local tap for
+  debugging, from the same stream.
 </Aside>
 
 ## Each backend has its own health
@@ -96,9 +95,9 @@ re-entering its ingest key later.
 </Steps>
 
 <Aside type="caution">
-Disabling a backend is reversible and credential-preserving. Removing it
-entirely is the heavier action — only delete a backend when you actually
-want Trove to forget its configuration. For a temporary stop, disable.
+  Disabling a backend is reversible and credential-preserving. Removing it entirely is the heavier
+  action — only delete a backend when you actually want Trove to forget its configuration. For a
+  temporary stop, disable.
 </Aside>
 
 ## Good to know

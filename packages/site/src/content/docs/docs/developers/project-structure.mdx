@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 Trove is a [pnpm](https://pnpm.io/) workspace. The `pnpm-workspace.yaml` at
 the repo root globs `packages/*`, and a handful of top-level directories hold
@@ -44,9 +44,9 @@ The Tauri application. It has two halves:
   resources.
 
 <Aside type="note">
-The React UI never touches the OS directly — it calls typed IPC commands and
-lets the Rust core enforce the [safety
-contract](/trove/docs/developers/architecture/#config-patching-atomic-and-reversible).
+  The React UI never touches the OS directly — it calls typed IPC commands and lets the Rust core
+  enforce the [safety
+  contract](/trove/docs/developers/architecture/#config-patching-atomic-and-reversible).
 </Aside>
 
 ## `packages/shared` — the typed contract
@@ -79,26 +79,26 @@ base path.
 
 ## Top-level directories
 
-| Directory        | What's in it                                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| Directory        | What's in it                                                                                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `scripts/`       | `build-app.mjs`, `build-collector.sh`, `bundle-sidecar.ts`, the release helpers (`assemble-latest-json.mjs`, `notary-*`), and dev utilities like `otlp-tap.py`. |
-| `resources/`     | The `otelcol/manifest.yaml` ocb build manifest and the `hooks/` driver implementations bundled into the app.   |
-| `documentation/` | Contributor design docs and runbooks — `architecture.md`, `releasing.md`, `adding-a-harness.md`, and the harness × platform matrix. |
-| `terraform/`     | The S3 update channel and GitHub OIDC role used by the [release pipeline](/trove/docs/developers/releasing/).   |
+| `resources/`     | The `otelcol/manifest.yaml` ocb build manifest and the `hooks/` driver implementations bundled into the app.                                                    |
+| `documentation/` | Contributor design docs and runbooks — `architecture.md`, `releasing.md`, `adding-a-harness.md`, and the harness × platform matrix.                             |
+| `terraform/`     | The S3 update channel and GitHub OIDC role used by the [release pipeline](/trove/docs/developers/releasing/).                                                   |
 
 ## Root scripts
 
 The workspace `package.json` exposes the commands you'll use most:
 
-| Command                | What it does                                                            |
-| ---------------------- | ---------------------------------------------------------------------- |
-| `pnpm build`           | Recursively builds every workspace package (`pnpm -r build`).           |
-| `pnpm test`            | Runs Vitest with coverage against the gated packages.                   |
-| `pnpm typecheck`       | `tsc --noEmit` across every package.                                    |
-| `pnpm lint`            | ESLint over the whole workspace.                                        |
-| `pnpm build:collector` | Builds the OpenTelemetry Collector sidecar binary.                      |
-| `pnpm bundle:sidecar`  | Stages the built binary into the Tauri `binaries/` dir.                 |
-| `pnpm build:app`       | Builds the desktop app for the local dev loop.                          |
+| Command                | What it does                                                  |
+| ---------------------- | ------------------------------------------------------------- |
+| `pnpm build`           | Recursively builds every workspace package (`pnpm -r build`). |
+| `pnpm test`            | Runs Vitest with coverage against the gated packages.         |
+| `pnpm typecheck`       | `tsc --noEmit` across every package.                          |
+| `pnpm lint`            | ESLint over the whole workspace.                              |
+| `pnpm build:collector` | Builds the OpenTelemetry Collector sidecar binary.            |
+| `pnpm bundle:sidecar`  | Stages the built binary into the Tauri `binaries/` dir.       |
+| `pnpm build:app`       | Builds the desktop app for the local dev loop.                |
 
 See [Building from source](/trove/docs/developers/building/) for the full
 setup flow.

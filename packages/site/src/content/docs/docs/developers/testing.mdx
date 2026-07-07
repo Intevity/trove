@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-import { Aside, LinkCard } from "@astrojs/starlight/components";
+import { Aside, LinkCard } from '@astrojs/starlight/components';
 
 Trove leans on a small number of high-signal test layers: unit tests with a
 hard coverage gate on the typed contract, Rust tests for the core, an
@@ -53,10 +53,9 @@ number honest:
   even when the real schema and IPC files are at 100%.
 
 <Aside type="note">
-Branches sit at 93 rather than 95 because some Zod fallbacks (for example
-`.default(...)` shapes) introduce branches the tests don't all hit. The
-3-point gap leaves headroom for new schema fields without paper-cut
-threshold drift.
+  Branches sit at 93 rather than 95 because some Zod fallbacks (for example `.default(...)` shapes)
+  introduce branches the tests don't all hit. The 3-point gap leaves headroom for new schema fields
+  without paper-cut threshold drift.
 </Aside>
 
 ### Rust coverage
@@ -86,7 +85,7 @@ pnpm --filter @trove/app e2e:install   # one-time: install the Chromium runner
 ## The harness × platform matrix
 
 Trove's hardest correctness question can't be answered by unit tests alone:
-*does every harness actually land real telemetry in every backend?* The
+_does every harness actually land real telemetry in every backend?_ The
 [automated testing plan](https://github.com/Intevity/trove/blob/main/documentation/AUTOMATED_TESTING_PLAN.md)
 codifies a per-pairing protocol that produces a release-gating results
 matrix.
@@ -104,15 +103,15 @@ Platform OTLP intake (local Docker, or a cloud OTLP endpoint)
 ```
 
 Each cell is verified two ways — **collector receipt** (the signal reached
-the sidecar) *and* a **read-side query** (it's queryable in the destination
+the sidecar) _and_ a **read-side query** (it's queryable in the destination
 backend). Because Trove is a desktop GUI with no headless IPC to toggle
 adapters, an operator drives the harness enable/disable in the UI while the
 rest of the verification is scripted.
 
 <Aside type="tip">
-Bring up **one observability stack at a time** when working through the
-matrix locally — up, smoke, query, down. Several backends are memory-heavy,
-so running them all at once will exhaust Docker's allocation.
+  Bring up **one observability stack at a time** when working through the matrix locally — up,
+  smoke, query, down. Several backends are memory-heavy, so running them all at once will exhaust
+  Docker's allocation.
 </Aside>
 
 ## Local checks before a PR

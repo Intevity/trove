@@ -5,17 +5,16 @@ sidebar:
   order: 5
 ---
 
-import { Steps, Aside, LinkCard } from "@astrojs/starlight/components";
+import { Steps, Aside, LinkCard } from '@astrojs/starlight/components';
 
 Trove ships through [GitHub Releases](https://github.com/Intevity/trove/releases)
 plus an auto-update channel. The whole pipeline is tag-driven: cut a tag, and
 CI does the rest.
 
 <Aside type="note">
-This page describes the **public shape** of the release flow. The full
-runbook — including the credential and infrastructure details — lives in
-`documentation/releasing.md` in the repo and is intentionally not reproduced
-here.
+  This page describes the **public shape** of the release flow. The full runbook — including the
+  credential and infrastructure details — lives in `documentation/releasing.md` in the repo and is
+  intentionally not reproduced here.
 </Aside>
 
 ## The trigger
@@ -88,12 +87,12 @@ release can't be promoted.
 
 A completed release attaches one bundle set per platform:
 
-| Platform      | Artifacts                                                        |
-| ------------- | --------------------------------------------------------------- |
-| macOS (arm64) | `.dmg`, `.app.tar.gz` (+ updater signature)                     |
-| macOS (x64)   | `.dmg`, `.app.tar.gz` (+ updater signature)                     |
-| Linux         | `.AppImage`, `.deb`, `.rpm` (+ updater signatures)              |
-| Windows       | NSIS `-setup.exe`, `.msi` (+ updater signatures)                |
+| Platform      | Artifacts                                          |
+| ------------- | -------------------------------------------------- |
+| macOS (arm64) | `.dmg`, `.app.tar.gz` (+ updater signature)        |
+| macOS (x64)   | `.dmg`, `.app.tar.gz` (+ updater signature)        |
+| Linux         | `.AppImage`, `.deb`, `.rpm` (+ updater signatures) |
+| Windows       | NSIS `-setup.exe`, `.msi` (+ updater signatures)   |
 
 ## Verifying a release
 
@@ -102,16 +101,16 @@ are trustworthy:
 
 - **macOS** — Gatekeeper assessment (`spctl --assess`) reports a notarized
   Developer ID, and the notarization ticket is stapled (`xcrun stapler
-  validate`, which works offline).
+validate`, which works offline).
 - **Windows** — the downloaded installer's digital signature chain validates.
 - **Auto-updater** — installing the previous release and checking for updates
   in-app offers the new version and installs it on restart; on the latest
   version the app reports it's up to date.
 
 <Aside type="tip">
-Notarization can be slow on Apple's side. Don't re-tag to "retry" a slow
-notary run — the decoupled poll picks it up and finalizes automatically once
-Apple accepts. Re-tagging just starts a redundant build.
+  Notarization can be slow on Apple's side. Don't re-tag to "retry" a slow notary run — the
+  decoupled poll picks it up and finalizes automatically once Apple accepts. Re-tagging just starts
+  a redundant build.
 </Aside>
 
 <LinkCard

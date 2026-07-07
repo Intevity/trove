@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 **One tray app. Every AI coding tool on your machine. Unified OpenTelemetry, flowing to your observability backend; never ours.**
 
@@ -33,7 +33,8 @@ The result: every span, metric, and log your team generates lands in a backend y
 Some harnesses already speak OpenTelemetry. Claude Code, Antigravity CLI, Codex, Qwen Code, OpenCode, and Cursor IDE emit OTLP natively — Trove just flips the right flags and routes them through. Harnesses that do not emit OTel natively (such as Cline, Aider, and GitHub Copilot CLI) get **best-effort coverage**: Trove installs lightweight watchers (filesystem monitors) and shell-rc wrappers that derive equivalent OTLP records from their on-disk logs. The derived records answer the same queries as their native peers.
 
 <Aside type="tip">
-See the full list and coverage tier for each of the 17 supported harnesses on the [Harnesses reference](/trove/docs/reference/harnesses/).
+  See the full list and coverage tier for each of the 17 supported harnesses on the [Harnesses
+  reference](/trove/docs/reference/harnesses/).
 </Aside>
 
 ## The trust stance
@@ -46,7 +47,9 @@ Trove is built so that adopting it never means trusting a new vendor with your d
 - **MIT-licensed and fully open source.** Every line — the Rust core, the React UI, the custom OpenTelemetry Collector build, and every harness adapter — is auditable.
 
 <Aside type="note">
-Trove forwards telemetry only toward the backend you configured. It has no SaaS layer and no Trove-controlled endpoint that could change its mind about pricing or data-sharing policies next quarter.
+  Trove forwards telemetry only toward the backend you configured. It has no SaaS layer and no
+  Trove-controlled endpoint that could change its mind about pricing or data-sharing policies next
+  quarter.
 </Aside>
 
 ## Who Trove is for

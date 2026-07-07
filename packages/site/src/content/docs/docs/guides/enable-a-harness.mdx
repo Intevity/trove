@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Steps, Aside, Tabs, TabItem, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import { Steps, Aside, Tabs, TabItem, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 A **harness** is an AI coding tool on your machine — a signal source.
 Trove auto-detects the harnesses you have installed (17 are supported,
@@ -45,9 +45,9 @@ Either way the change is **atomic, idempotent, and reversible**.
 </Steps>
 
 <Aside type="tip">
-Connect a [backend](/trove/docs/guides/connect-your-first-backend/)
-first. With a destination configured, the moment a harness starts
-emitting you'll see its data land instead of piling up locally.
+  Connect a [backend](/trove/docs/guides/connect-your-first-backend/) first. With a destination
+  configured, the moment a harness starts emitting you'll see its data land instead of piling up
+  locally.
 </Aside>
 
 ## What the managed-region patch looks like
@@ -68,8 +68,8 @@ Conceptually, an edit to a harness config looks like this:
   "telemetry": {
     "enabled": true,
     "otlpEndpoint": "http://127.0.0.1:4317",
-    "otlpProtocol": "grpc"
-  }
+    "otlpProtocol": "grpc",
+  },
   // <<< END TROVE MANAGED REGION >>>
 }
 ```
@@ -80,10 +80,9 @@ the real binary and logs one structured line per invocation, which the
 watcher turns into OTLP.
 
 <Aside type="caution">
-Don't hand-edit inside the managed block. If Trove detects that the
-region was modified by hand, it **refuses** to silently overwrite your
-change — it surfaces the conflict instead of clobbering your edit.
-Settings outside the block are always yours and are never touched.
+  Don't hand-edit inside the managed block. If Trove detects that the region was modified by hand,
+  it **refuses** to silently overwrite your change — it surfaces the conflict instead of clobbering
+  your edit. Settings outside the block are always yours and are never touched.
 </Aside>
 
 ## Confirm OTLP is flowing
@@ -93,19 +92,9 @@ Settings outside the block are always yours and are never touched.
 1. Run a single turn through the harness — one prompt, one response.
 
    <Tabs>
-     <TabItem label="Claude Code">
-     ```bash
-     claude -p "say hi in one word"
-     ```
-     </TabItem>
-     <TabItem label="Antigravity CLI">
-     ```bash
-     agy -p "say hi in one word"
-     ```
-     </TabItem>
-     <TabItem label="Any harness">
-     Just use the tool normally for one quick interaction.
-     </TabItem>
+     <TabItem label="Claude Code">```bash claude -p "say hi in one word" ```</TabItem>
+     <TabItem label="Antigravity CLI">```bash agy -p "say hi in one word" ```</TabItem>
+     <TabItem label="Any harness">Just use the tool normally for one quick interaction.</TabItem>
    </Tabs>
 
 2. Open the **Logs** tab and watch the live collector tail. You should
@@ -124,10 +113,9 @@ Settings outside the block are always yours and are never touched.
 </Steps>
 
 <Aside type="note">
-Native-OTel harnesses read their telemetry config at process start, so a
-tool that was already running may need to be restarted to pick up the new
-flags. Wrapper-based harnesses pick up the new shell function in any new
-shell session.
+  Native-OTel harnesses read their telemetry config at process start, so a tool that was already
+  running may need to be restarted to pick up the new flags. Wrapper-based harnesses pick up the new
+  shell function in any new shell session.
 </Aside>
 
 ## Disable and revert

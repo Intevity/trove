@@ -5,12 +5,14 @@ sidebar:
   order: 3
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Trove's whole reason to exist is to give you one unified telemetry stream **flowing to the observability backend you choose; never ours.** Everything below is a direct consequence of that promise.
 
 <Aside type="note">
-**The one-sentence version:** Trove's bundled collector binds to `127.0.0.1`, forwards only to the endpoint you configured, stores credentials in your OS keychain, and every file it touches is reversible byte-for-byte. It never phones home.
+  **The one-sentence version:** Trove's bundled collector binds to `127.0.0.1`, forwards only to the
+  endpoint you configured, stores credentials in your OS keychain, and every file it touches is
+  reversible byte-for-byte. It never phones home.
 </Aside>
 
 ## Localhost-only architecture
@@ -33,28 +35,30 @@ There is no Trove cloud, no SaaS layer, and no analytics or crash-reporting endp
 
 The only network traffic Trove originates is the OTLP stream from the local collector to the backend(s) **you** configured.
 
-| Data | Where it goes |
-| --- | --- |
-| Harness spans, metrics, logs (Tier A + Tier B) | Only to the backend(s) you enabled in the Platforms tab |
-| Backend credentials | Stored in your OS keychain; sent only as auth headers to that backend |
+| Data                                                     | Where it goes                                                                                   |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Harness spans, metrics, logs (Tier A + Tier B)           | Only to the backend(s) you enabled in the Platforms tab                                         |
+| Backend credentials                                      | Stored in your OS keychain; sent only as auth headers to that backend                           |
 | Your identity tags (`user.name`, `user.email`, optional) | Attached as resource attributes on the telemetry you forward — only if you set them in Settings |
-| Anything to Trove / Intevity | **Nothing.** Ever. |
+| Anything to Trove / Intevity                             | **Nothing.** Ever.                                                                              |
 
 <Aside type="tip">
-Want to verify with your own eyes? Point Trove at a **Local Collector (passthrough)** backend, or watch the **Logs** tab — the live collector tail shows exactly which exporters are firing and where.
+  Want to verify with your own eyes? Point Trove at a **Local Collector (passthrough)** backend, or
+  watch the **Logs** tab — the live collector tail shows exactly which exporters are firing and
+  where.
 </Aside>
 
 ## Credentials live in the OS keychain
 
 Backend tokens, API keys, and ingest secrets are stored in the operating system's secure credential store:
 
-| Platform | Credential store |
-| --- | --- |
-| macOS | Keychain |
-| Windows | Credential Manager |
-| Linux | Secret Service (libsecret) |
+| Platform | Credential store           |
+| -------- | -------------------------- |
+| macOS    | Keychain                   |
+| Windows  | Credential Manager         |
+| Linux    | Secret Service (libsecret) |
 
-Credentials are **never** written to plaintext JSON, **never** placed in env files, and **never** logged. Trove's single state file (`state.json`) records *that* a backend is configured and *what* was patched — not the secret itself.
+Credentials are **never** written to plaintext JSON, **never** placed in env files, and **never** logged. Trove's single state file (`state.json`) records _that_ a backend is configured and _what_ was patched — not the secret itself.
 
 ## Reversible, auditable config patches
 

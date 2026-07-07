@@ -3,7 +3,7 @@ title: Trove documentation
 description: One tray app for every AI coding tool on your machine — unified OpenTelemetry, flowing to the observability backend you choose, never ours.
 ---
 
-import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Trove is an open-source desktop tray app, by Intevity, that auto-detects the AI coding harnesses installed on your machine, patches their telemetry config to emit OpenTelemetry (OTLP), normalizes every signal through a bundled OpenTelemetry Collector, and forwards one unified stream to the observability backend **you** choose. Your data never goes to Trove or Intevity — the collector binds to `127.0.0.1` and forwards only to the endpoint you configure. These docs cover everything from your first launch to writing your own mapping rules and contributing a new harness adapter.
 

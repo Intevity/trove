@@ -5,20 +5,20 @@ sidebar:
   order: 3
 ---
 
-import { Steps, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 Trove's **Tier A** metrics are the cross-harness comparison layer — a
 fixed, normalized schema so that "cost per turn" or "tokens this week"
 means the same thing whether the signal came from Claude Code, Cursor, or
 Aider. The five Tier A metrics are:
 
-| Metric | Type | Key attributes |
-| --- | --- | --- |
-| `trove.harness.events` | counter | `event.kind` (chat.turn, tool.call, shell.exec, file.edit, session.start/end) |
-| `trove.harness.tokens` | counter | `direction` (input/output), `model` |
-| `trove.harness.cost.usd` | counter | `model`, `cost.method` (exact / estimated) |
-| `trove.harness.turn.duration` | histogram (s) | `event.kind` |
-| `trove.harness.errors` | counter | `error.kind` (rate_limit, auth, tool_failure, network, policy, unknown) |
+| Metric                        | Type          | Key attributes                                                                |
+| ----------------------------- | ------------- | ----------------------------------------------------------------------------- |
+| `trove.harness.events`        | counter       | `event.kind` (chat.turn, tool.call, shell.exec, file.edit, session.start/end) |
+| `trove.harness.tokens`        | counter       | `direction` (input/output), `model`                                           |
+| `trove.harness.cost.usd`      | counter       | `model`, `cost.method` (exact / estimated)                                    |
+| `trove.harness.turn.duration` | histogram (s) | `event.kind`                                                                  |
+| `trove.harness.errors`        | counter       | `error.kind` (rate_limit, auth, tool_failure, network, policy, unknown)       |
 
 Everything a harness emits natively (its **Tier B** metrics) always
 passes through untouched. Mappings only control how raw signals are
@@ -53,7 +53,6 @@ How a harness contributes to Tier A depends on its coverage type:
    <Aside type="note">Screenshot coming soon.</Aside>
 
 2. Edit a row. Typical edits:
-
    - **Retarget an event.** Change which `event.kind` a raw event maps to
      (for example, classify a shell-execution event as `shell.exec`
      rather than `tool.call`).
@@ -76,13 +75,11 @@ How a harness contributes to Tier A depends on its coverage type:
 </Steps>
 
 <Aside type="caution">
-The five built-in Tier A metrics are locked — you can't rename or delete
-them, because cross-user and cross-team dashboards depend on the schema
-meaning the same thing everywhere. You can extend the catalog with your
-own custom metrics, but a custom name only carries across teams if the
-consuming side has the same catalog. (Custom metric rules are honored by
-native-OTel harnesses today; watcher/hook harnesses don't yet honor
-them.)
+  The five built-in Tier A metrics are locked — you can't rename or delete them, because cross-user
+  and cross-team dashboards depend on the schema meaning the same thing everywhere. You can extend
+  the catalog with your own custom metrics, but a custom name only carries across teams if the
+  consuming side has the same catalog. (Custom metric rules are honored by native-OTel harnesses
+  today; watcher/hook harnesses don't yet honor them.)
 </Aside>
 
 ## Preview the diff before applying
@@ -124,10 +121,9 @@ edited yourself into a corner, you can always go back:
 </Steps>
 
 <Aside type="tip">
-Defaults are deliberately conservative about cost. Token and event
-synthesis are commonly on by default so cross-harness dashboards
-populate immediately; cost synthesis is often off by default to avoid a
-confusing double-count until you opt in.
+  Defaults are deliberately conservative about cost. Token and event synthesis are commonly on by
+  default so cross-harness dashboards populate immediately; cost synthesis is often off by default
+  to avoid a confusing double-count until you opt in.
 </Aside>
 
 <CardGrid>

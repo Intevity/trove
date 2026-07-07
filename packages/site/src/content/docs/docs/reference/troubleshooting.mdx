@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import { Aside, Steps, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, Steps, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Most Trove problems fall into one of five buckets. Work top-to-bottom within the relevant section; each fix is ordered from most to least likely.
 
@@ -17,7 +17,7 @@ Trove sweeps the standard install paths for every supported harness **on launch*
 
 1. **Confirm the tool is actually installed where Trove looks.** Trove checks each harness's standard config/binary location. Tools installed to a non-standard prefix may not be found.
 
-2. **Relaunch Trove.** Detection runs at startup, so a tool installed *after* Trove was already running won't appear until the next launch. Quit from the tray and reopen.
+2. **Relaunch Trove.** Detection runs at startup, so a tool installed _after_ Trove was already running won't appear until the next launch. Quit from the tray and reopen.
 
 3. **Check the coverage tier.** Some harnesses are **setup-guide** tier (Junie CLI, Droid, Kimi Code CLI, Devin, ForgeCode) — Trove can't auto-patch them yet and shows guided instructions instead of an Enable toggle. See [Supported harnesses](/trove/docs/reference/supported-harnesses/).
 
@@ -37,7 +37,7 @@ You enabled a harness but nothing reaches your backend. After enabling, the row'
 
 3. **Check the collector is healthy.** See [The collector won't start](#the-collector-wont-start) below — if the sidecar isn't up, nothing forwards.
 
-4. **Check the backend's health pill.** A red or amber pill on the Platforms tab means the collector *is* receiving but failing to export. Jump to [A health pill is red or amber](#a-health-pill-is-red-or-amber).
+4. **Check the backend's health pill.** A red or amber pill on the Platforms tab means the collector _is_ receiving but failing to export. Jump to [A health pill is red or amber](#a-health-pill-is-red-or-amber).
 
 5. **Watch the Logs tab.** The live collector tail shows OTLP batches arriving and exporters firing. If you see receipts but no exports, the problem is the backend; if you see neither, the problem is the harness.
 
@@ -86,7 +86,9 @@ The bundled OpenTelemetry Collector runs as a supervised sidecar. Trove probes i
 </Steps>
 
 <Aside type="caution">
-Don't hand-edit `state.json` to work around a startup problem, and never bump its `schemaVersion` by hand to match a stale binary — that corrupts state. Re-run the configuration through the UI instead.
+  Don't hand-edit `state.json` to work around a startup problem, and never bump its `schemaVersion`
+  by hand to match a stale binary — that corrupts state. Re-run the configuration through the UI
+  instead.
 </Aside>
 
 ## Credentials problems

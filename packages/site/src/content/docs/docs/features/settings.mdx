@@ -5,10 +5,10 @@ sidebar:
   order: 6
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 The **Settings** tab holds Trove's app-level configuration: how it keeps itself
-up to date, and the optional identity overlay that stamps *who* generated each
+up to date, and the optional identity overlay that stamps _who_ generated each
 signal onto the telemetry stream.
 
 <Aside type="note">Screenshot coming soon.</Aside>
@@ -22,10 +22,9 @@ GitHub Releases — there's no SaaS account and no separate updater daemon to
 babysit.
 
 <Aside type="tip">
-Dev builds (the unsigned builds produced by a local `build:app`) disable
-auto-update by design. If you're running a build labeled "Trove Dev" and updates
-aren't being detected, that's expected — a signed release build is what receives
-auto-updates.
+  Dev builds (the unsigned builds produced by a local `build:app`) disable auto-update by design. If
+  you're running a build labeled "Trove Dev" and updates aren't being detected, that's expected — a
+  signed release build is what receives auto-updates.
 </Aside>
 
 ## Identity tagging
@@ -36,7 +35,7 @@ every signal Trove forwards:
 - `user.name`
 - `user.email`
 
-Because these are *resource* attributes — set once per harness session, not
+Because these are _resource_ attributes — set once per harness session, not
 per-data-point — they scope a metric series to a person without inflating
 cardinality. Combined with the `harness.id` attribute every signal already
 carries, identity tagging is what powers the per-person, per-tool views your team
@@ -44,10 +43,9 @@ cares about: which engineer is using which tool, and the **dead-seat detection**
 that surfaces paid licenses with zero activity.
 
 <Aside type="caution">
-Identity tagging attaches *your* name and email to telemetry that flows only to the
-backends *you* configured on the [Platforms tab](/trove/docs/features/platforms/).
-Trove never sends this — or any other data — to Trove or Intevity. It's off until
-you turn it on.
+  Identity tagging attaches *your* name and email to telemetry that flows only to the backends *you*
+  configured on the [Platforms tab](/trove/docs/features/platforms/). Trove never sends this — or
+  any other data — to Trove or Intevity. It's off until you turn it on.
 </Aside>
 
 ### How it lands in your backend

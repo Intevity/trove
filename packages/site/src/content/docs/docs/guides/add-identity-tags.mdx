@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-import { Steps, Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 By default, Trove tags every signal with its source harness
 (`harness.id`, `harness.name`) but not with **who** produced it. Identity
@@ -38,10 +38,9 @@ stamps the whole stream.
 </Steps>
 
 <Aside type="tip">
-These values are plain attribution metadata, not credentials — they live
-in `state.json`, not the keychain. (Backend ingest keys are the secrets,
-and those always go to the OS keychain.) Use the email that matches your
-SSO / license records so backend joins are clean.
+  These values are plain attribution metadata, not credentials — they live in `state.json`, not the
+  keychain. (Backend ingest keys are the secrets, and those always go to the OS keychain.) Use the
+  email that matches your SSO / license records so backend joins are clean.
 </Aside>
 
 ## What the tags look like at your backend
@@ -76,12 +75,11 @@ metrics, Tier B native metrics, traces, and logs alike — so you can group
   [Normalize costs and find dead seats](/trove/docs/guides/normalize-costs-and-find-dead-seats/).
 
 <Aside type="caution">
-Identity tags are per-machine: each person sets their own in their own
-Trove install. For a complete team view, roll this out so everyone has
-identity configured — anyone who hasn't set it will still emit telemetry,
-just without the `user.*` attributes, and will be invisible to per-user
-queries. Trove keeps this data local: the attributes are forwarded only
-to the backend you configured, never to Trove or Intevity.
+  Identity tags are per-machine: each person sets their own in their own Trove install. For a
+  complete team view, roll this out so everyone has identity configured — anyone who hasn't set it
+  will still emit telemetry, just without the `user.*` attributes, and will be invisible to per-user
+  queries. Trove keeps this data local: the attributes are forwarded only to the backend you
+  configured, never to Trove or Intevity.
 </Aside>
 
 <CardGrid>

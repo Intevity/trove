@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, LinkCard, CardGrid } from "@astrojs/starlight/components";
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 A **backend** (also called a **platform**) is the observability destination Trove forwards your unified telemetry stream to. Trove forwards to any backend that speaks OTLP. Thirteen come with pre-built credential forms; two escape hatches — Generic OTLP and Local Collector passthrough — cover everything else.
 
@@ -15,26 +15,29 @@ Telemetry leaves your machine **only** toward the backend you configure. Trove n
 
 ## Integration matrix
 
-| Backend | Auth pattern / note |
-| --- | --- |
-| **SigNoz Cloud** _(recommended)_ | Ingestion key over gRPC or HTTP. |
-| Grafana Cloud | Endpoint plus Basic auth. |
-| Honeycomb | Team API key plus dataset. |
-| Datadog | `DD-API-KEY` header plus site selector. |
-| New Relic | License key plus region (US or EU). |
-| Splunk Observability Cloud | Realm plus `X-SF-Token` access token. |
-| Dynatrace | Environment URL plus API token. |
-| Elastic | OTLP/HTTP plus `Authorization: ApiKey`. |
-| OpenSearch | OTLP routed to Data Prepper. |
-| OpenObserve | OTLP plus `/api/<organization>` path. |
-| ClickStack (HyperDX) | OTLP plus ingestion-key header. |
-| Chronosphere | Tenant plus `API-Token` header. |
-| Sentry | OTLP/HTTP plus `X-Sentry-Auth`. |
-| Generic OTLP | Arbitrary endpoint plus any header set — for any OTLP backend without a pre-built form. |
-| Local Collector (passthrough) | OTLP to your own self-hosted collector — Trove forwards untouched. |
+| Backend                          | Auth pattern / note                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------- |
+| **SigNoz Cloud** _(recommended)_ | Ingestion key over gRPC or HTTP.                                                        |
+| Grafana Cloud                    | Endpoint plus Basic auth.                                                               |
+| Honeycomb                        | Team API key plus dataset.                                                              |
+| Datadog                          | `DD-API-KEY` header plus site selector.                                                 |
+| New Relic                        | License key plus region (US or EU).                                                     |
+| Splunk Observability Cloud       | Realm plus `X-SF-Token` access token.                                                   |
+| Dynatrace                        | Environment URL plus API token.                                                         |
+| Elastic                          | OTLP/HTTP plus `Authorization: ApiKey`.                                                 |
+| OpenSearch                       | OTLP routed to Data Prepper.                                                            |
+| OpenObserve                      | OTLP plus `/api/<organization>` path.                                                   |
+| ClickStack (HyperDX)             | OTLP plus ingestion-key header.                                                         |
+| Chronosphere                     | Tenant plus `API-Token` header.                                                         |
+| Sentry                           | OTLP/HTTP plus `X-Sentry-Auth`.                                                         |
+| Generic OTLP                     | Arbitrary endpoint plus any header set — for any OTLP backend without a pre-built form. |
+| Local Collector (passthrough)    | OTLP to your own self-hosted collector — Trove forwards untouched.                      |
 
 <Aside type="tip">
-Self-hosted SigNoz, OpenObserve, ClickStack, OpenSearch, and Elastic all work against a `localhost` endpoint too. When Trove detects a loopback endpoint it automatically relaxes TLS so out-of-the-box local stacks connect without certificate juggling, while cloud endpoints keep TLS on.
+  Self-hosted SigNoz, OpenObserve, ClickStack, OpenSearch, and Elastic all work against a
+  `localhost` endpoint too. When Trove detects a loopback endpoint it automatically relaxes TLS so
+  out-of-the-box local stacks connect without certificate juggling, while cloud endpoints keep TLS
+  on.
 </Aside>
 
 ## Multi-platform fan-out is the default

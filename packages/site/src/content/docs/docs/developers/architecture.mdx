@@ -5,12 +5,12 @@ sidebar:
   order: 1
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Trove is a [Tauri 2](https://v2.tauri.app/) desktop tray app. It has three
 runtime pieces that talk across two boundaries: a **React/TypeScript UI**
 running in a WebView, a **Rust core** running natively, and a **bundled
-OpenTelemetry Collector** running as a child process (a Tauri *sidecar*).
+OpenTelemetry Collector** running as a child process (a Tauri _sidecar_).
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -42,9 +42,9 @@ OpenTelemetry Collector** running as a child process (a Tauri *sidecar*).
 ```
 
 <Aside type="tip">
-The collector binds **only** to `127.0.0.1`. Harnesses POST to a loopback
-port; the collector forwards to the single endpoint you configured. No part
-of this pipeline talks to a Trove- or Intevity-controlled server.
+  The collector binds **only** to `127.0.0.1`. Harnesses POST to a loopback port; the collector
+  forwards to the single endpoint you configured. No part of this pipeline talks to a Trove- or
+  Intevity-controlled server.
 </Aside>
 
 ## The Rust core
@@ -74,7 +74,7 @@ every adapter:
 - **Backup** — the file is backed up before the first edit, with old
   backups pruned to a bounded count.
 - **Sentinel brackets** — the region Trove wrote is fenced by sentinel
-  comments so `revert` can find and remove *exactly* what was added,
+  comments so `revert` can find and remove _exactly_ what was added,
   byte-for-byte.
 - **Idempotent** — re-applying the same options is a no-op.
 - **Cleanly revertible** — `revert` restores the pre-apply state
@@ -83,7 +83,7 @@ every adapter:
   Trove refuses rather than silently overwriting.
 
 The shared `adapters::common` module enforces all of this; an individual
-adapter only declares *where* to patch and *what* to write. See
+adapter only declares _where_ to patch and _what_ to write. See
 [Contributing](/trove/docs/developers/contributing/) for how to add one.
 
 ### Keychain (OS secrets)
@@ -128,12 +128,12 @@ Trove ships a **custom** OpenTelemetry Collector binary built with the
 pinned to a single upstream version. The build manifest enumerates exactly
 the components Trove needs and nothing more:
 
-| Kind       | Components                                                                       |
+| Kind       | Components                                                                      |
 | ---------- | ------------------------------------------------------------------------------- |
-| Receivers  | `otlpreceiver` (gRPC :4317 + HTTP :4318)                                         |
+| Receivers  | `otlpreceiver` (gRPC :4317 + HTTP :4318)                                        |
 | Exporters  | `otlpexporter`, `otlphttpexporter`, `datadogexporter`, `debugexporter`          |
 | Processors | `batchprocessor`, `attributesprocessor`, `resourceprocessor`, `filterprocessor` |
-| Extensions | `healthcheckextension`, `pprofextension`                                         |
+| Extensions | `healthcheckextension`, `pprofextension`                                        |
 
 ### Why a local Collector instead of direct OTLP
 
@@ -175,9 +175,8 @@ mapping overlay. It carries a `schemaVersion`; migrations are handled in
 code on load.
 
 <Aside type="caution">
-Never hand-edit `state.json`'s `schemaVersion` to fit a stale binary. A
-schema bump is a code change that requires a full `tauri build` and
-reinstall — there are no exceptions.
+  Never hand-edit `state.json`'s `schemaVersion` to fit a stale binary. A schema bump is a code
+  change that requires a full `tauri build` and reinstall — there are no exceptions.
 </Aside>
 
 ### File system layout

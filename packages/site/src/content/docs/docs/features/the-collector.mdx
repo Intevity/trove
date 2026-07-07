@@ -5,12 +5,12 @@ sidebar:
   order: 9
 ---
 
-import { Aside, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 At the center of Trove is a single, bundled **OpenTelemetry Collector** — shipped
 as a sidecar binary (`trove-otelcol`) inside the app and supervised by the Rust
 core. Every signal from every harness flows through it; nothing reaches a backend
-without passing through it first. This page explains what it does and why a *local*
+without passing through it first. This page explains what it does and why a _local_
 collector is the right design.
 
 ```
@@ -61,9 +61,9 @@ backend's outage show as a red [health pill](/trove/docs/features/platforms/#per
 while the others keep flowing.
 
 <Aside type="caution">
-The collector forwards **only** to the backends you configured — never to Trove or
-Intevity. Localhost-in, your-endpoints-out. There is no Trove-controlled
-destination anywhere in the pipeline.
+  The collector forwards **only** to the backends you configured — never to Trove or Intevity.
+  Localhost-in, your-endpoints-out. There is no Trove-controlled destination anywhere in the
+  pipeline.
 </Aside>
 
 ## Reversible managed regions
@@ -98,11 +98,11 @@ The current state of this lifecycle is what the
 
 ## Files it owns
 
-| What | Location (macOS / Linux / Windows) |
-| --- | --- |
-| Generated config | `collector.yaml` in the app support / config directory |
+| What                       | Location (macOS / Linux / Windows)                     |
+| -------------------------- | ------------------------------------------------------ |
+| Generated config           | `collector.yaml` in the app support / config directory |
 | Log (rotating, 10 MiB cap) | `collector.log` (+ `.1`) in the logs / state directory |
-| Sidecar binary | next to the app executable as `trove-otelcol` |
+| Sidecar binary             | next to the app executable as `trove-otelcol`          |
 
 The config is **codegen'd** from your wizard, harness, platform, and mapping
 choices — you never hand-edit it, and Trove regenerates it on every relevant
