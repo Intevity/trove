@@ -459,10 +459,7 @@ fn locate_block(
 /// absent or the end appears before the start.
 fn locate_fence_pair(content: &str, start_marker: &str, end_marker: &str) -> Option<(usize, usize)> {
     let start_idx = find_line_start(content, start_marker)?;
-    let after_start_line_end = match content[start_idx..].find('\n') {
-        Some(n) => start_idx + n + 1,
-        None => return None,
-    };
+    let after_start_line_end = start_idx + content[start_idx..].find('\n')? + 1;
     let end_off = find_line_start(&content[after_start_line_end..], end_marker)?;
     let end_idx = after_start_line_end + end_off;
     let end_line_end = match content[end_idx..].find('\n') {
