@@ -285,7 +285,7 @@ mod tests {
         assert!(joined.contains("globalStorage"), "{joined}");
         assert!(joined.contains("saoudrizwan.claude-dev"), "{joined}");
         // First entry is the strongest (tasks) — implies usage.
-        assert!(paths[0].file_name().unwrap() == "tasks");
+        assert_eq!(paths[0].file_name().unwrap(), "tasks");
     }
 
     #[test]

@@ -5,7 +5,7 @@ import intevityLogo from '../assets/intevityLogoIcon.png';
 import { openBugReport } from '../lib/bugReport.js';
 
 const INTEVITY_URL =
-  'https://www.intevity.com/?utm_source=trove&utm_medium=app&utm_campaign=built-by-footer';
+  'https://www.intevity.com/labs?utm_source=trove&utm_medium=desktop-app&utm_campaign=built-by-intevity';
 
 const displayVersion = __APP_VERSION__.startsWith('v')
   ? __APP_VERSION__
