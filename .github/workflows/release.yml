@@ -14,7 +14,14 @@ concurrency:
 
 permissions:
   contents: write
-  id-token: write # the reusable finalize workflow's S3 publish assumes the AWS role via OIDC
+  # id-token is load-bearing for TWO independent things — do not remove it when the S3
+  # bridge is eventually retired:
+  #   1. build-tauri's Windows leg: azure/login@v2 exchanges the runner's OIDC token for
+  #      the Trusted Signing session. build-tauri has no job-level `permissions:` block, so
+  #      it inherits this one; dropping it fails the leg with
+  #      "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL".
+  #   2. the reusable finalize workflow's bridge-s3 job, which assumes the AWS role via OIDC.
+  id-token: write
 
 jobs:
   build-tauri:
@@ -95,16 +102,6 @@ jobs:
       # a misnamed bundle.
       - name: Sync version from tag
         shell: bash
-        env:
-          # Public HTTPS base that maps to the S3 bucket root (or a CloudFront/custom
-          # domain in front of it), e.g. https://<bucket>.s3.<region>.amazonaws.com.
-          # Set as a repo variable by `terraform output -raw gh_cli_setup | sh` (see
-          # terraform/README.md). The same base is used by the publish-updates job,
-          # so the endpoint baked into the binary and the location latest.json is
-          # uploaded to can never drift. When unset, the committed endpoint stays in
-          # place — the build still succeeds, but in-app updates won't resolve until
-          # the variable is set and a release is published.
-          UPDATER_PUBLIC_BASE: ${{ vars.UPDATER_PUBLIC_BASE }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
@@ -114,18 +111,15 @@ jobs:
           fi
           echo "Stamping version=$VERSION into tauri.conf.json + Cargo.toml"
 
-          # tauri.conf.json — bundle metadata + artifact name source. Also stamps the
-          # updater endpoint as <base>/stable/latest.json when UPDATER_PUBLIC_BASE is
-          # set (left as the committed value otherwise).
+          # tauri.conf.json — bundle metadata + artifact name source. The updater
+          # endpoint is committed (GitHub releases/latest/download/latest.json) and
+          # needs no per-build stamping: the publish-manifest job attaches the
+          # matching manifest to every release.
           node -e "
             const fs = require('fs');
             const p = 'packages/app/src-tauri/tauri.conf.json';
             const json = JSON.parse(fs.readFileSync(p, 'utf8'));
             json.version = process.argv[1];
-            const base = (process.env.UPDATER_PUBLIC_BASE || '').replace(/\/+\$/, '');
-            if (base) {
-              json.plugins.updater.endpoints = [base + '/stable/latest.json'];
-            }
             fs.writeFileSync(p, JSON.stringify(json, null, 2) + '\n');
           " "$VERSION"
 
@@ -424,7 +418,7 @@ jobs:
             See the GitHub release notes for changes since the previous tag.
 
             macOS bundles are Developer ID-signed and notarized; the in-app
-            updater is fed from the S3 channel (stable/latest.json). Windows
+            updater is fed from this release's own `latest.json` asset. Windows
             bundles are Authenticode-signed via Azure Trusted Signing when the
             AZURE_* repo variables are configured.
           releaseDraft: true

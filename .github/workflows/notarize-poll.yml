@@ -15,7 +15,7 @@ on:
 
 permissions:
   contents: write
-  id-token: write # the reusable finalize workflow's S3 publish assumes the AWS role via OIDC
+  id-token: write # the reusable finalize workflow's bridge-s3 job assumes the AWS role via OIDC
   actions: write # this workflow disables its own schedule once nothing is pending (see discover)
 
 jobs:

@@ -1,6 +1,8 @@
 # Releasing Trove
 
-Trove ships via GitHub Releases plus an S3-hosted auto-update channel.
+Trove ships via GitHub Releases, and the release **is** the auto-update
+channel: installed apps poll
+`https://github.com/Intevity/trove/releases/latest/download/latest.json`.
 A tag push of the form `v*` triggers
 [`release.yml`](../.github/workflows/release.yml), which builds platform
 bundles in parallel on macOS arm64, macOS x64, Ubuntu x64, and Windows
@@ -8,7 +10,10 @@ x64 runners and uploads them to a draft release. macOS bundles are
 Developer ID-signed and notarized; notarization is **decoupled** from
 the build so the expensive macOS runners never wait on Apple's queue.
 Once notarization is Accepted, a reusable finalize workflow staples the
-artifacts, publishes the updater channel to S3, and promotes the draft.
+artifacts, attaches the merged `latest.json` to the release, promotes
+the draft, and mirrors that manifest to the legacy S3 channel for
+installs that predate the switch (see
+[The S3 bridge](#the-s3-bridge-transitional)).
 
 The release pipeline is a deliberate mirror of
 [claude-sentinel](https://github.com/Intevity/claude-sentinel)'s —
@@ -22,7 +27,7 @@ whether Sentinel already has the pattern and port it.
 ```
 git tag v0.6.0 ──▶ release.yml
                     ├─ build-tauri (×4 legs, 30 min cap)
-                    │   ├─ stamp version + updater endpoint from tag/vars
+                    │   ├─ stamp version from tag
                     │   ├─ build sidecar → codesign it (macOS)
                     │   ├─ tauri-action: build + sign (NO notarize)
                     │   └─ notarytool submit --no-wait → notary-<arch>.json
@@ -33,10 +38,11 @@ git tag v0.6.0 ──▶ release.yml
                     └─ finalize → notarize-finalize.yml (reusable)
                         ├─ staple: staple .dmg + .app.tar.gz inner app,
                         │          re-tar, re-sign with the minisign key
-                        ├─ publish-updates: assemble latest.json (all
-                        │          platforms) + upload to S3 via OIDC
-                        └─ publish-release: clear markers, drop the
-                                   stale release latest.json, promote
+                        ├─ publish-manifest: assemble latest.json (all
+                        │          platforms) + gh release upload --clobber
+                        ├─ publish-release: clear markers, promote draft
+                        └─ bridge-s3: mirror that same latest.json to
+                                   s3://<bucket>/stable/ via OIDC
 
 notarize-poll.yml (cron 13,43 * * * *) — slow-path companion: finds
 draft releases carrying notary-*.json markers, polls Apple once, and
@@ -50,10 +56,11 @@ Key properties:
   versions are only the dev baseline. (Keep the workspace
   `package.json` versions roughly in sync for sanity, but they no
   longer gate the release.)
-- **The updater endpoint is stamped from `vars.UPDATER_PUBLIC_BASE`**
-  so the binary's endpoint and the S3 publish location can never
-  drift. The committed endpoint in `tauri.conf.json` is the real
-  channel and acts as the fallback when the variable is unset.
+- **The updater endpoint is committed, not stamped.** `tauri.conf.json`
+  points at `releases/latest/download/latest.json` — the release channel
+  itself — so there is nothing to keep in sync at build time.
+  `releases/latest` only ever resolves to a **published, non-prerelease**
+  release, which is why `publish-release` promotes the draft _last_.
 - **tauri-action signs but does not notarize.** The `APPLE_API_*`
   secrets are withheld from the build step; submission happens
   `--no-wait` right after, and stapling/publication runs on cheap
@@ -68,10 +75,49 @@ Key properties:
 
 ---
 
+## The S3 bridge (transitional)
+
+Before v0.8.6 the updater endpoint was
+`https://intevity-trove-updates.s3.us-east-1.amazonaws.com/stable/latest.json`,
+and every release mirrored ~300 MB of bundles into
+`s3://intevity-trove-updates/stable/<version>/`. Binaries already installed
+at v0.8.5 or earlier still poll that S3 URL and know nothing about GitHub.
+
+So `bridge-s3` writes the **same** `latest.json` to `stable/latest.json` —
+the one whose per-platform URLs point at the GitHub release assets. An old
+install sees the new version via S3 and downloads it from GitHub; from that
+build onward it polls GitHub directly. The bundles are no longer mirrored to
+S3, only the manifest.
+
+`bridge-s3` runs **after** `publish-release` on purpose: a draft release's
+assets 404 for anonymous clients, so publishing an S3 manifest that pointed
+at a still-draft release would hand every legacy install a broken download.
+
+**To retire the bridge** once legacy installs have aged out:
+
+```bash
+gh variable delete S3_BUCKET --repo Intevity/trove
+```
+
+The job then skips — no code change. Afterwards the `UPDATER_PUBLIC_BASE`,
+`AWS_REGION` and `AWS_ROLE_ARN` variables and the [`terraform/`](../terraform/README.md)
+stack can be torn down too.
+
+> **Do not also remove `id-token: write` from
+> [`release.yml`](../.github/workflows/release.yml).** It is load-bearing for
+> the Windows Azure Trusted Signing OIDC login as well — `build-tauri` has no
+> job-level `permissions:` block, so it inherits the workflow-level grant.
+> Sentinel stripped it during the same migration and broke its Windows leg
+> with `Unable to get ACTIONS_ID_TOKEN_REQUEST_URL`.
+
+---
+
 ## One-time infrastructure setup
 
-1. **Provision the S3 channel** (operator runs, needs AWS admin
-   credentials):
+1. **Provision the S3 channel** — only needed to keep the
+   [transitional bridge](#the-s3-bridge-transitional) alive; the GitHub
+   release channel works without any of this (operator runs, needs AWS
+   admin credentials):
 
    ```bash
    cd terraform
@@ -84,9 +130,9 @@ Key properties:
    ```
 
    The last command sets the four repo **variables**: `S3_BUCKET`,
-   `AWS_REGION`, `UPDATER_PUBLIC_BASE`, `AWS_ROLE_ARN`. Until they are
-   set, `publish-updates` is skipped and the GitHub release is the only
-   channel (in-app updates won't resolve).
+   `AWS_REGION`, `UPDATER_PUBLIC_BASE`, `AWS_ROLE_ARN`. When they are
+   unset, `bridge-s3` is skipped and the GitHub release is the only
+   channel — which is the intended end state.
 
 2. **Generate the updater key pair** (once):
 
@@ -230,13 +276,13 @@ the issue, delete the draft + tag, and re-tag.
 Each successful matrix entry contributes files to the release (and,
 post-finalize, to `s3://<bucket>/stable/<version>/`):
 
-| Platform      | Files                                                                                                          |
-| ------------- | -------------------------------------------------------------------------------------------------------------- |
-| macOS (arm64) | `Trove_<version>_aarch64.dmg`, `Trove_aarch64.app.tar.gz` (+ `.sig`)                                           |
-| macOS (x64)   | `Trove_<version>_x64.dmg`, `Trove_x64.app.tar.gz` (+ `.sig`)                                                   |
-| Linux         | `trove_<version>_amd64.AppImage`, `.deb`, `.rpm` (+ `.sig` files)                                              |
-| Windows       | `Trove_<version>_x64-setup.exe` (NSIS), `Trove_<version>_x64_en-US.msi` (+ `.sig` files)                       |
-| Updater       | `latest.json` — written to S3 by `publish-updates` (the release-attached copy is deleted; S3 is authoritative) |
+| Platform      | Files                                                                                                             |
+| ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| macOS (arm64) | `Trove_<version>_aarch64.dmg`, `Trove_aarch64.app.tar.gz` (+ `.sig`)                                              |
+| macOS (x64)   | `Trove_<version>_x64.dmg`, `Trove_x64.app.tar.gz` (+ `.sig`)                                                      |
+| Linux         | `trove_<version>_amd64.AppImage`, `.deb`, `.rpm` (+ `.sig` files)                                                 |
+| Windows       | `Trove_<version>_x64-setup.exe` (NSIS), `Trove_<version>_x64_en-US.msi` (+ `.sig` files)                          |
+| Updater       | `latest.json` — attached to the release by `publish-manifest` (replaces tauri-action's copy; this is the channel) |
 
 `scripts/assemble-latest-json.mjs` builds the manifest with
 bundle-suffixed platform keys plus bare fallbacks and **fails loudly if
@@ -268,13 +314,30 @@ If `spctl` reports `source=Unnotarized Developer ID`, check the
 `notarize-wait` / `notarize-poll` logs and run
 `xcrun notarytool log <submission-id>` against the staged API key.
 
-### S3 channel
+### Update channel
+
+```bash
+# The channel the shipped binaries poll. `releases/latest` only resolves to a
+# PUBLISHED release, so a 404 here means the draft was never promoted.
+curl -sL "https://github.com/Intevity/trove/releases/latest/download/latest.json" | jq .
+# Expect: version == the new tag, 11 platform keys (darwin-aarch64,
+# darwin-x86_64, linux-x86_64, windows-x86_64 + bundle-suffixed variants),
+# every URL under /releases/download/<tag>/. All four darwin keys point at
+# the single universal tarball.
+
+# Every artifact URL must be anonymously fetchable (a 404 means still-draft):
+curl -sL "https://github.com/Intevity/trove/releases/latest/download/latest.json" \
+  | jq -r '.platforms[].url' | sort -u \
+  | xargs -I{} curl -s -o /dev/null -w '%{http_code} {}\n' -L {}
+```
+
+### S3 bridge
 
 ```bash
 curl -s "https://intevity-trove-updates.s3.us-east-1.amazonaws.com/stable/latest.json" | jq .
-# Expect: version == the new tag, platforms covering darwin-aarch64,
-# darwin-x86_64, linux-x86_64, windows-x86_64 (+ bundle-suffixed keys),
-# every URL under /stable/<version>/.
+# Expect: the SAME manifest as above — version == the new tag, and every URL
+# pointing at github.com/Intevity/trove/releases/download/<tag>/. URLs still
+# under /stable/<version>/ mean bridge-s3 didn't run (check vars.S3_BUCKET).
 ```
 
 ### Windows — Authenticode
@@ -290,7 +353,7 @@ gates on this via its "Verify Windows Authenticode signatures" step.
 ### In-app auto-updater loop
 
 1. Install the **previous** release from its signed bundle.
-2. Cut the next tag and wait for finalize to publish S3.
+2. Cut the next tag and wait for finalize to promote the release.
 3. Tray icon → **Check for updates…** — the main window comes forward
    and the update modal offers "Install and restart". Click it; the
    app restarts on the new version.
