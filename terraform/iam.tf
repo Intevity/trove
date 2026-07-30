@@ -21,7 +21,7 @@ locals {
     : data.aws_iam_openid_connect_provider.github[0].arn
   )
 
-  # The publish-updates job assumes this role from three trigger contexts, so the trust
+  # The bridge-s3 job assumes this role from three trigger contexts, so the trust
   # policy must allow all of them:
   #   - tag pushes (release.yml on v* tags)                  -> ref:refs/tags/*
   #   - the scheduled notarize-poll workflow (long-tail S3)  -> ref:refs/heads/<default>
