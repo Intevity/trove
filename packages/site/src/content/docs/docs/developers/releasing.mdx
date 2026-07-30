@@ -60,24 +60,29 @@ the binary's version always matches the tag it was built from.
 ```
 git tag v0.6.0 ──▶ release.yml
                     ├─ build-tauri (×4 legs, parallel)
-                    │   ├─ stamp version + updater endpoint from the tag
+                    │   ├─ stamp version from the tag
                     │   ├─ build sidecar → codesign it (macOS)
                     │   ├─ build + sign the app (no notarize yet)
                     │   └─ submit for notarization, then exit
                     ├─ notarize-wait (Accepted → finalize now)
                     └─ finalize (reusable)
                         ├─ staple the macOS artifacts
-                        ├─ publish the updater channel
+                        ├─ attach the merged latest.json to the release
                         └─ promote the draft → published
 ```
 
 ## The auto-updater channel
 
-The updater manifest (`latest.json`) is published to an S3-hosted channel,
-keyed by platform, and the binary's update endpoint is stamped from the same
-configuration that decides where the manifest is published — so the endpoint
-the app checks and the location CI writes to can never drift. Publishing uses
-short-lived OIDC credentials; no long-lived cloud keys are stored in CI.
+The GitHub release **is** the update channel. Trove polls
+[`releases/latest/download/latest.json`](https://github.com/Intevity/trove/releases/latest/download/latest.json),
+a platform-keyed manifest attached to each release whose download URLs point
+back at that same release's assets — so the endpoint the app checks and the
+place CI publishes to are the same thing by construction, with nothing to keep
+in sync.
+
+Because `releases/latest` only ever resolves to a published, non-prerelease
+release, the draft is promoted **last** — after the manifest is attached — so
+an in-flight release is never visible to the updater.
 
 Each artifact is signed for the updater, and the manifest assembly **fails
 loudly** if any expected artifact or signature file is missing, so a partial

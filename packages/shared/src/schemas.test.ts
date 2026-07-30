@@ -483,6 +483,28 @@ describe('AppState', () => {
     expect(match, 'CURRENT_SCHEMA_VERSION not found in app_state/mod.rs').not.toBeNull();
     expect(AppState.shape.schemaVersion.value).toBe(Number(match![1]));
   });
+
+  it('the e2e Tauri mock seeds the current schemaVersion', () => {
+    // The e2e fixtures hand-roll an AppState, so a bump here doesn't reach
+    // them via the type system. When they drift, the mocked state fails to
+    // parse and EVERY spec renders StateRecoveryNotice instead of the app —
+    // surfacing as a pile of confusing "element(s) not found" locator errors
+    // rather than anything mentioning the schema. Assert them directly.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const current = AppState.shape.schemaVersion.value;
+    const fixtures = ['../../app/e2e/helpers/tauri-mock.ts', '../../app/e2e/conflict-flow.spec.ts'];
+
+    for (const rel of fixtures) {
+      const src = readFileSync(join(here, rel), 'utf8');
+      // Only the top-level appState literal; `mappings: { schemaVersion: N }`
+      // is a separate schema with its own version line and is skipped.
+      const seeded = [...src.matchAll(/^\s*schemaVersion: (\d+),$/gm)].map((m) => Number(m[1]));
+      expect(seeded.length, `no seeded schemaVersion found in ${rel}`).toBeGreaterThan(0);
+      for (const v of seeded) {
+        expect(v, `${rel} seeds schemaVersion ${v}; expected ${current}`).toBe(current);
+      }
+    }
+  });
 });
 
 describe('TierAMetric and MappingState', () => {

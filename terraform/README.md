@@ -1,8 +1,18 @@
-# Terraform: Trove auto-update channel
+# Terraform: Trove legacy auto-update bridge
 
-Provisions the public S3 bucket that hosts macOS auto-update artifacts (`*.app.tar.gz`,
-`*.sig`, `latest.json`) plus the GitHub Actions **OIDC role** the release workflow assumes
-to publish them. No long-lived AWS keys are created.
+> **Transitional.** As of v0.8.6 the update channel is the GitHub release itself —
+> installed apps poll `releases/latest/download/latest.json`. This bucket now serves a
+> single file, `stable/latest.json`, for binaries built **before** the switch, whose S3
+> endpoint is baked in. Its per-platform URLs point at the GitHub release assets, so an
+> old install upgrades itself onto the GitHub channel; bundles are no longer mirrored here.
+> See [documentation/releasing.md](../documentation/releasing.md#the-s3-bridge-transitional).
+>
+> To retire the whole stack once legacy installs have aged out:
+> `gh variable delete S3_BUCKET --repo Intevity/trove` (the `bridge-s3` job then skips),
+> then `terraform destroy`.
+
+Provisions the public S3 bucket plus the GitHub Actions **OIDC role** the release workflow
+assumes to publish to it. No long-lived AWS keys are created.
 
 ## What it creates
 
