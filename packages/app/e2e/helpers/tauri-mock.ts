@@ -42,7 +42,12 @@ export interface TauriMockState {
 
 export const DEFAULT_MOCK_STATE: TauriMockState = {
   appState: {
-    schemaVersion: 11,
+    // MUST track `app_state::CURRENT_SCHEMA_VERSION` (and the matching
+    // `z.literal()` in @trove/shared). A stale value here doesn't fail as a
+    // schema error — the state silently fails to parse and the whole app
+    // renders the "Your data is safe" recovery screen, so every e2e spec
+    // fails with a confusing "element(s) not found" instead.
+    schemaVersion: 12,
     backends: [],
     harnesses: [],
     autoUpdateEnabled: false,
