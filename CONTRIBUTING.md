@@ -2,6 +2,8 @@
 
 Thank you for considering a contribution. Trove is a small project; the contribution loop is intended to be lightweight.
 
+Looking for something to work on? [`documentation/Roadmap.md`](documentation/Roadmap.md) lays out where Trove is heading, grouped Now / Next / Later, with each item's problem statement, rough size, and dependencies.
+
 ## Code of Conduct
 
 This project adopts the [Contributor Covenant 2.1](CODE_OF_CONDUCT.md). By participating you agree to abide by it.
