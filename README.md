@@ -284,6 +284,7 @@ Pushing a `v*` tag triggers the [release workflow](.github/workflows/release.yml
 
 ## Documentation
 
+- **[Roadmap.md](documentation/Roadmap.md)**: where Trove is going over the next couple of years — Now / Next / Later, the principles that constrain it, and what it deliberately won't become.
 - **[architecture.md](documentation/architecture.md)**: the full tour of how the Rust core, the React UI, the OTel collector sidecar, and the harness adapters fit together.
 - **[MVP_PLAN.md](documentation/MVP_PLAN.md)**: the original 17-sprint plan that shipped Trove, with notes on what made it in and what got rolled forward.
 - **[MAPPING_PLAN.md](documentation/MAPPING_PLAN.md)**: the Tier-A metric schema, the synthesis-rule grammar, and the mapping overlay's collector-side semantics.
